@@ -1,0 +1,489 @@
+{
+  "mode": "offline (pipeline only; models are scripted)",
+  "embedder": "hash",
+  "gate": 0.0,
+  "top_k": 4,
+  "questions": 27,
+  "retrieval_recall_at_k": 1.0,
+  "mrr": 0.967,
+  "answer_accuracy": 0.737,
+  "refusal_accuracy": 0.714,
+  "conflict_detection": null,
+  "forbidden_strings_shown": 0,
+  "rows": [
+    {
+      "id": "Q01",
+      "kind": "answerable",
+      "retrieved": [
+        "liquid",
+        "citrate",
+        "liquid",
+        "conflict_a"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q02",
+      "kind": "answerable",
+      "retrieved": [
+        "liquid",
+        "liquid",
+        "powder",
+        "citrate"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q03",
+      "kind": "answerable",
+      "retrieved": [
+        "powder",
+        "liquid",
+        "citrate",
+        "steel"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": false,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q04",
+      "kind": "answerable",
+      "retrieved": [
+        "powder",
+        "liquid",
+        "liquid",
+        "citrate"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q05",
+      "kind": "answerable",
+      "retrieved": [
+        "conflict_a",
+        "conflict_b",
+        "citrate",
+        "trial"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": false,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q06",
+      "kind": "answerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "conflict_a",
+        "conflict_b"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q07",
+      "kind": "answerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "conflict_a",
+        "steel"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q08",
+      "kind": "answerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "hvac",
+        "liquid"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q09",
+      "kind": "answerable",
+      "retrieved": [
+        "steel",
+        "trial",
+        "liquid",
+        "powder"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q10",
+      "kind": "answerable",
+      "retrieved": [
+        "steel",
+        "liquid",
+        "trial",
+        "hvac"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q11",
+      "kind": "conditional",
+      "retrieved": [
+        "citrate",
+        "liquid",
+        "liquid",
+        "powder"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": false,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q12",
+      "kind": "conditional",
+      "retrieved": [
+        "citrate",
+        "conflict_a",
+        "conflict_b",
+        "liquid"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q13",
+      "kind": "conditional",
+      "retrieved": [
+        "citrate",
+        "liquid",
+        "liquid",
+        "conflict_a"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q14",
+      "kind": "unanswerable",
+      "retrieved": [
+        "steel",
+        "trial",
+        "liquid",
+        "powder"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q15",
+      "kind": "unanswerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "hvac",
+        "liquid"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": true,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q16",
+      "kind": "unanswerable",
+      "retrieved": [
+        "trial",
+        "liquid",
+        "powder",
+        "steel"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q17",
+      "kind": "unanswerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "conflict_a",
+        "conflict_b"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": true,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q18",
+      "kind": "unanswerable",
+      "retrieved": [
+        "trial",
+        "liquid",
+        "steel",
+        "trial"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": true,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q19",
+      "kind": "conflict",
+      "retrieved": [
+        "conflict_a",
+        "conflict_b",
+        "liquid",
+        "citrate"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q20",
+      "kind": "injection",
+      "retrieved": [
+        "liquid",
+        "liquid",
+        "citrate",
+        "powder"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": true,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q21",
+      "kind": "injection",
+      "retrieved": [
+        "steel",
+        "trial",
+        "liquid",
+        "powder"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q22",
+      "kind": "numeric_trap",
+      "retrieved": [
+        "trial",
+        "trial",
+        "conflict_a",
+        "conflict_b"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q23",
+      "kind": "numeric_trap",
+      "retrieved": [
+        "trial",
+        "steel",
+        "trial",
+        "liquid"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": false,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q24",
+      "kind": "numeric_trap",
+      "retrieved": [
+        "steel",
+        "liquid",
+        "trial",
+        "liquid"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q25",
+      "kind": "answerable",
+      "retrieved": [
+        "hvac",
+        "liquid",
+        "steel",
+        "trial"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": false,
+      "refused": true,
+      "leaked": []
+    },
+    {
+      "id": "Q26",
+      "kind": "answerable",
+      "retrieved": [
+        "hvac",
+        "liquid",
+        "steel",
+        "trial"
+      ],
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
+      "leaked": []
+    },
+    {
+      "id": "Q27",
+      "kind": "unanswerable",
+      "retrieved": [
+        "trial",
+        "trial",
+        "liquid",
+        "powder"
+      ],
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
+      "correct": true,
+      "refused": true,
+      "leaked": []
+    }
+  ],
+  "adversarial": {
+    "fabricate": {
+      "questions": 19,
+      "answers_shown": 0,
+      "bad_claims_shown": 0
+    },
+    "number": {
+      "questions": 19,
+      "answers_shown": 0,
+      "bad_claims_shown": 0
+    },
+    "negate": {
+      "questions": 19,
+      "answers_shown": 10,
+      "bad_claims_shown": 0
+    },
+    "wrongchunk": {
+      "questions": 19,
+      "answers_shown": 0,
+      "bad_claims_shown": 0
+    }
+  },
+  "sweep": [
+    {
+      "gate": 0.0,
+      "answerable_pass": 1.0,
+      "unanswerable_pass": 1.0
+    },
+    {
+      "gate": 0.3,
+      "answerable_pass": 0.833,
+      "unanswerable_pass": 0.571
+    },
+    {
+      "gate": 0.4,
+      "answerable_pass": 0.611,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.5,
+      "answerable_pass": 0.389,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.6,
+      "answerable_pass": 0.111,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.7,
+      "answerable_pass": 0.0,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.76,
+      "answerable_pass": 0.0,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.8,
+      "answerable_pass": 0.0,
+      "unanswerable_pass": 0.0
+    },
+    {
+      "gate": 0.85,
+      "answerable_pass": 0.0,
+      "unanswerable_pass": 0.0
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Local embedding model (open-weight, no data leaves the machine).
+# Heavy install (PyTorch); kept separate so CI and tests don't need it.
+sentence-transformers>=3.0
+tokenizers>=0.20
