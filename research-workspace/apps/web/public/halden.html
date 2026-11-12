@@ -996,14 +996,15 @@ const prog=t=>`<div style="display:flex;align-items:center;gap:8px"><div class="
 const filt=()=>T.filter(t=>(S.f.sector==='All'||t.sector===S.f.sector)&&(S.f.owner==='All'||t.owner===S.f.owner)&&(!S.f.q||(t.title+t.code+t.sector+P[t.owner].n).toLowerCase().includes(S.f.q.toLowerCase())));
 
 /* ===== shell ===== */
-const NAVI=[['home','home','Ask'],['projects','layers','Projects'],['list','list','Active Research'],['board','board','Research Tasks'],['sources','db','Knowledge Library'],['methods','list','Methodologies'],['team','home','Team & access']];
+const NAVI=[['home','home','Ask'],['projects','layers','Projects'],['list','list','Active Research'],['board','board','Research Tasks'],['radar','radar','Signals Radar'],['sources','db','Knowledge Library'],['methods','list','Methodologies'],['team','home','Team & access']];
 function navHTML(){
  const r=S.route.startsWith('thread-')?'home':S.route;
  const it=(k,i,l,ct)=>`<button class="ni${r===k?' on':''}" data-act="nav" data-r="${k}">${ic(i)}<span>${l}</span>${ct?`<span class="ct">${ct}</span>`:''}</button>`;
  const act=T.filter(t=>t.stage!=='Decided').length;
+ const sigCount=typeof RAD!=='undefined'?RAD.length:10;
  return `<div class="brand"><span class="logo">H</span><div><b>Halden</b><small>R&amp;D intelligence</small></div></div>
  ${S.role==='vp'?it('executive','chart','Executive overview'):''}
- ${NAVI.map(([k,i,l])=>it(k,i,l,k==='list'?act:'')).join('')}
+ ${NAVI.map(([k,i,l])=>it(k,i,l,k==='list'?act:k==='radar'?sigCount:'')).join('')}
  <div class="eyebrow nav-h" style="display:flex;align-items:center">AI Chats<button class="iconbtn" style="margin-left:auto;width:24px;height:24px" data-act="newThread" data-tip="New thread">${ic('plus',14)}</button></div>
  ${S.threads.map(t=>`<button class="ni rcn${S.route==='thread-'+t.id?' on':''}" data-act="openThread" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span></button>`).join('')}
  <div class="nav-foot">${av(S.role==='vp'?'priya':'amina',1)}<div style="line-height:1.25"><b style="font-size:13px">${S.role==='vp'?'Dr. Priya Nair':'Lead Researcher (You)'}</b><div class="faint" style="font-size:12px">${S.role==='vp'?'VP, R&D':'Project Owner'}</div></div></div>`}
