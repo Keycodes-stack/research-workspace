@@ -1015,7 +1015,7 @@ function topHTML(){
  <div class="crumbs">${title}</div>
  ${ask}
  <div class="grow"></div>
- <a href="/" target="_top" class="btn sm" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;font-weight:600;margin-right:6px">${ic('plus',13)} New Project</a>
+ <button class="btn sm" data-act="openNewProjectModal" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;margin-right:6px">${ic('plus',13)} New Project</button>
  <div class="seg" data-tip="Switch between researcher and VP views"><button class="${S.role==='researcher'?'on':''}" data-act="role" data-r="researcher">Researcher</button><button class="${S.role==='vp'?'on':''}" data-act="role" data-r="vp">VP R&amp;D</button></div>
  <button class="iconbtn" data-act="notif" data-tip="Notifications">${ic('bell')}${S.unread?'<i class="dot"></i>':''}</button>`}
 
@@ -1181,9 +1181,11 @@ function pjRail(){
  const pj=S.pj||{v:'overview'},nr=(S.extra.nr=S.extra.nr||[]);
  const it=(act,attrs,txt,on,ind)=>`<button class="pjn${on?' on':''}${ind?' ind':''}" data-act="${act}" ${attrs}>${txt}</button>`;
  const subs=[['overview','Overview'],['workspace','Workspace'],['evidence','Evidence'],['findings','Findings'],['reviews','Reviews & Decisions'],['reports','Reports']];
+ const extraProjects = S.extra.projects || [];
  const rs=T.map(t=>({id:t.id,title:t.title})).concat(nr.map(n=>({id:n.id,title:n.title})));
- return `<aside class="pjrail"><div class="pjh">Projects <span class="faint">1</span></div>
+ return `<aside class="pjrail"><div class="pjh">Projects <span class="faint">${1+extraProjects.length}</span></div>
  ${it('pj','data-v="overview"','mRNA Vaccine Stability &amp; Formulation Programme',pj.v==='overview'&&0)}
+ ${extraProjects.map(p=>it('pj',`data-v="r" data-id="${p.id}" data-sub="overview"`,esc(p.title),pj.v==='r'&&pj.id===p.id)).join('')}
  <div class="pjs">In this project</div>
  ${it('pj','data-v="overview"','Overview',pj.v==='overview')}
  <div class="pjs">Research</div>
@@ -1940,6 +1942,81 @@ async function copy(txt,msg){try{await navigator.clipboard.writeText(txt);toast(
 
 /* ---------- event delegation ---------- */
 const A={
+ openNewProjectModal:()=>{
+  const body=`<div style="display:flex;flex-direction:column;gap:14px;">
+   <p class="muted" style="font-size:13px;line-height:1.5;margin:0;">Define the research scope, core hypothesis, and lead investigator to start an isolated research project.</p>
+   <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+    Project Title *
+    <input class="in" id="np_title" placeholder="e.g. Oncology mAb Bio-Formulation & Viscosity Control" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;" autofocus>
+   </label>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+    <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+     Sector / Domain
+     <select class="in" id="np_sector" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;">
+      <option value="Pharma & Biotech">Pharma &amp; Biotech</option>
+      <option value="Materials">Materials Science</option>
+      <option value="Healthcare">Healthcare &amp; Clinical</option>
+      <option value="Energy">Energy &amp; Battery</option>
+      <option value="Engineering">Engineering &amp; Robotics</option>
+     </select>
+    </label>
+    <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+     Lead Scientist / PI
+     <input class="in" id="np_lead" value="Dr. Bill Belias" placeholder="e.g. Dr. Sarah Jenkins" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;">
+    </label>
+   </div>
+   <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+    Core Research Question / Hypothesis
+    <textarea class="in" id="np_question" rows="3" placeholder="e.g. What is the strict upper viscosity limit for 27G manual syringe delivery, and what buffer excipient prevents opalescence?" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;resize:vertical;"></textarea>
+   </label>
+   <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+    <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+     Research Methodology
+     <select class="in" id="np_method" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;">
+      <option value="Technical Feasibility Assessment">Technical Feasibility Assessment</option>
+      <option value="Literature Review">Literature Review &amp; Meta-Analysis</option>
+      <option value="Experimental Formulation">Experimental Formulation Research</option>
+      <option value="Comparative Technology">Comparative Technology Assessment</option>
+     </select>
+    </label>
+    <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
+     Target Output
+     <input class="in" id="np_output" value="Business Case &amp; Technical Report" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;">
+    </label>
+   </div>
+   <div style="background:var(--surface2);padding:10px 14px;border-radius:8px;border:1px solid var(--line);font-size:12px;color:var(--muted);display:flex;align-items:center;gap:8px;">
+    <span style="font-size:15px;">🔒</span>
+    <span>Creates an isolated project workspace bounded to selected research literature.</span>
+   </div>
+  </div>`;
+  const foot=`<button class="btn ghost sm" data-act="closeModal">Cancel</button><button class="btn sm primary" data-act="submitNewProject" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;">${ic('plus',14)} Create Project</button>`;
+  modal((W.mwrap || (window.__W && window.__W.mwrap))('Create New Research Project', body, foot));
+ },
+ submitNewProject:()=>{
+  const title=($('#np_title')?.value||'').trim();
+  const sector=$('#np_sector')?.value||'Pharma & Biotech';
+  const lead=($('#np_lead')?.value||'').trim()||'Dr. Bill Belias';
+  const q=($('#np_question')?.value||'').trim();
+  const method=$('#np_method')?.value||'Technical Feasibility Assessment';
+  const out=($('#np_output')?.value||'').trim()||'Technical research report';
+  if(!title){toast('Please enter a project title');$('#np_title')?.focus();return}
+  const id='p_'+Date.now();
+  const newPj={id,title,q,bg:q,out,method,sector,lead,owner:'amina',stage:'Discovery',prog:15,tasks:1,created:'Just now'};
+  S.extra.nr=S.extra.nr||[];
+  S.extra.nr.unshift(newPj);
+  S.extra.projects=S.extra.projects||[];
+  S.extra.projects.unshift(newPj);
+  try{
+   const saved=JSON.parse(localStorage.getItem('halden_projects')||'[]');
+   saved.unshift(newPj);
+   localStorage.setItem('halden_projects',JSON.stringify(saved));
+  }catch(e){}
+  closeModal();
+  toast('Project "'+title+'" created successfully!','ok');
+  S.route='projects';
+  S.pj={v:'r',id,sub:'overview'};
+  renderAll();
+ },
  nav:e=>go(e.r),closeAll:()=>closeTop(),closeSide:()=>closeSide(),closeModal:()=>closeModal(),
  toggleNav:()=>$('#nav').classList.toggle('open'),
  role:e=>{S.role=e.r;if(S.route==='executive'&&e.r!=='vp')S.route='home';if(e.r==='vp'){go('executive')}else{renderAll()}toast('Switched to '+(e.r==='vp'?'VP R&D':'Researcher')+' view')},
@@ -2184,6 +2261,14 @@ setInterval(()=>{
 const h=location.hash.slice(1);
 S.route=(ROUTES.includes(h)&&!(h==='executive'))||h.startsWith('thread-')?h:'home';
 if(S.route.startsWith('thread-')&&!S.threads.find(t=>'thread-'+t.id===S.route))S.route='home';
+try{
+ const saved=JSON.parse(localStorage.getItem('halden_projects')||'[]');
+ if(saved&&saved.length>0){
+  S.extra=S.extra||{};
+  S.extra.projects=saved;
+  S.extra.nr=(S.extra.nr||[]).concat(saved);
+ }
+}catch(e){}
 window.__renderAll=renderAll;
 renderAll();
 })();
