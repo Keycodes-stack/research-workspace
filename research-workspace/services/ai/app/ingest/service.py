@@ -84,8 +84,8 @@ class SourceResult:
 
 INSERT_SOURCE = """
 INSERT INTO sources (project_id, origin, doi, title, authors, venue, year,
-                     cited_by_count, abstract, source_url, pdf_url, fulltext)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')
+                     cited_by_count, abstract, source_url, pdf_url, fulltext, in_library)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', FALSE)
 ON CONFLICT (project_id, doi) DO NOTHING
 RETURNING id
 """

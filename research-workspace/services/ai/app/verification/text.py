@@ -15,6 +15,10 @@ def normalize(text: str) -> str:
     collapse whitespace. Applied identically to quotes and source text."""
     t = unicodedata.normalize("NFKC", text).translate(_CHAR_MAP)
     t = re.sub(r"-\s*\n\s*(?=[a-z])", "", t)
+    # PDF fonts often extract the degree sign as a control character ("190<0x02>C"): read it as a degree
+    # sign between a number and C/F/K, and drop any other stray control characters.
+    t = re.sub(r"(?<=\d)[\x00-\x08\x0b\x0c\x0e-\x1f]\s*(?=[CFK]\b)", "°", t)
+    t = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", t)
     return re.sub(r"\s+", " ", t).strip()
 
 

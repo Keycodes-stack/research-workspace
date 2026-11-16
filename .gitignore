@@ -1,0 +1,3 @@
+# Repository-level ignores (the app's own rules live in research-workspace/.gitignore)
+.playwright-mcp/
+.claude/

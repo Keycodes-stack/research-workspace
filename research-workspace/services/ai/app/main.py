@@ -1,12 +1,15 @@
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
 
 from .clients import close_all, get_pool, get_redis, get_s3
 from .config import get_settings
+from .deps import get_embedder
 from .routes_admin import router as admin_router
+from .routes_approvals import router as approvals_router
 from .routes_collab import router as collab_router
+from .routes_chats import router as chats_router
 from .routes_concepts import router as concepts_router
 from .routes_discovery import router as discovery_router
 from .routes_export import router as export_router
@@ -18,28 +21,30 @@ from .routes_tasks import router as tasks_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Load the embedding model now, not on the first upload/question (saves ~35 s for that user).
+    try:
+        await asyncio.to_thread(get_embedder)
+    except Exception:  # the endpoints report a clear 503 if it is truly unavailable
+        pass
     yield
     await close_all()
 
 
 app = FastAPI(title="Keycodes Research Workspace - AI Layer", lifespan=lifespan)
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS here: this service is private. The gateway is the only public entry and sets CORS itself
+# (two Access-Control-Allow-Origin headers make browsers reject the response).
 app.include_router(discovery_router)
 app.include_router(sources_router)
 app.include_router(tasks_router)
+app.include_router(chats_router)
 app.include_router(export_router)
 app.include_router(signals_router)
 app.include_router(concepts_router)
 app.include_router(pipeline_router)
 app.include_router(admin_router)
 app.include_router(collab_router)
+app.include_router(approvals_router)
 
 
 @app.get("/health")
@@ -68,4 +73,4 @@ async def health():
     except Exception as e:
         status["s3"] = f"error: {e.__class__.__name__}"
 
-    return {"ok": all(v == "ok" for v in status.values()), **status}
+    return {"ok": all(v == "ok" for v in status.values()), **status, "embedder": get_settings().embedder}

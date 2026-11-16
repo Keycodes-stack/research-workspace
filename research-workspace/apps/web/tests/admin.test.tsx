@@ -1,12 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
+import StoreProvider from "@/components/StoreProvider";
 import { describe, expect, it, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   members: vi.fn(), usage: vi.fn(), audit: vi.fn(), setBudget: vi.fn(), addMember: vi.fn(), setRole: vi.fn(), removeMember: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({ api: h, getToken: () => "t", setToken: () => {}, ApiError: class extends Error {} }));
+vi.mock("@/lib/api", () => ({ api: h, getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {} }));
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 import Page from "@/app/projects/[id]/admin/page";
 
@@ -21,7 +22,7 @@ describe("Admin page", () => {
     h.audit.mockResolvedValue({ entries: [{ id: 1, actor: U, action: "task.approve", target_type: "task", target_id: "t", detail: { sources: 2 }, created_at: "2026-01-01T00:00:00Z" }], next_before: null });
     h.setBudget.mockResolvedValue({});
     const user = userEvent.setup();
-    render(<Suspense fallback="loading"><Page params={params} /></Suspense>);
+    render(<StoreProvider><Suspense fallback="loading"><Page params={params} /></Suspense></StoreProvider>);
     expect(await screen.findByText("task.approve")).toBeTruthy();
     expect(await screen.findByText(/7 left/)).toBeTruthy();
     expect(screen.getByLabelText(`Role for ${U}`)).toBeTruthy();
@@ -35,7 +36,7 @@ describe("Admin page", () => {
     h.usage.mockResolvedValue({ month_calls: 0, monthly_call_budget: null, remaining: null, by_kind: [], by_user: [], note: "" });
     h.audit.mockResolvedValue({ entries: [], next_before: null });
     const user = userEvent.setup();
-    render(<Suspense fallback="loading"><Page params={params} /></Suspense>);
+    render(<StoreProvider><Suspense fallback="loading"><Page params={params} /></Suspense></StoreProvider>);
     const btn = (await screen.findByText("Add member")) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     await user.type(screen.getByLabelText("User ID"), U);

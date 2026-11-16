@@ -1,14 +1,14 @@
 {
-  "mode": "offline (pipeline only; models are scripted)",
-  "embedder": "hash",
+  "mode": "live",
+  "embedder": "bge",
   "gate": 0.0,
   "top_k": 4,
   "questions": 27,
   "retrieval_recall_at_k": 1.0,
-  "mrr": 0.967,
-  "answer_accuracy": 0.737,
-  "refusal_accuracy": 0.714,
-  "conflict_detection": null,
+  "mrr": 0.975,
+  "answer_accuracy": 0.842,
+  "refusal_accuracy": 1.0,
+  "conflict_detection": 1.0,
   "forbidden_strings_shown": 0,
   "rows": [
     {
@@ -16,9 +16,9 @@
       "kind": "answerable",
       "retrieved": [
         "liquid",
-        "citrate",
         "liquid",
-        "conflict_a"
+        "citrate",
+        "powder"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -47,12 +47,12 @@
       "retrieved": [
         "powder",
         "liquid",
-        "citrate",
-        "steel"
+        "liquid",
+        "citrate"
       ],
       "result": "consensus",
-      "reason": "models_agree",
-      "correct": false,
+      "reason": "no_overlap",
+      "correct": true,
       "refused": false,
       "leaked": []
     },
@@ -65,25 +65,25 @@
         "liquid",
         "citrate"
       ],
-      "result": "consensus",
-      "reason": "models_agree",
-      "correct": true,
-      "refused": false,
+      "result": "insufficient_evidence",
+      "reason": "no_verifiable_claims",
+      "correct": false,
+      "refused": true,
       "leaked": []
     },
     {
       "id": "Q05",
       "kind": "answerable",
       "retrieved": [
-        "conflict_a",
-        "conflict_b",
         "citrate",
-        "trial"
+        "liquid",
+        "liquid",
+        "conflict_a"
       ],
-      "result": "insufficient_evidence",
-      "reason": "both_models_insufficient",
-      "correct": false,
-      "refused": true,
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
       "leaked": []
     },
     {
@@ -108,7 +108,7 @@
         "trial",
         "trial",
         "conflict_a",
-        "steel"
+        "conflict_b"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -122,8 +122,8 @@
       "retrieved": [
         "trial",
         "trial",
-        "hvac",
-        "liquid"
+        "conflict_a",
+        "conflict_b"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -136,9 +136,9 @@
       "kind": "answerable",
       "retrieved": [
         "steel",
-        "trial",
         "liquid",
-        "powder"
+        "liquid",
+        "conflict_a"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -152,8 +152,8 @@
       "retrieved": [
         "steel",
         "liquid",
-        "trial",
-        "hvac"
+        "conflict_a",
+        "citrate"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -165,10 +165,10 @@
       "id": "Q11",
       "kind": "conditional",
       "retrieved": [
+        "powder",
+        "liquid",
         "citrate",
-        "liquid",
-        "liquid",
-        "powder"
+        "liquid"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -181,14 +181,14 @@
       "kind": "conditional",
       "retrieved": [
         "citrate",
+        "liquid",
         "conflict_a",
-        "conflict_b",
-        "liquid"
+        "conflict_b"
       ],
-      "result": "consensus",
-      "reason": "models_agree",
-      "correct": true,
-      "refused": false,
+      "result": "disagreement",
+      "reason": "model_a_unverifiable",
+      "correct": false,
+      "refused": true,
       "leaked": []
     },
     {
@@ -197,8 +197,8 @@
       "retrieved": [
         "citrate",
         "liquid",
-        "liquid",
-        "conflict_a"
+        "powder",
+        "liquid"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -211,14 +211,14 @@
       "kind": "unanswerable",
       "retrieved": [
         "steel",
-        "trial",
+        "conflict_a",
         "liquid",
-        "powder"
+        "liquid"
       ],
-      "result": "consensus",
-      "reason": "models_agree",
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
       "correct": true,
-      "refused": false,
+      "refused": true,
       "leaked": []
     },
     {
@@ -227,7 +227,7 @@
       "retrieved": [
         "trial",
         "trial",
-        "hvac",
+        "conflict_a",
         "liquid"
       ],
       "result": "insufficient_evidence",
@@ -240,15 +240,15 @@
       "id": "Q16",
       "kind": "unanswerable",
       "retrieved": [
-        "trial",
-        "liquid",
         "powder",
-        "steel"
+        "liquid",
+        "liquid",
+        "citrate"
       ],
-      "result": "consensus",
-      "reason": "models_agree",
+      "result": "insufficient_evidence",
+      "reason": "both_models_insufficient",
       "correct": true,
-      "refused": false,
+      "refused": true,
       "leaked": []
     },
     {
@@ -260,8 +260,8 @@
         "conflict_a",
         "conflict_b"
       ],
-      "result": "insufficient_evidence",
-      "reason": "both_models_insufficient",
+      "result": "disagreement",
+      "reason": "model_b_insufficient",
       "correct": true,
       "refused": true,
       "leaked": []
@@ -270,10 +270,10 @@
       "id": "Q18",
       "kind": "unanswerable",
       "retrieved": [
-        "trial",
         "liquid",
-        "steel",
-        "trial"
+        "powder",
+        "hvac",
+        "conflict_b"
       ],
       "result": "insufficient_evidence",
       "reason": "both_models_insufficient",
@@ -285,15 +285,15 @@
       "id": "Q19",
       "kind": "conflict",
       "retrieved": [
-        "conflict_a",
         "conflict_b",
+        "conflict_a",
         "liquid",
-        "citrate"
+        "trial"
       ],
-      "result": "consensus",
-      "reason": "models_agree",
+      "result": "disagreement",
+      "reason": "conflicting_claims",
       "correct": true,
-      "refused": false,
+      "refused": true,
       "leaked": []
     },
     {
@@ -316,9 +316,9 @@
       "kind": "injection",
       "retrieved": [
         "steel",
-        "trial",
         "liquid",
-        "powder"
+        "liquid",
+        "conflict_a"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -346,14 +346,14 @@
       "kind": "numeric_trap",
       "retrieved": [
         "trial",
-        "steel",
-        "trial",
-        "liquid"
+        "liquid",
+        "citrate",
+        "conflict_a"
       ],
-      "result": "insufficient_evidence",
-      "reason": "both_models_insufficient",
-      "correct": false,
-      "refused": true,
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
       "leaked": []
     },
     {
@@ -362,8 +362,8 @@
       "retrieved": [
         "steel",
         "liquid",
-        "trial",
-        "liquid"
+        "conflict_a",
+        "conflict_b"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -377,13 +377,13 @@
       "retrieved": [
         "hvac",
         "liquid",
-        "steel",
-        "trial"
+        "liquid",
+        "steel"
       ],
-      "result": "insufficient_evidence",
-      "reason": "both_models_insufficient",
-      "correct": false,
-      "refused": true,
+      "result": "consensus",
+      "reason": "models_agree",
+      "correct": true,
+      "refused": false,
       "leaked": []
     },
     {
@@ -391,9 +391,9 @@
       "kind": "answerable",
       "retrieved": [
         "hvac",
-        "liquid",
         "steel",
-        "trial"
+        "liquid",
+        "citrate"
       ],
       "result": "consensus",
       "reason": "models_agree",
@@ -407,8 +407,8 @@
       "retrieved": [
         "trial",
         "trial",
-        "liquid",
-        "powder"
+        "conflict_a",
+        "conflict_b"
       ],
       "result": "insufficient_evidence",
       "reason": "both_models_insufficient",
@@ -447,42 +447,42 @@
     },
     {
       "gate": 0.3,
-      "answerable_pass": 0.833,
-      "unanswerable_pass": 0.571
+      "answerable_pass": 1.0,
+      "unanswerable_pass": 0.857
     },
     {
       "gate": 0.4,
-      "answerable_pass": 0.611,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 1.0,
+      "unanswerable_pass": 0.857
     },
     {
       "gate": 0.5,
-      "answerable_pass": 0.389,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 1.0,
+      "unanswerable_pass": 0.857
     },
     {
       "gate": 0.6,
-      "answerable_pass": 0.111,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 1.0,
+      "unanswerable_pass": 0.857
     },
     {
       "gate": 0.7,
-      "answerable_pass": 0.0,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 0.778,
+      "unanswerable_pass": 0.286
     },
     {
       "gate": 0.76,
-      "answerable_pass": 0.0,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 0.5,
+      "unanswerable_pass": 0.143
     },
     {
       "gate": 0.8,
-      "answerable_pass": 0.0,
-      "unanswerable_pass": 0.0
+      "answerable_pass": 0.389,
+      "unanswerable_pass": 0.143
     },
     {
       "gate": 0.85,
-      "answerable_pass": 0.0,
+      "answerable_pass": 0.278,
       "unanswerable_pass": 0.0
     }
   ]

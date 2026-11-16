@@ -1,3 +1,4 @@
+import logging
 import os
 import json
 import base64
@@ -28,7 +29,35 @@ app.add_middleware(
     expose_headers=["Content-Disposition", "X-Report-Fingerprint"],
 )
 
-ALLOWED_PREFIXES = ("/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts")
+# Parity with the Go gateway (same env names and defaults).
+RATE_RPS = float(os.environ.get("RATE_LIMIT_RPS", "10"))
+RATE_BURST = int(float(os.environ.get("RATE_LIMIT_BURST", "60")))
+MAX_BODY = int(float(os.environ.get("MAX_BODY_MB", "55")) * 1024 * 1024)
+
+if len(JWT_SECRET) < 32:
+    raise SystemExit("JWT_SECRET must be at least 32 characters (set it in .env)")
+if len(INTERNAL_TOKEN) < 16:
+    raise SystemExit("INTERNAL_TOKEN must be at least 16 characters (set it in .env)")
+
+_buckets: dict[str, tuple[float, float]] = {}   # user -> (tokens, last_refill)
+
+
+def allow(user: str) -> bool:
+    """Per-user token bucket."""
+    now = time.monotonic()
+    tokens, last = _buckets.get(user, (float(RATE_BURST), now))
+    tokens = min(float(RATE_BURST), tokens + (now - last) * RATE_RPS)
+    if tokens < 1:
+        _buckets[user] = (tokens, now)
+        return False
+    _buckets[user] = (tokens - 1, now)
+    if len(_buckets) > 10_000:                  # bound memory: drop idle users
+        for k in [k for k, (_, t) in _buckets.items() if now - t > 300]:
+            _buckets.pop(k, None)
+    return True
+
+
+ALLOWED_PREFIXES = ("/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts", "/comments")
 
 def b64url_decode(s: str) -> bytes:
     padding = '=' * (-len(s) % 4)
@@ -44,16 +73,35 @@ def verify_jwt(token: str) -> str:
     actual_sig = b64url_decode(sig_b64)
     if not hmac.compare_digest(expected_sig, actual_sig):
         raise ValueError("Invalid signature")
+    header = json.loads(b64url_decode(header_b64))
+    if header.get("alg") != "HS256":
+        raise ValueError("Unsupported algorithm")
     payload = json.loads(b64url_decode(payload_b64))
-    exp = payload.get("exp")
-    if exp and time.time() > exp:
+    exp, nbf = payload.get("exp"), payload.get("nbf")
+    if not exp:
+        raise ValueError("Token has no expiry")
+    if time.time() > exp:
         raise ValueError("Token expired")
+    if nbf and time.time() < nbf - 30:
+        raise ValueError("Token not valid yet")
     sub = payload.get("sub")
     if not sub:
         raise ValueError("Missing sub")
     return str(sub)
 
-client = httpx.AsyncClient(base_url=AI_URL, timeout=300.0)
+# keepalive_expiry stays below uvicorn's 5 s keep-alive, so a pooled connection is never reused after the AI
+# service closed it (that race produced spurious 502s); retries covers a connection that still fails to open.
+client = httpx.AsyncClient(
+    base_url=AI_URL, timeout=300.0,
+    limits=httpx.Limits(keepalive_expiry=2.0),
+    transport=httpx.AsyncHTTPTransport(retries=2, limits=httpx.Limits(keepalive_expiry=2.0)),
+)
+log = logging.getLogger("gateway")
+
+@app.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
 async def proxy_all(request: Request, path: str):
@@ -71,13 +119,22 @@ async def proxy_all(request: Request, path: str):
     except Exception as e:
         return Response(status_code=401, content=json.dumps({"detail": f"Unauthorized: {str(e)}"}), media_type="application/json")
 
-    headers = dict(request.headers)
-    headers.pop("authorization", None)
-    headers.pop("host", None)
+    if not allow(user_id):
+        return Response(status_code=429, content=json.dumps({"detail": "rate limit exceeded"}), media_type="application/json")
+
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > MAX_BODY:
+        return Response(status_code=413, content=json.dumps({"detail": "request too large"}), media_type="application/json")
+
+    # Never forward the caller's own identity headers or cookies: identity comes only from the verified token.
+    headers = {k: v for k, v in request.headers.items()
+               if k.lower() not in {"authorization", "host", "cookie", "x-user-id", "x-internal-token", "content-length"}}
     headers["x-internal-token"] = INTERNAL_TOKEN
     headers["x-user-id"] = user_id
 
     body = await request.body()
+    if len(body) > MAX_BODY:
+        return Response(status_code=413, content=json.dumps({"detail": "request too large"}), media_type="application/json")
     url = f"{AI_URL}{req_path}"
     if request.url.query:
         url += f"?{request.url.query}"
@@ -100,7 +157,8 @@ async def proxy_all(request: Request, path: str):
             media_type=upstream_resp.headers.get("content-type"),
         )
     except Exception as e:
-        return Response(status_code=502, content=json.dumps({"detail": f"AI service unavailable: {str(e)}"}), media_type="application/json")
+        log.warning("upstream failure on %s %s: %s", request.method, req_path, e.__class__.__name__)
+        return Response(status_code=502, content=json.dumps({"detail": "AI service unavailable"}), media_type="application/json")
 
 if __name__ == "__main__":
     import uvicorn

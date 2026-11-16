@@ -25,7 +25,21 @@ class Api:
     """TestClient plus the fakes wired into the app. Set `api.llms` per test."""
 
     def __init__(self, client, s3):
-        self.client, self.s3, self.llms = client, s3, None
+        self.client, self.s3, self._llms = client, s3, None
+
+    @property
+    def llms(self):
+        return self._llms
+
+    @llms.setter
+    def llms(self, pair):
+        # The route makes Model A the cross-check matcher (judge=a), while tests script the verdict on B's fake.
+        # Give A the same scripted verdict unless the test set one for A explicitly.
+        if pair and all(hasattr(m, "judge") for m in pair):
+            a, b = pair
+            if getattr(a, "judge", None) is None and getattr(b, "judge", None) is not None:
+                a.judge = b.judge
+        self._llms = pair
 
     def __getattr__(self, name):       # api.post(...) etc.
         return getattr(self.client, name)

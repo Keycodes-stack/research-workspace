@@ -144,3 +144,16 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
   text-decoration: none;
 }
 
+
+/* notification bell (shared Redux notifications slice) */
+.nbell { position: relative; }
+.nbell-btn { position: relative; padding: 6px 10px; }
+.nbell-dot { position: absolute; top: 4px; right: 6px; width: 8px; height: 8px; border-radius: 50%; background: #d64545; }
+.nbell-count { margin-left: 6px; font-size: .8rem; font-weight: 700; }
+.nbell-pop { position: absolute; right: 0; top: calc(100% + 8px); width: min(380px, 90vw); z-index: 50; max-height: 70vh; overflow: auto; margin: 0; box-shadow: 0 8px 28px rgba(0,0,0,.14); }
+.nbell-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.nbell-head .secondary { margin-left: auto; }
+.nbell-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+.nbell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.nbell-list li { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+.nbell-list li.unread { border-left: 3px solid var(--accent); }

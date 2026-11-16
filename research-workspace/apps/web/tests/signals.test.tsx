@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import StoreProvider from "@/components/StoreProvider";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,7 +15,7 @@ vi.mock("@/lib/api", () => ({
     signals: vi.fn(async () => [sig]), signal: vi.fn(async () => detail),
     signalAction: vi.fn(async () => ({ status: "dismissed" })), scanSignals: vi.fn(async () => ({ created: 1, already_known: 0, skipped: [] })),
   },
-  getToken: () => "t", setToken: () => {}, ApiError: class extends Error {},
+  getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 
@@ -28,7 +29,7 @@ beforeEach(() => vi.clearAllMocks());
 describe("Signal board", () => {
   it("shows confidence, flags a changed source, and requires a reason to dismiss", async () => {
     const user = userEvent.setup();
-    render(<Suspense fallback="loading"><SignalsPage params={params} /></Suspense>);
+    render(<StoreProvider><Suspense fallback="loading"><SignalsPage params={params} /></Suspense></StoreProvider>);
     expect(await screen.findByText(/Degradation at 25/)).toBeTruthy();
     expect(screen.getByText("low confidence")).toBeTruthy();
 

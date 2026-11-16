@@ -38,7 +38,7 @@ def _jaccard(a: str, b: str) -> float:
 async def project_chunks(pool, embedder, project_id: UUID, queries: list[str], top_k: int):
     """Union of the top-k chunks for several queries over ALL of the project's sources, integrity-checked.
     Returns (ContextChunks, {chunk_id: source_id}, best_similarity)."""
-    rows = await pool.fetch("SELECT id FROM sources WHERE project_id=$1", project_id)
+    rows = await pool.fetch("SELECT id FROM sources WHERE project_id=$1 AND in_library", project_id)
     sids = [r["id"] for r in rows]
     seen, hits, top = set(), [], None
     for q in queries:
@@ -112,11 +112,13 @@ async def chunks_by_ids(pool, chunk_ids: list[UUID]):
 
 
 def evidence_intact(chunk_text: str, quote: str, sealed: str, current: str) -> bool:
-    """Re-verification on read: stored text still hashes to the seal, and every quote segment is still in it."""
+    """Re-verification on read: stored text still hashes to the seal, and the quote is still found in it.
+
+    The quote is checked with the SAME rule that accepted it originally (exact, then normalised, then fuzzy).
+    Real PDFs have hyphenation and line-break artefacts, so a quote that passed by fuzzy match is not a literal
+    substring; requiring one would flag good evidence as "changed source" and block the pipeline."""
     from .ingest.chunking import sha256_hex
-    from .verification.text import normalize
+    from .verification.verifier import match_quote
     if not (sha256_hex(chunk_text) == sealed == current):
         return False
-    segs = [s.strip() for s in re.split(r"\[\s*(?:\.\.\.|…)\s*\]|\.\.\.|…", quote) if s.strip()]
-    hay = normalize(chunk_text).lower()
-    return bool(segs) and all(normalize(s).lower() in hay for s in segs)
+    return match_quote(quote, chunk_text, vconfig()) is not None

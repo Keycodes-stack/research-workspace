@@ -10,20 +10,36 @@ from .ingest.service import IngestConfig
 from .ingest.tokenizer import HFTokenizer, RegexTokenizer, Tokenizer
 
 
+def _use_hash() -> bool:
+    """Keyword hashing only when explicitly configured (EMBEDDER=hash). Falling back
+    silently would turn semantic retrieval into keyword overlap without anyone noticing."""
+    return get_settings().embedder == "hash"
+
+
 @lru_cache
+def _load_embedder() -> Embedder:
+    return HashEmbedder() if _use_hash() else BgeEmbedder(get_settings().embedding_model)
+
+
+@lru_cache
+def _load_tokenizer() -> Tokenizer:
+    return RegexTokenizer() if _use_hash() else HFTokenizer(get_settings().embedding_model)
+
+
 def get_embedder() -> Embedder:
     try:
-        return BgeEmbedder(get_settings().embedding_model)
-    except Exception:
-        return HashEmbedder()
+        return _load_embedder()
+    except Exception as e:
+        raise HTTPException(503, f"embedding model unavailable ({e.__class__.__name__}); "
+                                 "install requirements-ml.txt or set EMBEDDER=hash for development")
 
 
-@lru_cache
 def get_tokenizer() -> Tokenizer:
     try:
-        return HFTokenizer(get_settings().embedding_model)
-    except Exception:
-        return RegexTokenizer()
+        return _load_tokenizer()
+    except Exception as e:
+        raise HTTPException(503, f"tokenizer unavailable ({e.__class__.__name__}); "
+                                 "install requirements-ml.txt or set EMBEDDER=hash for development")
 
 
 def get_llms() -> tuple[LLM, LLM]:

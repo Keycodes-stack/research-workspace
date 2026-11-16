@@ -77,26 +77,67 @@ def _claim_text(c: Claim) -> str:
     return f"{c.text} {c.quote}"
 
 
+_WORD = re.compile(r"[^\W\d_]{4,}")
+
+
+def _topic(c: Claim) -> set[str]:
+    """Content words of a claim (4+ letters, numbers and units excluded): what the claim is about."""
+    return {w.lower() for w in _WORD.findall(c.text)}
+
+
+def _same_topic(x: Claim, y: Claim, min_overlap: float = 0.3) -> bool:
+    tx, ty = _topic(x), _topic(y)
+    return bool(tx and ty) and len(tx & ty) / len(tx | ty) >= min_overlap
+
+
 def numeric_conflicts(a: list[Claim], b: list[Claim]) -> list[NumericConflict]:
-    """Per shared chunk and unit: if A's and B's values are completely disjoint,
-    they disagree. Overlap (one answer being more detailed) is not a conflict."""
+    """For each pair of claims (one per model) that cite the same chunk AND are about the same thing:
+    if their values in a unit are completely disjoint, they disagree. Overlap (one answer being more
+    detailed) is not a conflict, and neither are numbers about different quantities
+    ("above 90 C" vs "every 10 C rise")."""
     found: list[NumericConflict] = []
-    chunks = {cid for c in a for cid in c.chunk_ids} & {cid for c in b for cid in c.chunk_ids}
-    for cid in sorted(chunks, key=str):
-        side: dict[str, dict[str, set[float]]] = {"a": defaultdict(set), "b": defaultdict(set)}
-        first: dict[str, dict[str, int]] = {"a": {}, "b": {}}
-        for tag, claims in (("a", a), ("b", b)):
-            for i, c in enumerate(claims):
-                if cid not in c.chunk_ids:
-                    continue
-                for unit, vals in extract_quantities(_claim_text(c)).items():
-                    side[tag][unit] |= vals
-                    first[tag].setdefault(unit, i)
-        for unit in side["a"].keys() & side["b"].keys():
-            va, vb = side["a"][unit], side["b"][unit]
-            if va.isdisjoint(vb):
-                found.append(NumericConflict(
-                    a_index=first["a"][unit], b_index=first["b"][unit], unit=unit,
-                    a_values=sorted(va), b_values=sorted(vb), chunk_id=cid,
-                ))
+    for i, ca in enumerate(a):
+        qa = extract_quantities(_claim_text(ca))
+        for j, cb in enumerate(b):
+            shared = sorted(set(ca.chunk_ids) & set(cb.chunk_ids), key=str)
+            if not shared or not _same_topic(ca, cb):
+                continue
+            qb = extract_quantities(_claim_text(cb))
+            for unit in qa.keys() & qb.keys():
+                if qa[unit].isdisjoint(qb[unit]):
+                    found.append(NumericConflict(
+                        a_index=i, b_index=j, unit=unit,
+                        a_values=sorted(qa[unit]), b_values=sorted(qb[unit]), chunk_id=shared[0],
+                    ))
+    return found
+
+
+@dataclass
+class SourceConflict:
+    first: Claim            # two claims from DIFFERENT sources, about the same thing, with different values
+    second: Claim
+    unit: str
+    first_values: list[float]
+    second_values: list[float]
+
+
+def source_conflicts(claims: list[Claim], source_of: dict[UUID, str]) -> list[SourceConflict]:
+    """Papers that disagree with each other. Looks across every verified claim: if two claims cite
+    different sources (by label), are about the same thing, and give completely different values in
+    the same unit, report both so the user sees each finding with its source."""
+    found: list[SourceConflict] = []
+    seen: set[tuple[int, int]] = set()
+    for i, x in enumerate(claims):
+        qx = extract_quantities(_claim_text(x))
+        sx = {source_of.get(c, str(c)) for c in x.chunk_ids}
+        for j in range(i + 1, len(claims)):
+            y = claims[j]
+            sy = {source_of.get(c, str(c)) for c in y.chunk_ids}
+            if sx & sy or not _same_topic(x, y):
+                continue
+            qy = extract_quantities(_claim_text(y))
+            for unit in qx.keys() & qy.keys():
+                if qx[unit].isdisjoint(qy[unit]) and (i, j) not in seen:
+                    seen.add((i, j))
+                    found.append(SourceConflict(x, y, unit, sorted(qx[unit]), sorted(qy[unit])))
     return found

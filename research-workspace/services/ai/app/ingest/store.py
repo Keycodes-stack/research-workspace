@@ -105,7 +105,7 @@ async def fetch_chunks(pool: asyncpg.Pool, chunk_ids: list[UUID]) -> dict[UUID, 
         return {}
     rows = await pool.fetch(
         """SELECT c.id, c.text, c.sha256, c.page_start, c.page_end, c.line_start, c.line_end,
-                  c.line_refs, s.id AS source_id, s.doi, s.title, s.filename, s.source_url
+                  c.line_refs, s.id AS source_id, s.doi, s.title, s.filename, s.source_url, s.origin, s.in_library
            FROM chunks c JOIN sources s ON s.id = c.source_id
            WHERE c.id = ANY($1::uuid[])""",
         chunk_ids,

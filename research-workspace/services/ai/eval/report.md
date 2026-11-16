@@ -1,12 +1,12 @@
-# Evaluation report (offline (pipeline only; models are scripted))
+# Evaluation report (live)
 
-Embedder `hash`, gate 0.0, top_k 4, 27 questions.
+Embedder `bge`, gate 0.0, top_k 4, 27 questions.
 
 - retrieval_recall_at_k: **1.0**
-- mrr: **0.967**
-- answer_accuracy: **0.737**
-- refusal_accuracy: **0.714**
-- conflict_detection: **None**
+- mrr: **0.975**
+- answer_accuracy: **0.842**
+- refusal_accuracy: **1.0**
+- conflict_detection: **1.0**
 - forbidden_strings_shown: **0**
 
 ## Adversarial injection (bad claims that reached the user)
@@ -21,20 +21,14 @@ Embedder `hash`, gate 0.0, top_k 4, 27 questions.
 | gate | answerable passing | unanswerable passing |
 |---|---|---|
 | 0.0 | 1.0 | 1.0 |
-| 0.3 | 0.833 | 0.571 |
-| 0.4 | 0.611 | 0.0 |
-| 0.5 | 0.389 | 0.0 |
-| 0.6 | 0.111 | 0.0 |
-| 0.7 | 0.0 | 0.0 |
-| 0.76 | 0.0 | 0.0 |
-| 0.8 | 0.0 | 0.0 |
-| 0.85 | 0.0 | 0.0 |
-
-> The hash embedder has no semantics: retrieval and gate numbers above are NOT evidence for the 0.76 threshold. Re-run with `--embedder bge`.
-
-> Offline limits seen: the scripted analyst answers off-topic questions with a real but irrelevant sentence (Q14, Q16) and the verifier cannot catch that, because the quote is genuine and supports the claim. Question relevance is the job of the similarity gate and the live models; conflict detection needs live models.
-
-> Offline run: models are scripted. These numbers test the pipeline, not model quality.
+| 0.3 | 1.0 | 0.857 |
+| 0.4 | 1.0 | 0.857 |
+| 0.5 | 1.0 | 0.857 |
+| 0.6 | 1.0 | 0.857 |
+| 0.7 | 0.778 | 0.286 |
+| 0.76 | 0.5 | 0.143 |
+| 0.8 | 0.389 | 0.143 |
+| 0.85 | 0.278 | 0.0 |
 
 ## Per question
 
@@ -42,28 +36,28 @@ Embedder `hash`, gate 0.0, top_k 4, 27 questions.
 |---|---|---|---|---|---|
 | Q01 | answerable | consensus | models_agree | True |  |
 | Q02 | answerable | consensus | models_agree | True |  |
-| Q03 | answerable | consensus | models_agree | False |  |
-| Q04 | answerable | consensus | models_agree | True |  |
-| Q05 | answerable | insufficient_evidence | both_models_insufficient | False |  |
+| Q03 | answerable | consensus | no_overlap | True |  |
+| Q04 | answerable | insufficient_evidence | no_verifiable_claims | False |  |
+| Q05 | answerable | consensus | models_agree | True |  |
 | Q06 | answerable | consensus | models_agree | True |  |
 | Q07 | answerable | consensus | models_agree | True |  |
 | Q08 | answerable | consensus | models_agree | True |  |
 | Q09 | answerable | consensus | models_agree | True |  |
 | Q10 | answerable | consensus | models_agree | True |  |
 | Q11 | conditional | consensus | models_agree | False |  |
-| Q12 | conditional | consensus | models_agree | True |  |
+| Q12 | conditional | disagreement | model_a_unverifiable | False |  |
 | Q13 | conditional | consensus | models_agree | True |  |
-| Q14 | unanswerable | consensus | models_agree | True |  |
+| Q14 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |
 | Q15 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |
-| Q16 | unanswerable | consensus | models_agree | True |  |
-| Q17 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |
+| Q16 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |
+| Q17 | unanswerable | disagreement | model_b_insufficient | True |  |
 | Q18 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |
-| Q19 | conflict | consensus | models_agree | True |  |
+| Q19 | conflict | disagreement | conflicting_claims | True |  |
 | Q20 | injection | insufficient_evidence | both_models_insufficient | True |  |
 | Q21 | injection | consensus | models_agree | True |  |
 | Q22 | numeric_trap | consensus | models_agree | True |  |
-| Q23 | numeric_trap | insufficient_evidence | both_models_insufficient | False |  |
+| Q23 | numeric_trap | consensus | models_agree | True |  |
 | Q24 | numeric_trap | consensus | models_agree | True |  |
-| Q25 | answerable | insufficient_evidence | both_models_insufficient | False |  |
+| Q25 | answerable | consensus | models_agree | True |  |
 | Q26 | answerable | consensus | models_agree | True |  |
 | Q27 | unanswerable | insufficient_evidence | both_models_insufficient | True |  |

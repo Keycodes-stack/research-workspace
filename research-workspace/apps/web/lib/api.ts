@@ -12,6 +12,16 @@ export function setToken(t: string | null): void {
   try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
 }
 
+/** Dev/launcher sign-in: a `#kc_token=...` URL fragment is stored, then removed from the address bar. */
+export function consumeTokenFragment(): void {
+  try {
+    const m = /[#&]kc_token=([^&]+)/.exec(window.location.hash);
+    if (!m) return;
+    setToken(decodeURIComponent(m[1]));
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  } catch { /* no window or storage blocked */ }
+}
+
 /** The signed-in user's id, read from the token's `sub` for display only (the server never trusts this). */
 export function currentUserId(): string | null {
   try {

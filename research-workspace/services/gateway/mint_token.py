@@ -35,9 +35,18 @@ def mint_token(sub: str = "11111111-1111-4111-8111-111111111111", ttl_seconds: i
     return f"{hdr_b64}.{pay_b64}.{sig_b64}"
 
 if __name__ == "__main__":
-    import sys
-    sub = sys.argv[1] if len(sys.argv) > 1 else "11111111-1111-4111-8111-111111111111"
-    token = mint_token(sub)
-    print("\n--- DEVELOPMENT JWT TOKEN (Paste this into the login page) ---")
-    print(token)
-    print("----------------------------------------------------------------\n")
+    import argparse
+    ap = argparse.ArgumentParser(description="Mint a development sign-in token (HS256, signed with JWT_SECRET).")
+    ap.add_argument("sub", nargs="?", default="11111111-1111-4111-8111-111111111111", help="user id (UUID)")
+    ap.add_argument("--days", type=float, default=1.0, help="lifetime in days (default 1)")
+    ap.add_argument("--raw", action="store_true", help="print only the token (for scripts)")
+    a = ap.parse_args()
+    token = mint_token(a.sub, int(a.days * 86400))
+    if a.raw:
+        print(token)
+    else:
+        print()
+        print("Development sign-in token (paste it on the sign-in page):")
+        print()
+        print(token)
+        print()

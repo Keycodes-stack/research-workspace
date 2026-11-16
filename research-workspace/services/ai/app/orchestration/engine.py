@@ -8,7 +8,7 @@ from typing import Callable, Literal
 from uuid import UUID
 
 from .llm import LLM, LLMError
-from .numeric import NumericConflict, numeric_conflicts
+from .numeric import NumericConflict, numeric_conflicts, source_conflicts
 from .prompts import (
     SYSTEM_A, SYSTEM_B, SYSTEM_JUDGE, build_judge_prompt, build_user_prompt,
 )
@@ -119,7 +119,8 @@ def _at(claims: list[Claim], one_based: int | None) -> Claim | None:
 
 
 def decide(
-    a: ParsedAnswer, b: ParsedAnswer, verdict: JudgeVerdict, numeric: list[NumericConflict]
+    a: ParsedAnswer, b: ParsedAnswer, verdict: JudgeVerdict, numeric: list[NumericConflict],
+    source_of: dict | None = None,
 ) -> tuple[Kind, str, list[FinalClaim], dict | None]:
     """Pure decision logic for two answered analysts (unit-testable without models)."""
     status = {v.id: v for v in verdict.a_claims}
@@ -154,19 +155,32 @@ def decide(
         ))
         covered_a.add(n.a_index + 1)
 
+    # Papers that disagree with each other (even when both models report both findings)
+    for sc in source_conflicts(a.claims + b.claims, source_of or {}):
+        fmt = lambda vals: ", ".join(f"{x:g}" for x in vals)
+        conflicts.append(_conflict(
+            f"Sources report different values ({sc.unit})", sc.first, sc.second,
+            f"One source reports {fmt(sc.first_values)} {sc.unit}; another reports {fmt(sc.second_values)} {sc.unit}.",
+            "sources",
+        ))
+
     if conflicts:
         return "disagreement", "conflicting_claims", [], _summary("conflicting_claims", conflicts, a, b)
 
     agreed = {i for i, v in status.items() if v.status == "agreed"}
-    if not agreed:
-        return "disagreement", "no_overlap", [], _summary("no_overlap", [], a, b)
-
+    matched_b = {bid for i in agreed for bid in status[i].b_ids}
+    # Nothing contradicts: every claim shown passed citation verification. Claims both models made are
+    # "confirmed"; claims only one model made are shown but flagged as single-model.
     final = [
         FinalClaim(c.text, c.chunk_ids, c.quote, c.conditions, confirmed=(i in agreed),
                    match_kind=c.match_kind, match_score=c.match_score, seals=c.seals)
         for i, c in enumerate(a.claims, start=1)
+    ] + [
+        FinalClaim(c.text, c.chunk_ids, c.quote, c.conditions, confirmed=False,
+                   match_kind=c.match_kind, match_score=c.match_score, seals=c.seals)
+        for i, c in enumerate(b.claims, start=1) if i not in matched_b
     ]
-    return "consensus", "models_agree", final, None
+    return "consensus", "models_agree" if agreed else "no_overlap", final, None
 
 
 # ---- the public entry point -----------------------------------------------------
@@ -224,5 +238,6 @@ async def run_dual(
     verdict, raws_j = await _call(
         judge or llm_b, SYSTEM_JUDGE, build_judge_prompt(question, pa.claims, pb.claims), parse_verdict
     )
-    kind, reason, claims, disagreement = decide(pa, pb, verdict, numeric_conflicts(pa.claims, pb.claims))
+    kind, reason, claims, disagreement = decide(
+        pa, pb, verdict, numeric_conflicts(pa.claims, pb.claims), {c.chunk_id: c.label for c in chunks})
     return result(kind, reason, claims, disagreement, {"verdict": verdict.model_dump(), "raw": raws_j})

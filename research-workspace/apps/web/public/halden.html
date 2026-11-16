@@ -179,6 +179,7 @@ svg.deps{position:absolute;pointer-events:none;overflow:visible;z-index:1}
 .crow{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
 .cbtn{display:inline-flex;gap:6px;align-items:center;height:30px;padding:0 10px;border-radius:8px;color:var(--fg2);font-weight:500;font-size:13px;border:1px solid var(--line)}.cbtn:hover{background:var(--surface2)}
 .cbtn.gold{color:var(--gold);background:var(--gold-soft);border-color:var(--gold-line)}
+.send:disabled{opacity:.35;cursor:not-allowed;filter:none}
 .send{width:36px;height:36px;border-radius:10px;background:var(--accent);color:var(--accent-fg);display:grid;place-items:center;margin-left:auto}.send:hover{filter:brightness(1.1)}
 .sugg{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:16px 0 30px}
 .sg{padding:12px 14px;text-align:left;border:1px solid var(--line);border-radius:12px;background:var(--surface);display:flex;gap:10px;align-items:flex-start;transition:border-color .15s,transform .15s}.sg:hover{border-color:var(--accent);transform:translateY(-1px)}
@@ -824,6 +825,7 @@ body::before{display:none!important}
 <div class="modal" id="modal"></div>
 <div id="tip"></div>
 <div id="toasts"></div>
+<script src="notif-store.js"></script>
 <script>
 (function(){
 'use strict';
@@ -841,7 +843,7 @@ const STAGES=['Discovery','Validation','Business case','Decided'];
 const sk=s=>s.split(' ')[0];
 
 /* ===== sources ===== */
-const SRC={
+const SRC0={
 1:{t:'mRNA-lipid nanoparticle COVID-19 vaccines: Structure and stability',ty:'Journal',v:'International Journal of Pharmaceutics',y:2021,rel:98,ok:1,p:'«mRNA hydrolysis is the determining factor for mRNA-LNP instability», and interactions among ionizable lipids, helper lipids, and aqueous buffers accelerate chain cleavages.'},
 2:{t:'Lyophilization provides long-term stability for a lipid nanoparticle-formulated, nucleoside-modified mRNA vaccine',ty:'Journal',v:'Molecular Therapy',y:2022,rel:96,ok:1,p:'«Lyophilization provides long-term stability for a lipid nanoparticle-formulated mRNA vaccine at refrigerated temperatures (4 °C) and room temperature (25 °C)» without losing immunogenicity.'},
 3:{t:'Addressing the Cold Reality of mRNA Vaccine Stability',ty:'Journal',v:'Journal of Pharmaceutical Sciences',y:2020,rel:95,ok:1,p:'«Current mRNA-lipid nanoparticle formulations require ultra-low temperatures (-80 °C to -20 °C)» due to simultaneous physical dissociation and chemical degradation pathways.'},
@@ -851,15 +853,17 @@ const SRC={
 7:{t:'Manufacturing Considerations for the Development of Lipid Nanoparticles Using Microfluidics',ty:'Journal',v:'Pharmaceutics',y:2020,rel:89,ok:1,p:'Microfluidic mixing ensures rapid, reproducible self-assembly «with narrow polydispersity index (<0.1) and high encapsulation efficiency exceeding 90%».'},
 8:{t:'Lipid Nanoparticles: An Effective Tool to Improve the Bioavailability of Nutraceuticals',ty:'Journal',v:'International Journal of Molecular Sciences',y:2023,rel:85,ok:1,p:'Colloidal stability and lipid degradation kinetics «depend heavily on surfactant concentration, zeta potential, and storage buffer pH».'}
 };
+// Demo library rows can reference sources that do not exist; give them a placeholder instead of crashing the page.
+const SRC=new Proxy(SRC0,{get:(o,k)=>k in o||typeof k==='symbol'?o[k]:{t:'Untitled source',ty:'Source',v:'',y:'',rel:0,ok:0,p:''}});
 const TYI={Journal:'file',Patent:'shield',Web:'link',Standard:'layers',Internal:'db','Industry report':'chart',Note:'edit'};
 
 /* ===== answers (hero research) ===== */
 const ANS={
 cooling:{title:'mRNA-LNP formulation stability and excipient-induced degradation',acc:94,
  html:`Lipid nanoparticle formulations can paradoxically increase mRNA degradation risk due to interactions among excipients, despite protecting against enzymatic degradation. {v|mRNA hydrolysis is the primary determining factor for mRNA-LNP instability across ambient conditions|c1}[1][3]. {v|Lyophilization provides long-term stability for lipid nanoparticle-formulated mRNA at 4 °C to 25 °C without loss of in vivo expression|c2}[2].<br><br>Storage temperature remains the binding operational constraint. {d|Current commercial formulations require -80 °C to -20 °C ultra-low cold chain|c3}[3][4], yet {v|nanostructured lipid carriers and lyoprotectant formulations demonstrate extended stability at refrigerated temperatures|c4}[5][6]. Finally, {u|novel ionizable lipids with branched tails prevent oxidation and preserve potency for up to 6 months at room temperature|c5}, a claim requiring multi-batch verification.`,
- cl:{c1:{g:'v',s:[1,3],n:'Confirmed by multiple peer-reviewed studies. Both Gemini and Claude retrieved and validated the exact passage.'},c2:{g:'v',s:[2],n:'Molecular Therapy 2022 peer-reviewed experimental study with animal immunogenicity data.'},c3:{g:'d',s:[3,4],n:'Formulations differ: Comirnaty requires -90 °C to -60 °C, while Spikevax allows -25 °C to -15 °C. Both require 2–8 °C limits post-thaw.'},c4:{g:'v',s:[5,6],n:'Pharmaceutics 2023 review confirms NLC matrix stability advantage over first-generation SLNs.'},c5:{g:'u',s:[4],n:'Single trade brief claim. Primary preclinical formulation data has not yet been deposited in repository.'}},
- panel:[{m:'Gemini 2.5 Flash',r:'Rapid chunk retrieval & claim verification',v:'Agrees · Hydrolysis primary failure mode',vc:'ok',cf:94,pts:['Extracted 10 verified signals across 8 papers','Confirms phosphodiester cleavage rate peaks at pH > 7.4','Flags excipient oxidation as key risk factor in liquid state'],ci:[1,3,4]},{m:'Claude 3.5 Sonnet',r:'Deep synthesis & formulation reasoning',v:'Agrees · Lyophilization recommended',vc:'ok',cf:91,pts:['Recommends sucrose/trehalose lyoprotectant cake matrix','Validates 4 °C storage viability from Molecular Therapy paper','Proposes second-generation NLC carrier investigation'],ci:[2,5,6]}],
- dis:'Both models agree that chemical hydrolysis of the mRNA backbone is the rate-limiting degradation pathway in aqueous LNP suspensions. Gemini emphasizes lipid excipient oxidation products (e.g. N-oxides and aldehydes) attacking nucleobases, while Claude emphasizes physical aggregation and cargo leakage during freeze-thaw cycles.',
+ cl:{c1:{g:'v',s:[1,3],n:'Confirmed by multiple peer-reviewed studies. Both Llama and Mistral retrieved and validated the exact passage.'},c2:{g:'v',s:[2],n:'Molecular Therapy 2022 peer-reviewed experimental study with animal immunogenicity data.'},c3:{g:'d',s:[3,4],n:'Formulations differ: Comirnaty requires -90 °C to -60 °C, while Spikevax allows -25 °C to -15 °C. Both require 2–8 °C limits post-thaw.'},c4:{g:'v',s:[5,6],n:'Pharmaceutics 2023 review confirms NLC matrix stability advantage over first-generation SLNs.'},c5:{g:'u',s:[4],n:'Single trade brief claim. Primary preclinical formulation data has not yet been deposited in repository.'}},
+ panel:[{m:'Llama 3.1 8B',r:'Fast fact check and citation matching',v:'Agrees · Hydrolysis primary failure mode',vc:'ok',cf:94,pts:['Extracted 10 verified signals across 8 papers','Confirms phosphodiester cleavage rate peaks at pH > 7.4','Flags excipient oxidation as key risk factor in liquid state'],ci:[1,3,4]},{m:'Mistral Small 24B',r:'Deep synthesis & formulation reasoning',v:'Agrees · Lyophilization recommended',vc:'ok',cf:91,pts:['Recommends sucrose/trehalose lyoprotectant cake matrix','Validates 4 °C storage viability from Molecular Therapy paper','Proposes second-generation NLC carrier investigation'],ci:[2,5,6]}],
+ dis:'Both models agree that chemical hydrolysis of the mRNA backbone is the rate-limiting degradation pathway in aqueous LNP suspensions. Llama emphasizes lipid excipient oxidation products (e.g. N-oxides and aldehydes) attacking nucleobases, while Mistral emphasizes physical aggregation and cargo leakage during freeze-thaw cycles.',
  next:'Advance mRNA-LNP instability concept to Validation stage, and run an automated scan on lipid oxidation inhibitors.',
  fups:['Which lyoprotectant ratio (sucrose vs trehalose) optimizes reconstitution?','Compare NLC vs SLN encapsulation efficiency at pilot scale','What are the regulatory requirements for room-temperature mRNA vaccine stability?'],
  apps:['mRNA prophylactic vaccines','Personalized oncology therapeutics','Rare genetic disease therapies','In vivo CAR-T delivery systems'],
@@ -868,9 +872,9 @@ cooling:{title:'mRNA-LNP formulation stability and excipient-induced degradation
  cm:[['amina','Lyophilization data from Molecular Therapy confirms 4 °C viability. I have promoted this to active concept.','2h'],['priya','The 42% logistics OPEX reduction makes this our priority candidate for the upcoming stage review.','1h']]},
 electrolyte:{title:'mRNA-LNP instability & Excipient Degradation',acc:94,
  html:`Lipid nanoparticle formulations can paradoxically increase mRNA degradation risk due to interactions among excipients, despite protecting against enzymatic degradation. {v|mRNA hydrolysis is the primary determining factor for mRNA-LNP instability across ambient conditions|c1}[1][3]. {v|Lyophilization provides long-term stability for lipid nanoparticle-formulated mRNA at 4 °C to 25 °C without loss of in vivo expression|c2}[2].<br><br>Storage temperature remains the binding operational constraint. {d|Current commercial formulations require -80 °C to -20 °C ultra-low cold chain|c3}[3][4], yet {v|nanostructured lipid carriers and lyoprotectant formulations demonstrate extended stability at refrigerated temperatures|c4}[5][6]. Finally, {u|novel ionizable lipids with branched tails prevent oxidation and preserve potency for up to 6 months at room temperature|c5}, a claim requiring multi-batch verification.`,
- cl:{c1:{g:'v',s:[1,3],n:'Confirmed by multiple peer-reviewed studies. Both Gemini and Claude retrieved and validated the exact passage.'},c2:{g:'v',s:[2],n:'Molecular Therapy 2022 peer-reviewed experimental study with animal immunogenicity data.'},c3:{g:'d',s:[3,4],n:'Formulations differ: Comirnaty requires -90 °C to -60 °C, while Spikevax allows -25 °C to -15 °C. Both require 2–8 °C limits post-thaw.'},c4:{g:'v',s:[5,6],n:'Pharmaceutics 2023 review confirms NLC matrix stability advantage over first-generation SLNs.'},c5:{g:'u',s:[4],n:'Single trade brief claim. Primary preclinical formulation data has not yet been deposited in repository.'}},
- panel:[{m:'Gemini 2.5 Flash',r:'Rapid chunk retrieval & claim verification',v:'Agrees · Hydrolysis primary failure mode',vc:'ok',cf:94,pts:['Extracted 10 verified signals across 8 papers','Confirms phosphodiester cleavage rate peaks at pH > 7.4','Flags excipient oxidation as key risk factor in liquid state'],ci:[1,3,4]},{m:'Claude 3.5 Sonnet',r:'Deep synthesis & formulation reasoning',v:'Agrees · Lyophilization recommended',vc:'ok',cf:91,pts:['Recommends sucrose/trehalose lyoprotectant cake matrix','Validates 4 °C storage viability from Molecular Therapy paper','Proposes second-generation NLC carrier investigation'],ci:[2,5,6]}],
- dis:'Both models agree that chemical hydrolysis of the mRNA backbone is the rate-limiting degradation pathway in aqueous LNP suspensions. Gemini emphasizes lipid excipient oxidation products attacking nucleobases, while Claude emphasizes physical aggregation during freeze-thaw cycles.',
+ cl:{c1:{g:'v',s:[1,3],n:'Confirmed by multiple peer-reviewed studies. Both Llama and Mistral retrieved and validated the exact passage.'},c2:{g:'v',s:[2],n:'Molecular Therapy 2022 peer-reviewed experimental study with animal immunogenicity data.'},c3:{g:'d',s:[3,4],n:'Formulations differ: Comirnaty requires -90 °C to -60 °C, while Spikevax allows -25 °C to -15 °C. Both require 2–8 °C limits post-thaw.'},c4:{g:'v',s:[5,6],n:'Pharmaceutics 2023 review confirms NLC matrix stability advantage over first-generation SLNs.'},c5:{g:'u',s:[4],n:'Single trade brief claim. Primary preclinical formulation data has not yet been deposited in repository.'}},
+ panel:[{m:'Llama 3.1 8B',r:'Fast fact check and citation matching',v:'Agrees · Hydrolysis primary failure mode',vc:'ok',cf:94,pts:['Extracted 10 verified signals across 8 papers','Confirms phosphodiester cleavage rate peaks at pH > 7.4','Flags excipient oxidation as key risk factor in liquid state'],ci:[1,3,4]},{m:'Mistral Small 24B',r:'Deep synthesis & formulation reasoning',v:'Agrees · Lyophilization recommended',vc:'ok',cf:91,pts:['Recommends sucrose/trehalose lyoprotectant cake matrix','Validates 4 °C storage viability from Molecular Therapy paper','Proposes second-generation NLC carrier investigation'],ci:[2,5,6]}],
+ dis:'Both models agree that chemical hydrolysis of the mRNA backbone is the rate-limiting degradation pathway in aqueous LNP suspensions. Llama emphasizes lipid excipient oxidation products attacking nucleobases, while Mistral emphasizes physical aggregation during freeze-thaw cycles.',
  next:'Advance mRNA-LNP instability concept to Validation stage, and run an automated scan on lipid oxidation inhibitors.',
  fups:['Which lyoprotectant ratio (sucrose vs trehalose) optimizes reconstitution?','Compare NLC vs SLN encapsulation efficiency at pilot scale','What are the regulatory requirements for room-temperature mRNA vaccine stability?'],
  apps:['mRNA prophylactic vaccines','Personalized oncology therapeutics','Rare genetic disease therapies','In vivo CAR-T delivery systems'],
@@ -880,8 +884,8 @@ electrolyte:{title:'mRNA-LNP instability & Excipient Degradation',acc:94,
 sodium:{title:'Nanostructured Lipid Carriers vs Solid Lipid Nanoparticles',acc:92,
  html:`Nanostructured lipid carriers load a higher amount of drug, enhance release properties, and increase stability compared with solid lipid nanoparticles[5]. {v|Incorporating liquid lipids into the solid lipid matrix avoids perfect crystal lattice formation, preventing drug expulsion during storage|c1}[5]. Production scalability via microfluidics is proven[7].<br><br>Cost and excipient purity remain sensitive inputs. {d|Purified synthetic ionizable lipids range from $18,000 to $45,000 per kg at GMP scale|c3}[6], yet {v|total formulation cost accounts for less than 12% of finished vial cost at commercial volume|c2}[5][7]. {u|Novel plant-derived helper lipids reduce raw material costs by 35%|c4}, according to preliminary vendor data.`,
  cl:{c1:{g:'v',s:[5],n:'Pharmaceutics 2023 review with comparative thermodynamic and structural data.'},c2:{g:'v',s:[5,7],n:'Techno-economic formulation analysis from microfluidic manufacturing review.'},c3:{g:'d',s:[6],n:'Prices vary by patent licensing status and supply contract term.'},c4:{g:'u',s:[8],n:'Vendor informational document without independent analytical verification.'}},
- panel:[{m:'Gemini 2.5 Flash',r:'Live web research and citations',v:'Agrees · NLC superior',vc:'ok',cf:92,pts:['Confirms liquid-lipid blend prevents crystallization','Cross-references microfluidic production parameters','Identifies 3 qualified excipient vendors'],ci:[5,7]},{m:'Claude 3.5 Sonnet',r:'Reasoning and synthesis',v:'Agrees with qualification note',vc:'ok',cf:89,pts:['NLC provides immediate shelf-life extension','Recommends multi-batch zeta-potential monitoring','Suggests dual-sourcing for synthetic lipids'],ci:[5,6,7]}],
- dis:'Both models accept NLCs as a major upgrade over SLNs. Gemini emphasizes production throughput on microfluidic platforms, while Claude focuses on regulatory comparability requirements for switching from an established SLN platform to NLCs.',
+ panel:[{m:'Llama 3.1 8B',r:'Fast fact check and citation matching',v:'Agrees · NLC superior',vc:'ok',cf:92,pts:['Confirms liquid-lipid blend prevents crystallization','Cross-references microfluidic production parameters','Identifies 3 qualified excipient vendors'],ci:[5,7]},{m:'Mistral Small 24B',r:'Reasoning and synthesis',v:'Agrees with qualification note',vc:'ok',cf:89,pts:['NLC provides immediate shelf-life extension','Recommends multi-batch zeta-potential monitoring','Suggests dual-sourcing for synthetic lipids'],ci:[5,6,7]}],
+ dis:'Both models accept NLCs as a major upgrade over SLNs. Llama emphasizes production throughput on microfluidic platforms, while Mistral focuses on regulatory comparability requirements for switching from an established SLN platform to NLCs.',
  next:'Author concept proposal for second-generation NLC mRNA formulation and submit for Gate 1 approval.',
  fups:['Which liquid lipids (e.g. Miglyol 812) are approved for parenteral injection?','What is the maximum drug loading capacity of NLCs for large mRNA constructs?','Compare freeze-drying viability of NLCs versus SLNs.'],
  apps:['mRNA vaccines','Ocular therapeutics','Topical gene delivery','Targeted oncology nanomedicines'],
@@ -935,7 +939,10 @@ window.__D={$,$$,esc,IC,ic,hash,P,av,SECT,SECTS,STAGES,sk,SRC,TYI,ANS,T,STATUS,b
 'use strict';
 const {$,$$,esc,ic,hash,P,av,SECT,SECTS,STAGES,sk,SRC,TYI,ANS,T,STATUS,byId,RAD,RELS,RINGS,LIB,CONN}=window.__D;
 
-const S={route:'home',role:'researcher',fmt:'presentation',lib:'repos',addOpen:0,dans:{},f:{q:'',sector:'All',owner:'All'},sort:{c:'prog',d:-1},shut:{},swim:'none',zoom:'q',crit:false,rad:{sel:null,sector:'All',rel:false,ring:'All',tr:'All',q:'',vb:[0,0,1200,1200],full:false},tab:'summary',lens:'rd',openId:null,cg:{},unread:true,srcSel:{Scholar:1,IEEE:1,Patents:1,Web:1,Uploads:1,Drive:0},model:'panel',attached:false,wiz:null,thId:3,
+const SCOPES={uploads:['My uploaded papers','Only the PDFs you upload. Nothing is searched online.','My uploads'],api:['Online research','Halden finds papers for you on OpenAlex, Unpaywall and Europe PMC. No upload needed.','Online'],both:['Uploads + online','Your PDFs plus papers Halden finds online. Best coverage, a little slower.','Uploads + online']};
+const srcLabel=()=>`${ic('db',14)} Sources · ${SCOPES[S.scope][2]}${S.attachments.length&&S.scope!=='api'?' · '+S.attachments.length+' file'+(S.attachments.length>1?'s':''):''}`;
+const srcBtn=()=>`<button class="cbtn" data-act="srcmenu">${srcLabel()}</button>`;
+const S={route:'home',scope:'both',role:'researcher',fmt:'presentation',lib:'repos',addOpen:0,dans:{},f:{q:'',sector:'All',owner:'All'},sort:{c:'prog',d:-1},shut:{},swim:'none',zoom:'q',crit:false,rad:{sel:null,sector:'All',rel:false,ring:'All',tr:'All',q:'',vb:[0,0,1200,1200],full:false},tab:'summary',lens:'rd',openId:null,cg:{},unread:true,model:'panel',attachments:[],wiz:null,thId:3,
  threads:[{id:'th1',title:'mRNA-LNP formulation stability & excipient degradation',key:'cooling',q:'What causes mRNA degradation in lipid nanoparticle formulations and how do excipients interact?',t:'Today'},{id:'th2',title:'Lyophilization protocols with Trehalose/Sucrose Matrix',key:'electrolyte',q:'How does lyophilization preserve mRNA integrity at 4 °C and room temperature?',t:'Yesterday'},{id:'th3',title:'Nanostructured Lipid Carriers (NLC) vs SLN Delivery',key:'sodium',q:'Can nanostructured lipid carriers enhance encapsulation efficiency and shelf life over solid lipid nanoparticles?',t:'Mon'}],
  comments:{},verdict:{},extra:{},cf:'APA',clips:[{id:'k1',text:'Lyophilization provides long-term stability for lipid nanoparticle-formulated mRNA at 4 °C to 25 °C without loss of in vivo expression.',title:'Lyophilization provides long-term stability for mRNA vaccine',site:'Molecular Therapy',url:'https://doi.org/10.1016/j.ymthe.2022.02.001',author:'A. Lindqvist',date:'November 2026',task:'t102',taskTitle:'Lyophilization protocols with Trehalose/Sucrose Matrix',tags:['formulation'],when:'Today'},{id:'k2',text:'mRNA hydrolysis is the determining factor for mRNA-LNP instability across liquid-state storage conditions.',title:'mRNA-lipid nanoparticle COVID-19 vaccines: Structure and stability',site:'Int. Journal of Pharmaceutics',url:'https://doi.org/10.1016/j.ijpharm.2021.120586',author:'M. Tanaka',date:'November 2026',task:'t101',taskTitle:'mRNA-LNP instability & Excipient Degradation',tags:['stability'],when:'Today'},{id:'k3',text:'Nanostructured lipid carriers achieve higher drug loading, enhanced release, and increased stability compared with solid lipid nanoparticles.',title:'Solid Lipid Nanoparticles vs. Nanostructured Lipid Carriers: A Comparative Review',site:'Pharmaceutics',url:'https://doi.org/10.3390/pharmaceutics15061593',author:'D. Okafor',date:'November 2026',task:'t103',taskTitle:'Nanostructured Lipid Carriers (NLC) 2nd-gen delivery',tags:['carrier'],when:'Yesterday'}]};
 window.GSKLOGO='data:image/svg+xml,%3Csvg%20xmlns%3D%27http%3A//www.w3.org/2000/svg%27%20viewBox%3D%270%200%2064%2064%27%3E%3Cdefs%3E%3ClinearGradient%20id%3D%27g%27%20x1%3D%270%27%20y1%3D%270%27%20x2%3D%271%27%20y2%3D%271%27%3E%3Cstop%20offset%3D%270%27%20stop-color%3D%27%23F7941D%27/%3E%3Cstop%20offset%3D%271%27%20stop-color%3D%27%23E2531A%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width%3D%2764%27%20height%3D%2764%27%20rx%3D%2716%27%20fill%3D%27url%28%23g%29%27/%3E%3Cpath%20d%3D%27M32%2013c1.7%209.8%209.2%2017.3%2019%2019-9.8%201.7-17.3%209.2-19%2019-1.7-9.8-9.2-17.3-19-19%209.8-1.7%2017.3-9.2%2019-19z%27%20fill%3D%27%23fff%27/%3E%3C/svg%3E';window.glow=(sz)=>`<span class="gl" style="--s:${sz||56}px"><i></i><i></i><img src="${window.GSKLOGO}" alt=""></span>`;
@@ -954,8 +961,8 @@ function getAns(t){
  t._a={title:t.title,acc,
  html:`Across ${s.length} indexed sources, the evidence on ${esc(t.title.toLowerCase())} points in one direction. {v|The core technical findings are consistent across independent sources|c1}[${a}][${b}]. {v|Internal data supports the direction of the external evidence|c2}[${z}].<br><br>Two points need a human decision. {d|Reported performance figures differ between the headline source and follow-up measurements|c3}[${a}][${b}], and {u|one commercial projection in the trade brief has no primary source|c4}.`,
  cl:{c1:{g:'v',s:[a,b],n:'Both models retrieved matching passages from independent sources.'},c2:{g:'v',s:[z],n:'Internal report, signed off by the lab lead.'},c3:{g:'d',s:[a,b],n:'Two sources report different figures. The headline number is a best-run result.'},c4:{g:'u',s:[b],n:'Single trade brief. No primary dataset or filing behind the projection.'}},
- panel:[{m:'Perplexity Sonar',r:'Live web research and citations',v:'Agrees with direction',vc:'ok',cf:acc+1,pts:['Retrieved matching passages from '+Math.min(s.length,4)+' sources','Evidence is recent and attributable','Flags the unsourced projection'],ci:s.slice(0,3)},{m:'Claude Opus',r:'Reasoning and synthesis',v:'Agrees, with a caveat',vc:'warn',cf:acc-4,pts:['Treats the headline figure as a best case','Plans on the more conservative follow-up range','Recommends a short validation run'],ci:s.slice(0,3)}],
- dis:'Both models agree on direction. They differ on which performance figure to plan on: Perplexity quotes the headline result, Claude uses the conservative follow-up range. A reviewer should choose before the business case is compiled.',
+ panel:[{m:'Llama 3.1 8B',r:'Fast fact check and citation matching',v:'Agrees with direction',vc:'ok',cf:acc+1,pts:['Retrieved matching passages from '+Math.min(s.length,4)+' sources','Evidence is recent and attributable','Flags the unsourced projection'],ci:s.slice(0,3)},{m:'Mistral Small 24B',r:'Reasoning and synthesis',v:'Agrees, with a caveat',vc:'warn',cf:acc-4,pts:['Treats the headline figure as a best case','Plans on the more conservative follow-up range','Recommends a short validation run'],ci:s.slice(0,3)}],
+ dis:'Both models agree on direction. They differ on which performance figure to plan on: Llama quotes the headline result, Mistral uses the conservative follow-up range. A reviewer should choose before the business case is compiled.',
  next:'Confirm the planning range with the owner, then submit for review.',
  fups:['Summarise the main risks','Compare against the closest alternative','List the sources I should read first'],
  apps:APPS[t.sector],
@@ -970,7 +977,7 @@ const ansByKey=k=>ANS[k]||getAns(byId(k));
 const claimMeta=k=>{const[ak,c]=k.split(':');const a=ansByKey(ak);return{a,c,m:a.cl[c],g:S.cg[k]||a.cl[c].g}};
 function rich(html,key){
  return html.replace(/\{([vdu])\|([^|]+)\|([^}]+)\}/g,(m,g,tx,c)=>{const gg=S.cg[key+':'+c]||g;return `<mark class="cl cl-${gg}" data-act="claim" data-k="${key}:${c}" tabindex="0" data-tip="${GL[gg]}. Click for sources.">${tx}</mark>`})
- .replace(/\[(\d+)\]/g,(m,n)=>SRC[n]?`<button class="cite" data-act="cite" data-n="${n}" data-tip="${esc(SRC[n].t)} · ${SRC[n].ty}, ${SRC[n].y}">${n}</button>`:m);
+ .replace(/\[(\d+)\]/g,(m,n)=>SRC[n]?`<button class="cite" data-act="cite" data-n="${n}" data-tip="${esc(SRC[n].t)} · ${SRC[n].ty}, ${SRC[n].y}">${SRC[n].ord||n}</button>`:m);
 }
 const citesIn=html=>[...new Set((html.match(/\[(\d+)\]/g)||[]).map(x=>+x.slice(1,-1)))];
 
@@ -1009,11 +1016,16 @@ function navHTML(){
  ${S.threads.map(t=>`<button class="ni rcn${S.route==='thread-'+t.id?' on':''}" data-act="openThread" data-id="${t.id}" title="${esc(t.title)}"><span>${esc(t.title)}</span></button>`).join('')}
  <div class="nav-foot">${av(S.role==='vp'?'priya':'amina',1)}<div style="line-height:1.25"><b style="font-size:13px">${S.role==='vp'?'Dr. Priya Nair':'Lead Researcher (You)'}</b><div class="faint" style="font-size:12px">${S.role==='vp'?'VP, R&D':'Project Owner'}</div></div></div>`}
 const TITLES={projects:'Projects',methods:'Methodologies',team:'Team & access',home:'Ask',list:'Active Research',board:'Research Tasks',roadmap:'Roadmap',radar:'Radar',sources:'Knowledge Library',clipper:'Web clipper',executive:'Executive overview'};
+function projectSelectHTML(){
+ const kc=window.__KC_BRIDGE,list=kc?kc.chatCapableProjects():[];
+ if(!S.live||!list.length)return '';
+ return `<label class="projsel" data-tip="Chats, library and signals belong to the active project" style="display:inline-flex;align-items:center;gap:6px;margin-left:14px"><span class="faint" style="font-size:12px">Project</span><select id="projsel" aria-label="Active project" style="font-size:13px;font-weight:600;padding:5px 8px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);max-width:260px">${list.map(p=>`<option value="${esc(p.id)}"${p.id===kc.state.projectId?' selected':''}>${esc(p.name)}</option>`).join('')}</select></label>`}
 function topHTML(){
  const title=S.route.startsWith('thread-')?'AI chat':TITLES[S.route];
  const ask=(S.route==='home'||S.route.startsWith('thread-'))?'':`<div class="askbar">${ic('spark',18)}<input id="topq" type="text" autocomplete="off" aria-label="Ask AI" placeholder="Ask across your research, sources and claims"><span class="scope">All research</span><button class="send" data-act="topAsk" aria-label="Ask">${ic('send',16)}</button></div>`;
  return `<button class="iconbtn burger" data-act="toggleNav" aria-label="Menu">${ic('menu')}</button>
  <div class="crumbs">${title}</div>
+ ${projectSelectHTML()}
  ${ask}
  <div class="grow"></div>
  <button class="btn sm" data-act="openNewProjectModal" style="display:inline-flex;align-items:center;gap:5px;font-weight:600;margin-right:6px">${ic('plus',13)} New Project</button>
@@ -1023,29 +1035,37 @@ function topHTML(){
 /* ===== home ===== */
 const SUG=[['What causes mRNA degradation in lipid nanoparticle formulations?','Excipient interactions, hydrolysis kinetics & pH sensitivity'],['Can lyophilization preserve mRNA vaccines at 4 °C and ambient temperatures?','Molecular Therapy empirical data & cake matrix stabilization'],['How do second-generation Nanostructured Lipid Carriers (NLC) compare with SLNs?','Encapsulation efficiency, release profile & liquid lipid blending'],['Summarise what changed in the mRNA stability portfolio this week','Signals, flagged claims and validation gates']];
 function homeHTML(){
- const mods={open:'Gemini + Llama (open-weight)',panel:'Panel · 2 models (Gemini & Claude)',pplx:'Gemini only',claude:'Claude only'};
- const ns=Object.values(S.srcSel).filter(Boolean).length;
  const Wm=window.__W;
  const act=T.filter(t=>t.stage!=='Decided').slice(0,5);
  const ups=S.auditUpdates && S.auditUpdates.length ? S.auditUpdates : [
    {who:'amina', txt:'Promoted verified finding: mRNA hydrolysis is determining factor for instability', w:'Today', tk:T[0]||{title:'mRNA-LNP Instability & Excipient Degradation'}},
    {who:'amina', txt:'Advanced concept to Evaluation stage based on literature consensus', w:'Today', tk:T[0]||{title:'mRNA-LNP Instability & Excipient Degradation'}},
    {who:'sara', txt:'Scanned and verified 10 signals from uploaded research literature', w:'Today', tk:T[1]||{title:'Lyophilization Protocols with Trehalose Matrix'}},
-   {who:'priya', txt:'Indexed 8 research papers into Knowledge Library with chunk verification', w:'Yesterday', tk:T[0]||{title:'mRNA-LNP Instability & Excipient Degradation'}}
+   {who:'priya', txt:'Indexed 8 research papers into Knowledge Library with passage checks', w:'Yesterday', tk:T[0]||{title:'mRNA-LNP Instability & Excipient Degradation'}}
  ];
  return `<div class="home"><div class="home-in">
  <div class="faint" style="font-size:14px;margin-bottom:6px">Welcome to Keycodes R&D Workspace</div>
  <h1 class="greet">What are you researching today?</h1>
- <div class="composer"><textarea id="q" rows="2" placeholder="Ask across your indexed sources: patents, journals, standards, internal reports"></textarea>
-  ${S.attached?`<div class="chips" style="margin:2px 0 4px"><span class="pill">${ic('file',13)} mRNA-Stability-Review.pdf <button data-act="detach" aria-label="Remove" style="margin-left:2px">${ic('x',12)}</button></span></div>`:''}
-  <div class="crow"><button class="cbtn" data-act="attach">${ic('clipb',14)} Attach</button><button class="cbtn" data-act="srcsel">${ic('db',14)} Sources · ${ns} of 6</button><button class="cbtn" data-act="modelsel">${ic('layers',14)} ${mods[S.model]}</button><button class="send" data-act="send" aria-label="Ask">${ic('send',18)}</button></div></div>
+ <div class="composer"><textarea id="q" rows="2" placeholder="Ask a research question. Answers cite the exact passage they came from."></textarea>
+  <div class="attc">${attChips()}</div>
+  <div class="crow">${srcBtn()}<button class="cbtn" data-act="modelsel">${ic('layers',14)} Panel · 2 models</button><button class="send" data-act="send" aria-label="Ask"${busy()?' disabled title="Waiting for your paper to finish reading"':''}>${ic('send',18)}</button></div></div>
 
  <div class="hg">
   <div class="card hl"><h5>Recent research</h5>${act.map(t=>`<button class="hi" data-act="openTask" data-id="${t.id}"><div class="grow"><b style="font-weight:600;font-size:14px;display:block;line-height:1.35">${esc(t.title)}</b><div class="faint" style="font-size:12.5px">${t.stage} · ${P[t.owner].n} · Due ${t.due}</div></div><span class="muted tnum" style="font-size:13px">${t.acc}%</span></button>`).join('')}
    <div style="padding:6px 10px 8px"><button class="btn sm ghost" data-act="nav" data-r="list">All active research ${ic('chev',13)}</button></div></div>
   <div class="card hl"><h5>Updates and feedback</h5>${ups.slice(0,5).map(u=>`<button class="hi" data-act="openDisc" data-id="${u.tk.id}">${av(u.who)}<div class="grow"><div style="font-size:13.5px;line-height:1.4"><b style="font-weight:600">${esc(P[u.who].n.replace(/^Dr\.\s*/,'').split(' ')[0])}</b> ${esc(u.txt.length>96?u.txt.slice(0,94)+'…':u.txt)}</div><div class="faint" style="font-size:12px">${esc(u.tk.title.length>44?u.tk.title.slice(0,42)+'…':u.tk.title)} · ${u.w}</div></div></button>`).join('')}</div>
-  <div class="card hl"><h5>AI chats</h5>${S.threads.slice(0,5).map(th=>`<button class="hi" data-act="openThread" data-id="${th.id}">${ic('spark',15)}<div class="grow"><b style="font-weight:600;font-size:14px;display:block;line-height:1.35">${esc(th.title)}</b><div class="faint" style="font-size:12.5px">${th.t} · ${ANS[th.key]?ANS[th.key].acc:90}% accuracy</div></div>${ic('chev',14)}</button>`).join('')}</div>
+  <div class="card hl"><h5>AI chats</h5>${S.threads.slice(0,5).map(th=>`<button class="hi" data-act="openThread" data-id="${th.id}">${ic('spark',15)}<div class="grow"><b style="font-weight:600;font-size:14px;display:block;line-height:1.35">${esc(th.title)}</b><div class="faint" style="font-size:12.5px">${th.t||''}${ANS[th.key]&&ANS[th.key].live?' · '+ANS[th.key].acc+'% accuracy':''}</div></div>${ic('chev',14)}</button>`).join('')}</div>
  </div></div></div>`}
+
+/* ===== attachments (uploaded to the live backend by halden-bridge.js) ===== */
+const busy=()=>S.attachments.some(a=>a.status==='uploading');
+const attSecs=a=>Math.floor((Date.now()-a.t0)/1000);
+const attPill=(x,i)=>{
+ const rm=`<button data-act="detach" data-i="${i}" aria-label="Remove" style="margin-left:2px">${ic('x',12)}</button>`;
+ if(x.status==='uploading')return `<span class="pill accent run"><i></i>${esc(x.name)} · Reading paper… ${attSecs(x)}s</span>`;
+ if(x.status==='error')return `<span class="pill warn">${ic('file',13)} ${esc(x.name)} · Upload failed ${rm}</span>`;
+ return `<span class="pill ok">${ic('check',13)} ${esc(x.name)} · Ready ${rm}</span>`};
+function attChips(){const a=S.attachments;return a.length?`<div class="chips" style="margin:2px 0 4px">${a.map(attPill).join('')}</div>${busy()?'<div class="faint" style="font-size:12px;margin-bottom:4px">Reading your paper so answers can cite it. Ask will be available when it is ready (usually under a minute).</div>':''}`:''}
 
 /* ===== thread ===== */
 function extras(key,t){
@@ -1054,25 +1074,29 @@ function extras(key,t){
  <div class="legend"><span><i class="sd" style="background:var(--ok)"></i>Verified</span><span><i class="sd" style="background:#E0A020"></i>Disputed</span><span><i class="sd" style="background:var(--bad)"></i>Unverified</span><span>Click any highlight or citation for the evidence</span></div>
  ${panelHTML(a,key)}
  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri sm" data-act="saveAns" data-k="${key}">${ic('plus',14)} Add to research task</button><button class="btn sm" data-act="copyAns" data-k="${key}">${ic('copy',14)} Copy with citations</button><button class="btn sm" data-act="flagAns" data-k="${key}">${ic('flag',14)} Flag for review</button></div>
- <div><div class="eyebrow" style="margin-bottom:8px">Suggested follow-ups</div><div class="fup">${a.fups.map((f,i)=>`<button class="fchip" data-act="followup" data-k="${key}" data-i="${i}">${esc(f)}</button>`).join('')}</div></div></div>`}
+ ${a.fups&&a.fups.length?`<div><div class="eyebrow" style="margin-bottom:8px">Suggested follow-ups</div><div class="fup">${a.fups.map((f,i)=>`<button class="fchip" data-act="followup" data-k="${key}" data-i="${i}">${esc(f)}</button>`).join('')}</div></div>`:''}</div>`}
 function panelHTML(a,key){
  const fl=Object.keys(a.cl).filter(c=>(S.cg[key+':'+c]||a.cl[c].g)!=='v').length;
  return `<div class="stack" style="gap:12px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:15px">Model panel</b><span class="gold-tag">2 models checked the same question</span><span class="grow"></span><span class="mini muted">Consensus<span style="width:90px;display:inline-block" class="bar"><i style="width:${Math.round((a.panel[0].cf+a.panel[1].cf)/2)}%;background:var(--gold)"></i></span><b>${Math.round((a.panel[0].cf+a.panel[1].cf)/2)}%</b></span></div>
- <div class="panel2">${a.panel.map((p,pi)=>`<div class="card mcard" data-act="mexp" data-i="${pi}" style="cursor:pointer"><h4><span class="logo" style="width:22px;height:22px;font-size:11px;border-radius:6px;${p.m.startsWith('Perp')?'background:#0A8CA6':'background:#B4570F'}">${p.m[0]}</span>${p.m}<span class="pill ${p.vc}" style="margin-left:auto">${p.v}</span></h4><div class="faint" style="font-size:12px;margin-top:-6px">${p.r} · confidence ${p.cf}%</div><ul>${p.pts.map((x,i)=>`<li class="${i===2&&p.vc==='warn'?'fl':''}">${x}</li>`).join('')}</ul><div style="display:flex;gap:4px;align-items:center"><span class="faint" style="font-size:12px;margin-right:4px">Cites</span>${p.ci.map(n=>`<button class="cite" data-act="cite" data-n="${n}" data-tip="${esc(SRC[n].t)}">${n}</button>`).join('')}</div><button class="btn sm" data-act="mexp" data-i="${pi}" style="margin-top:10px;width:100%">${ic('ext',14)} Expand full research</button></div>`).join('')}</div>
- <div class="disagree"><div class="eyebrow">Where they disagree · ${fl} claim${fl===1?'':'s'} flagged</div><p style="margin:6px 0 0">${a.dis}</p></div></div>`}
+ <div class="panel2">${a.panel.map((p,pi)=>`<div class="card mcard" data-act="mexp" data-i="${pi}" style="cursor:pointer"><h4><span class="logo" style="width:22px;height:22px;font-size:11px;border-radius:6px;${p.m.startsWith('Perp')?'background:#0A8CA6':'background:#B4570F'}">${p.m[0]}</span>${p.m}<span class="pill ${p.vc}" style="margin-left:auto">${p.v}</span></h4><div class="faint" style="font-size:12px;margin-top:-6px">${p.r} · confidence ${p.cf}%</div><ul>${p.pts.map((x,i)=>`<li class="${i===2&&p.vc==='warn'?'fl':''}">${x}</li>`).join('')}</ul><div style="display:flex;gap:4px;align-items:center"><span class="faint" style="font-size:12px;margin-right:4px">Cites</span>${p.ci.map(n=>`<button class="cite" data-act="cite" data-n="${n}" data-tip="${esc(SRC[n].t)}">${SRC[n].ord||n}</button>`).join('')}</div><button class="btn sm" data-act="mexp" data-i="${pi}" style="margin-top:10px;width:100%">${ic('ext',14)} Expand full research</button></div>`).join('')}</div>
+ <div class="disagree"><div class="eyebrow">${fl?`Where they disagree · ${fl} claim${fl===1?'':'s'} flagged`:'How the two models compared'}</div><p style="margin:6px 0 0">${a.dis}</p></div></div>`}
 function railHTML(key){
  const a=ansByKey(key),cs=citesIn(a.html);
- return `<div><div class="eyebrow" style="margin-bottom:8px">Answer accuracy</div><div style="display:flex;gap:12px;align-items:center">${ring(a.acc,56,6)}<div><b style="font-size:15px">${a.acc}% verified</b><div class="faint" style="font-size:12.5px">${Object.values(a.cl).filter(c=>c.g==='v').length} of ${Object.keys(a.cl).length} claims verified by both models</div></div></div></div>
+ return `<div><div class="eyebrow" style="margin-bottom:8px">Answer accuracy</div><div style="display:flex;gap:12px;align-items:center">${ring(a.acc,56,6)}<div><b style="font-size:15px">${a.acc}% verified</b><div class="faint" style="font-size:12.5px">${a.stats?`${a.stats.verified} of ${a.stats.total} model claims passed the source check`:`${Object.values(a.cl).filter(c=>c.g==='v').length} of ${Object.keys(a.cl).length} claims verified by both models`}</div></div></div></div>
  <div><div class="eyebrow" style="margin-bottom:8px">Sources in this answer · ${cs.length}</div><div class="stack" style="gap:8px">${cs.map(n=>`<button class="rsrc" data-act="cite" data-n="${n}">${lg(n)}<span><b>${esc(SRC[n].t)}</b><small>${SRC[n].ty} · ${esc(SRC[n].v)} · ${SRC[n].y}</small></span></button>`).join('')}</div></div>`}
 function threadHTML(th){
  const a=ansByKey(th.key),fresh=!!th.fresh;
  return `<div class="thread"><div class="tmain"><div class="tscroll" id="tscroll"><div class="tcol">
+  ${(th.prev||[]).map(pt=>{const pa=ansByKey(pt.key);return `<div class="umsg">${esc(pt.q)}</div>
+  <div class="amsg prevturn"><div class="ahead"><img class="gsk" src="${window.GSKLOGO}" alt="" style="width:24px;height:24px;border-radius:6px"><b>Halden</b><span class="pill accent">Grounded · ${citesIn(pa.html).length} sources</span><span class="pill gold">2 models</span><span class="pill ${pa.acc>=90?'ok':'warn'}">Accuracy ${pa.acc}%</span></div>
+  ${pt.pre?`<div class="muted" style="font-size:14px">${pt.pre}</div>`:''}
+  <div class="abody">${rich(pa.html,pt.key)}</div>${extras(pt.key)}</div>`}).join('')}
   <div class="umsg">${esc(th.q)}</div>
   <div class="amsg"><div class="ahead"><img class="gsk" src="${window.GSKLOGO}" alt="" style="width:24px;height:24px;border-radius:6px"><b>Halden</b><span class="pill accent">Grounded · ${citesIn(a.html).length} sources</span><span class="pill gold">2 models</span><span class="pill ${a.acc>=90?'ok':'warn'}" data-tip="Share of claims verified across both models">Accuracy ${a.acc}%</span></div>
   ${th.pre?`<div class="muted" style="font-size:14px">${th.pre}</div>`:''}
   <div class="abody${fresh?' cursor':''}" id="abody">${fresh?'':rich(a.html,th.key)}</div>
   <div id="aextra">${fresh?'':extras(th.key)}</div></div></div></div>
-  <div class="composer dock"><textarea id="q2" rows="1" placeholder="Ask a follow-up, or paste a draft paragraph to fact-check"></textarea><div class="crow"><button class="cbtn" data-act="attach">${ic('clipb',14)} Attach</button><button class="cbtn gold" data-act="modelsel">${ic('layers',14)} Panel · 2 models</button><button class="send" data-act="send2" aria-label="Ask">${ic('send',18)}</button></div></div></div>
+  <div class="composer dock"><textarea id="q2" rows="1" placeholder="Ask a follow-up, or paste a draft paragraph to fact-check"></textarea><div class="attc">${attChips()}</div><div class="crow">${srcBtn()}<button class="cbtn gold" data-act="modelsel">${ic('layers',14)} Panel · 2 models</button><button class="send" data-act="send2" aria-label="Ask"${busy()?' disabled title="Waiting for your paper to finish reading"':''}>${ic('send',18)}</button></div></div></div>
   <aside class="rail" id="rail">${railHTML(th.key)}</aside></div>`}
 
 /* ===== portfolio shell ===== */
@@ -1231,12 +1255,30 @@ function pjResearch(pj){
  if(sub==='reports')return head('Research / '+t.code,'Reports','<span style="display:flex;gap:8px"><button class="btn" data-act="openCase" data-id="'+t.id+'">Prepare Report</button><button class="btn" data-act="printRep">Print / PDF</button></span>')+`<p class="muted">Prepare a deliverable from the current research.</p><div class="pjdoc" id="pjrep"><div class="eyebrow">Research Report · ${t.code}</div><h1 class="pjt" style="font-size:26px">${esc(t.title)}</h1><div class="faint">mRNA Vaccine Stability &amp; Formulation Programme</div><h3>Executive Summary</h3>${plainT(a.html).split('\n').filter(Boolean).map(p=>`<p>${esc(p)}</p>`).join('')}<h3>Key Findings</h3>${cl.map((c,i)=>`<p>${i+1}. ${esc(c.x)}</p>`).join('')}<h3>References</h3>${srcs.map((s,i)=>`<p>${i+1}. ${esc(s.t)}</p>`).join('')}</div>`;
  return ''}
 function nrModal(){
+ const NRS=window.__NRS=window.__NRS||{uploads:['My uploaded papers','Only the PDFs you upload. Nothing is searched online.'],api:['Online research','Papers found on OpenAlex, Unpaywall and Europe PMC.'],both:['Uploads + online','Your PDFs plus papers found online.']};
  const n=S.pj&&S.pj.nr;if(!n)return '';const st=n.step;
  const body=st===1?`<p class="muted">Define the question and purpose of this investigation.</p><label class="pjl">Research Title<input class="in" id="nr_t" placeholder="e.g. Storage Technologies" value="${esc(n.title||'')}"></label><label class="pjl">Research Question<textarea class="in" id="nr_q" rows="3" placeholder="What needs to be answered?">${esc(n.q||'')}</textarea></label><label class="pjl">Background & Context<textarea class="in" id="nr_b" rows="3" placeholder="What led to this research?">${esc(n.bg||'')}</textarea></label><label class="pjl">Expected Output<input class="in" id="nr_o" value="${esc(n.out||'Technical research report')}"></label>`
  :st===2?`<p class="muted">Choose how this research will be structured.</p>${PJM.map(m=>`<label class="pjopt"><input type="radio" name="nr_m" value="${esc(m)}"${n.method===m?' checked':''}> ${m}</label>`).join('')}`
+ :st===3?`<p class="muted">Choose where the evidence comes from. The models only ever read these sources.</p>${Object.keys(NRS).map(k=>`<label class="pjopt"><input type="radio" name="nr_s" value="${k}"${(n.scope||'both')===k?' checked':''}> <b>${NRS[k][0]}</b> <span class="faint">${NRS[k][1]}</span></label>`).join('')}<label class="pjl">Paper links or DOIs (optional, one per line)<textarea class="in" id="nr_k" rows="3" placeholder="https://doi.org/10.1016/...">${esc(n.links||'')}</textarea></label><p class="faint" style="font-size:12.5px">Have your own PDFs? Attach them on the Ask page after creating the research.</p>`
+ :st===5?`<p class="muted">Check the setup, then start.</p>${[['Title',n.title],['Question',n.q],['Expected output',n.out],['Method',n.method],['Sources',NRS[n.scope||'both'][0]],['Links',((n.links||'').split(/\n+/).filter(Boolean).length)+' added'],['Lead',n.lead||P.amina.n]].map(r=>`<div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)"><b style="width:120px;flex:none">${r[0]}</b><span>${esc(r[1]||'Not set')}</span></div>`).join('')}`
  :`<p class="muted">Choose who leads and who reviews.</p><label class="pjl">Research Lead<select class="in" id="nr_l">${Object.keys(P).map(k=>`<option${(n.lead||P.amina.n)===P[k].n?' selected':''}>${P[k].n}</option>`).join('')}</select></label><label class="pjl">Review Workflow<select class="in"><option>Standard R&D</option></select></label>`;
- return `<div class="pjmod"><div class="pjbk" data-act="nrClose"></div><div class="pjmbox"><div style="display:flex"><h2 style="margin:0;font-size:20px;flex:1">New Research</h2><button class="iconbtn" data-act="nrClose">×</button></div><div class="pjmt">${['Brief','Methodology','People & Review'].map((x,i)=>`<span class="${st===i+1?'on':''}">${i+1} · ${x}</span>`).join('')}</div>${body}<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-act="${st>1?'nrBack':'nrClose'}">${st>1?'Back':'Cancel'}</button><button class="btn pri" data-act="nrNext">${st<3?'Continue':'Create Research'}</button></div></div></div>`}
+ return `<div class="pjmod"><div class="pjbk" data-act="nrClose"></div><div class="pjmbox"><div style="display:flex"><h2 style="margin:0;font-size:20px;flex:1">New Research</h2><button class="iconbtn" data-act="nrClose">×</button></div><div class="pjmt">${['Brief','Methodology','Sources','People & Review','Review & start'].map((x,i)=>`<span class="${st===i+1?'on':''}">${i+1} · ${x}</span>`).join('')}</div>${body}<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px"><button class="btn" data-act="${st>1?'nrBack':'nrClose'}">${st>1?'Back':'Cancel'}</button><button class="btn pri" data-act="nrNext">${st<5?'Continue':'Start Research'}</button></div></div></div>`}
+function liveProjectsHTML(){
+ const st=window.__KC_BRIDGE.state,list=window.__KC_BRIDGE.chatCapableProjects(),cur=list.find(p=>p.id===st.projectId)||list[0];
+ const rail=`<aside class="pjrail"><div class="pjh">Projects <span class="faint">${list.length}</span></div>${list.map(p=>`<button class="pjn${cur&&p.id===cur.id?' on':''}" data-act="switchProj" data-id="${p.id}">${esc(p.name)}</button>`).join('')}<button class="pjn new" data-act="openNewProjectModal">${ic('plus',13)} New Project</button></aside>`;
+ if(!cur)return `<div class="pjwrap">${rail}<div class="pjmain"><p class="muted">No project yet. Create one to start asking questions.</p></div></div>`;
+ const m=cur.meta||{},chats=S.threads.filter(t=>t.srv||t.live);
+ const field=(l,v)=>v?`<div class="pjsec"><h3>${l}</h3><p>${esc(v)}</p></div>`:'';
+ const stat=(n,l)=>`<div><b>${n}</b><span>${l}</span></div>`;
+ const rows=chats.length?chats.map(th=>`<button class="hi" data-act="openThread" data-id="${th.id}">${ic('spark',15)}<div class="grow"><b style="font-weight:600;font-size:14px;display:block;line-height:1.35">${esc(th.title)}</b><div class="faint" style="font-size:12.5px">${th.t||''}</div></div>${ic('chev',14)}</button>`).join(''):'<div class="muted" style="padding:12px 16px">No chats yet. Ask a question on the Ask page.</div>';
+ return `<div class="pjwrap">${rail}<div class="pjmain"><div class="eyebrow">Project</div><h1 class="pjt">${esc(cur.name)}</h1>
+ <p class="muted">${esc(m.question||('Created '+new Date(cur.created_at).toLocaleDateString()))}</p>
+ <div class="pjstat">${stat(chats.length,'Chats')}${stat(LIB.length,'Library papers')}${stat(T.length,'Research items')}${stat(RAD.length,'Signals')}</div>
+ ${field('Sector',m.sector)}${field('Lead',m.lead)}${field('Methodology',m.method)}${field('Expected output',m.output)}
+ <div class="pjbox"><div class="pjbh">Chats in this project<span class="faint">${chats.length}</span></div>${rows}</div>
+ <div style="margin-top:12px"><button class="btn pri" data-act="nav" data-r="home">${ic('spark',15)} Ask a question in this project</button></div></div></div>`}
 function projectsHTML(){
+ if(S.live&&window.__KC_BRIDGE)return liveProjectsHTML();
  S.pj=S.pj||{v:'overview'};const pj=S.pj;
  const main=pj.v==='r'?pjResearch(pj):pj.v==='team'?pjTeam():pjOverview();
  return `<div class="pjwrap">${pjRail()}<div class="pjmain">${main}</div></div>${nrModal()}`}
@@ -1268,7 +1310,7 @@ function clipperHTML(){
  <p>Lyophilization provides long-term stability for lipid nanoparticle-formulated mRNA vaccines at refrigerated temperatures (4 °C) and room temperature (25 °C) without losing potency or in vivo translation efficiency. The protective sucrose-trehalose lyoprotectant cake matrix prevents structural collapse during thermal excursions.</p>
  <p>Second-generation nanostructured lipid carriers (NLC) achieve higher drug loading, enhanced release, and increased shelf-life compared with conventional solid lipid nanoparticles. Microfluidic formulation processes ensure uniform particle size and over 90% encapsulation efficiency.</p></div></div></div>`}
 
-window.__V={S,GL,GN,getAns,flagged,akey,ansByKey,claimMeta,rich,citesIn,bar,line,ring,stagePill,statusPill,ragDot,sector,prog,filt,navHTML,topHTML,homeHTML,threadHTML,extras,panelHTML,railHTML,pvHTML,pvBody,listHTML,boardHTML,roadmapHTML,radarHTML,radarSVG,radarSide,radVis,radPos,sourcesHTML,projectsHTML,methodsHTML,teamHTML,clipperHTML,cardHTML,SUG,APPS};
+window.__V={SCOPES,srcLabel,busy,S,GL,GN,getAns,flagged,akey,ansByKey,claimMeta,rich,citesIn,bar,line,ring,stagePill,statusPill,ragDot,sector,prog,filt,navHTML,topHTML,homeHTML,threadHTML,extras,attChips,panelHTML,railHTML,pvHTML,pvBody,listHTML,boardHTML,roadmapHTML,radarHTML,radarSVG,radarSide,radVis,radPos,sourcesHTML,projectsHTML,methodsHTML,teamHTML,clipperHTML,cardHTML,SUG,APPS};
 })();
 (function(){
 'use strict';
@@ -1316,7 +1358,7 @@ function drawerBody(t){
  if(S.tab==='evidence')return evTab(t);
  if(S.tab==='discuss')return window.__disc(t);
  if(run)return lockHTML(t);
- return {models:()=>V.panelHTML(getAns(t),akey(t)),claims:()=>claimTab(t),lenses:()=>`<div class="card sec" style="text-align:center;padding:44px 20px"><b style="font-size:16px">Lenses</b><div class="muted" style="margin-top:4px">Coming soon</div></div>`,case:()=>caseTab(t)}[S.tab]()}
+ return {models:()=>V.panelHTML(getAns(t),akey(t)),claims:()=>claimTab(t),lenses:()=>window.__lens(t),case:()=>caseTab(t)}[S.tab]()}
 function runHTML(t){const cur=Math.min(4,Math.floor(t.prog/20));
  return `<div class="stack" style="gap:16px"><div class="card sec stack"><div style="display:flex;align-items:center;gap:14px">${window.glow(48)}<span class="pill accent run"><i></i>Agents running</span><b>${Math.round(t.prog)}% complete</b><span class="faint">about ${Math.max(1,Math.round((100-t.prog)/9))} min remaining</span></div>
  ${AG.map((s,i)=>`<div style="display:flex;gap:10px;align-items:center"><span style="width:20px;display:grid;place-items:center">${i<cur?`<span style="color:var(--ok)">${ic('check',16)}</span>`:i===cur?'<span class="pill accent run" style="padding:0;height:auto;background:none"><i></i></span>':'<span class="faint">○</span>'}</span><span class="${i>cur?'faint':''}" style="${i===cur?'font-weight:600':''}">${s}</span></div>`).join('')}</div>
@@ -1390,7 +1432,7 @@ const MIC='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="c
  if(st===2){const SN={Scholar:['Scholarly journals','Google Scholar, arXiv, publisher feeds','Paste a paper, DOI or journal link'],Patents:['Patent filings','USPTO, EPO, WIPO','Paste a patent number or link'],IEEE:['Standards and conference papers','IEEE Xplore, UL, ISO','Paste a standard or paper link'],Web:['Live web and news','Cited, dated and attributable','Paste a page or site to include'],Uploads:['Your upload library','Reports and notes already indexed','Paste a document link or attach a file']};
   const o=d.open&&d.src.includes(d.open)?d.open:null,items=o?(d.res[o]||[]):[];
   b=`<div class="stack" style="gap:8px">${Object.keys(SN).map(k=>opt('wsrc','src',k,SN[k][0],SN[k][1],d.src.includes(k))).join('')}${o?`<div class="wpanel card sec stack" style="gap:10px;box-shadow:none;border-color:var(--accent)"><div style="display:flex;align-items:center"><b>Add to ${SN[o][0]}</b><span class="grow"></span><button class="iconbtn" style="width:26px;height:26px" data-act="wclose" aria-label="Collapse">${ic('down',15)}</button></div><div style="display:flex;gap:8px"><input class="in" id="wlink" placeholder="${SN[o][2]}"><button class="btn pri" data-act="wadd">Add</button></div><div><button class="btn sm" data-act="wfile">${ic('upload',14)} Attach a file</button></div>${items.length?`<div class="stack" style="gap:6px">${items.map((x,i)=>`<div class="tile" style="display:flex;gap:8px;align-items:center;padding:8px 10px">${ic(x.f?'file':'link',14)}<span class="grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px">${esc(x.v)}</span><button class="iconbtn" style="width:24px;height:24px" data-act="wdel" data-i="${i}" aria-label="Remove">${ic('x',13)}</button></div>`).join('')}</div>`:''}</div>`:''}</div>`}
- if(st===3)b=`<div class="stack" style="gap:8px">${[['panel','Perplexity Sonar + Claude Opus','Recommended. Two models, every claim cross-checked'],['open','Perplexity Sonar + Llama (open-weight)','Runs in your own environment'],['mistral','Perplexity Sonar + Mistral','Open-weight alternative']].map(([k,t,s])=>opt('wset','model',k,t,s,d.model===k)).join('')}<div class="faint" style="font-size:12px">US-acceptable models only.</div></div>`;
+ if(st===3)b=`<div class="stack" style="gap:8px">${[['panel','Mistral Small 24B + Llama 3.1 8B','Recommended. Two models, every claim cross-checked'],['open','Llama 3.1 8B + Llama (open-weight)','Runs in your own environment'],['mistral','Llama 3.1 8B + Mistral','Open-weight alternative']].map(([k,t,s])=>opt('wset','model',k,t,s,d.model===k)).join('')}<div class="faint" style="font-size:12px">US-acceptable models only.</div></div>`;
  if(st===4)b=`<div class="stack"><div class="card sec stack" style="box-shadow:none"><b style="font-size:16px">${esc(d.title||d.q||'New research task')}</b><div class="muted">${esc(d.q||'')}</div><div class="chips"><span class="pill accent">${d.sector}</span><span class="pill gold">${d.pri} priority</span><span class="pill">${d.src.length} source group${d.src.length===1?'':'s'}</span><span class="pill">${{panel:'Sonar + Opus',open:'Sonar + Llama',mistral:'Sonar + Mistral'}[d.model]}</span></div></div><div class="faint" style="font-size:13px">It starts in Discovery and is ready for review in a few minutes.</div></div>`;
  return mwrap('New research task',steps+b,`${st>0?'<button class="btn" data-act="wback">Back</button>':'<button class="btn ghost" data-act="closeModal">Cancel</button>'}${st<4?'<button class="btn pri" data-act="wnext">Continue</button>':'<button class="btn pri" data-act="wlaunch">Launch research</button>'}`)}
 function exportHTML(t){return mwrap('Export business case',`<div class="hint" style="margin-bottom:12px">${ic('file',16)} Preview of the PDF. Citations, charts and flagged claims are included.</div>${bizDoc(t)}`,`<button class="btn" data-act="closeModal">Close</button><button class="btn pri" data-act="doExport" data-id="${t.id}">${ic('upload',14)} Generate PDF</button>`,true)}
@@ -1431,7 +1473,7 @@ function srcSlide(t,n,i,tot){
  <div class="qt">${esc(s.p).replace(/«([^»]*)»/g,'<mark>$1</mark>')}</div>
  ${tbl(['Extracted value','Context'],nm.length?nm.map(x=>[`<b>${esc(x[0])}</b>`,esc(x[1])]):[['<b>n/a</b>','Qualitative evidence']],'tight')}</div>
  <div class="stk"><div class="bx"><div class="bt">Claims this source supports</div>${sup.length?sup.map(c=>`<div class="li2">${gpill(gradeOf(k,c))} ${rf(cs[c])}</div>`).join(''):'<div class="li2">Background context for the research question. Not tied to a single claim.</div>'}</div>
- <div class="bx"><div class="bt">Model readings</div><div class="li2"><b>Perplexity Sonar</b> retrieved this passage at rank ${1+h%3} with ${88+h%10}% text match.</div><div class="li2"><b>Claude Opus</b> cross-checked the wording against the full text. Agreement ${86+(h>>2)%12}%.</div></div>
+ <div class="bx"><div class="bt">Model readings</div><div class="li2"><b>Llama 3.1 8B</b> retrieved this passage at rank ${1+h%3} with ${88+h%10}% text match.</div><div class="li2"><b>Mistral Small 24B</b> cross-checked the wording against the full text. Agreement ${86+(h>>2)%12}%.</div></div>
  <div class="bx"><div class="bt">Reviewer note</div><div class="li2 ph">Click to add a note on how this source should be weighted.</div></div>
  <div class="bx"><div class="bt">Citation</div><div class="li2 cit">${esc(s.t)}. ${esc(s.v)}, ${s.y}.</div></div></div></div>`)}
 function genDeck(t){
@@ -1442,8 +1484,8 @@ function genDeck(t){
  sl.push(`<section class="sl cover"><div class="cv-in"><div class="kk">Final Research Case</div><h1>${esc(t.title)}</h1><p>Prepared for Halden R&amp;D · ${esc(own)} · ${t.due}</p><div class="cv-ft"><span>Evidence accuracy ${a.acc}%</span><span>${ids.length} sources · ${ckeys.length} claims checked</span><span>Draft for review</span></div></div></section>`);
  sl.push('@@CONTENTS@@');
  add('Summary',SL(t,'Summary','Executive summary',esc(L.rd.h),`<div class="c2"><div class="stk"><div class="abd">${plain(a.html)}</div><div class="co">Recommendation: ${esc(a.next)}</div></div><div class="stk"><div class="kps">${kp('Accuracy',a.acc+'%','cross-model verified')}${kp('Claims verified',vv+' of '+ckeys.length,'both models agree')}${kp('Sources',ids.length,'scholarly, patent, internal')}${kp('Open flags',ckeys.length-vv,'need a decision')}</div><div class="bx"><div class="bt">Headline by department</div>${[['rd','R&amp;D'],['fin','Finance'],['mkt','Marketing'],['leg','Legal']].map(([x,l])=>`<div class="li2"><b>${l}:</b> ${esc(L[x].h)}</div>`).join('')}</div></div></div>`));
- add('Scope',SL(t,'Scope','Research question and scope','What we set out to establish',`<div class="c2"><div class="stk"><div class="bx"><div class="bt">Question</div><div class="li2">${esc(t.title)}. Establish technical feasibility, evidence quality, cost and risk, and a recommended next gate.</div></div><div class="bx"><div class="bt">In scope</div><ul><li>${esc(t.sector)} evidence from journals, patents, standards and internal reports</li><li>Cross-model verification of every factual claim</li><li>Department views for R&amp;D, Finance, Marketing and Legal</li></ul></div><div class="bx"><div class="bt">Out of scope</div><ul><li>Production-scale process design</li><li>Supplier contract negotiation</li></ul></div></div><div class="stk">${tbl(['Field','Detail'],[['Task owner',esc(own)],['Stage',t.stage],['Priority',t.pri],['Due',t.due],['Progress',Math.round(t.prog)+'%'],['Accuracy',a.acc+'%'],['Models','Perplexity Sonar, Claude Opus']])}<div class="bx"><div class="bt">Success criteria</div><ul><li>All headline claims verified or flagged</li><li>Decision-ready recommendation for the next gate</li></ul></div></div></div>`));
- add('Method',SL(t,'Method','Method','Two models, one evidence base',`<div class="c2"><div class="stk"><div class="steps4">${['Plan','Search','Extract','Cross-check','Draft'].map((x,i)=>`<div><b>${i+1}</b><span>${x}</span></div>`).join('')}</div><div class="bx"><div class="bt">How claims are graded</div><div class="li2">${gpill('v')} Both models retrieve matching text from at least one primary source.</div><div class="li2">${gpill('d')} Sources disagree on the figure or the interpretation.</div><div class="li2">${gpill('u')} No primary source found. Needs a human decision.</div></div></div><div class="stk">${tbl(['Source group','Used','Examples'],[['Scholarly journals',ids.filter(n=>SRC[n].ty==='Journal').length,'Journal articles, preprints'],['Patent filings',ids.filter(n=>SRC[n].ty==='Patent').length,'USPTO, EPO, WIPO'],['Standards',ids.filter(n=>SRC[n].ty==='Standard').length,'UN, IEC, MIL-STD'],['Internal reports',ids.filter(n=>/Internal|Interview|Report/.test(SRC[n].ty)).length,'Lab reports, notes'],['Web and news',ids.filter(n=>SRC[n].ty==='Web').length,'Dated and attributed']])}<div class="bx"><div class="bt">Models</div><div class="li2"><b>Perplexity Sonar:</b> live research and citations.</div><div class="li2"><b>Claude Opus:</b> reasoning and synthesis.</div></div></div></div>`));
+ add('Scope',SL(t,'Scope','Research question and scope','What we set out to establish',`<div class="c2"><div class="stk"><div class="bx"><div class="bt">Question</div><div class="li2">${esc(t.title)}. Establish technical feasibility, evidence quality, cost and risk, and a recommended next gate.</div></div><div class="bx"><div class="bt">In scope</div><ul><li>${esc(t.sector)} evidence from journals, patents, standards and internal reports</li><li>Cross-model verification of every factual claim</li><li>Department views for R&amp;D, Finance, Marketing and Legal</li></ul></div><div class="bx"><div class="bt">Out of scope</div><ul><li>Production-scale process design</li><li>Supplier contract negotiation</li></ul></div></div><div class="stk">${tbl(['Field','Detail'],[['Task owner',esc(own)],['Stage',t.stage],['Priority',t.pri],['Due',t.due],['Progress',Math.round(t.prog)+'%'],['Accuracy',a.acc+'%'],['Models','Llama 3.1 8B, Mistral Small 24B']])}<div class="bx"><div class="bt">Success criteria</div><ul><li>All headline claims verified or flagged</li><li>Decision-ready recommendation for the next gate</li></ul></div></div></div>`));
+ add('Method',SL(t,'Method','Method','Two models, one evidence base',`<div class="c2"><div class="stk"><div class="steps4">${['Plan','Search','Extract','Cross-check','Draft'].map((x,i)=>`<div><b>${i+1}</b><span>${x}</span></div>`).join('')}</div><div class="bx"><div class="bt">How claims are graded</div><div class="li2">${gpill('v')} Both models retrieve matching text from at least one primary source.</div><div class="li2">${gpill('d')} Sources disagree on the figure or the interpretation.</div><div class="li2">${gpill('u')} No primary source found. Needs a human decision.</div></div></div><div class="stk">${tbl(['Source group','Used','Examples'],[['Scholarly journals',ids.filter(n=>SRC[n].ty==='Journal').length,'Journal articles, preprints'],['Patent filings',ids.filter(n=>SRC[n].ty==='Patent').length,'USPTO, EPO, WIPO'],['Standards',ids.filter(n=>SRC[n].ty==='Standard').length,'UN, IEC, MIL-STD'],['Internal reports',ids.filter(n=>/Internal|Interview|Report/.test(SRC[n].ty)).length,'Lab reports, notes'],['Web and news',ids.filter(n=>SRC[n].ty==='Web').length,'Dated and attributed']])}<div class="bx"><div class="bt">Models</div><div class="li2"><b>Llama 3.1 8B:</b> live research and citations.</div><div class="li2"><b>Mistral Small 24B:</b> reasoning and synthesis.</div></div></div></div>`));
  add('Findings',SL(t,'Findings','Key findings','What the evidence says',`<div class="c2"><div class="stk">${L.rd.b.map((b,i)=>`<div class="fnd"><b>${i+1}</b><div>${rf(b)}</div></div>`).join('')}${ckeys.map((c,i)=>`<div class="fnd s"><b>${gpill(gs[i])}</b><div>${esc(cs[c])}</div></div>`).join('')}</div><div class="stk"><div class="bx"><div class="bt">${esc(L.rd.c[0])}</div>${bar(L.rd.c[1],L.rd.c[2],{h:190})}</div></div></div>`));
  add('Evidence',SL(t,'Evidence','Evidence overview','Where the evidence comes from',`<div class="kps k4">${kp('Sources',ids.length,'all cited')}${kp('Avg relevance',Math.round(ids.reduce((x,n)=>x+SRC[n].rel,0)/ids.length)+'%','across sources')}${kp('Citations verified',ids.filter(n=>SRC[n].ok).length+' of '+ids.length,'checked in full text')}${kp('Newest',Math.max(...ids.map(n=>SRC[n].y)),'publication year')}</div><div class="c2"><div class="bx">${bar(a.ch.l1,a.ch.v1,{h:170})}<div class="cap">${a.ch.t1}</div></div><div class="bx">${line(a.ch.l2,a.ch.v2,{h:170})}<div class="cap">${a.ch.t2}</div></div></div>`));
  ids.forEach((n,i)=>add(i===0?'Source evidence':null,srcSlide(t,n,i,ids.length)));
@@ -1554,7 +1596,7 @@ function data(t,k){
 function chart(c,hh){return c[3]==='line'?line(c[1],c[2],{h:hh||170}):bar(c[1],c[2],{h:hh||170})}
 function lensTab(t){
  const k=S.lens,a=getAns(t),L=a.lens[k],d=data(t,k),key=akey(t),cs=citesIn(a.html);
- const ill='';
+ const ill=k==='rd'?'':'<span class="gold-tag">Illustrative data for the pilot</span>';
  return `<div class="stack" style="gap:16px">
  <div class="lensbar"><span class="muted">Department lens</span>${Object.keys(DN).map(x=>`<button class="fchip${k===x?' on':''}" data-act="lens" data-l="${x}">${DN[x]}</button>`).join('')}${ill}</div>
  <div class="card sec stack" style="gap:12px;border-color:var(--accent)"><div class="eyebrow">${DN[k]} summary</div><h3 style="margin:0;font:300 26px/1.2 var(--serif)">${esc(L.h)}</h3><p style="margin:0;font-size:14.5px;line-height:1.6">${esc(d.sum.replace(L.h+". ",""))}</p>
@@ -1720,42 +1762,85 @@ document.addEventListener('keydown',ev=>{
 document.addEventListener('input',ev=>{if(ev.target.id!=='dIn')return;const m=ev.target.value.match(/@(\w*)$/),box=$('#dMen');if(!m){box.hidden=true;return}
  const l=Object.keys(P).filter(k=>k!=='amina'&&P[k].n.toLowerCase().includes(m[1].toLowerCase()));box.hidden=!l.length;box.innerHTML=l.map(k=>`<button data-act="dmen" data-n="${P[k].n.split(' ')[0].replace(/[^\w]/g,'')}">${av(k,1)}<span><b>${P[k].n}</b><small>${P[k].r}</small></span></button>`).join('')});
 
-/* ---------- notifications ---------- */
+/* ---------- notifications ----------
+   State lives in a Redux Toolkit store (public/notif-store.js, built from lib/notifications/*), the same slice the
+   React shell uses. This block only renders it and dispatches actions. Persistence and cross-tab sync are the store's. */
 const NI={agent:['spark','var(--accent)'],mention:['send','#5B49BD'],claim:['flag','#C0701A'],blocker:['clock','var(--bad)'],approval:['check','var(--ok)'],system:['db','var(--fg3)']};
 const ttl=id=>{const t=byId(id);return t?t.title:''};
-const NF=[
- {id:'n1',k:'agent',t:'t102',h:'Agents finished the cooling comparison',b:()=>`“${ttl('t102')}” is ready for review. 34 sources cited, accuracy 92%.`,w:'12 min ago',g:'Today',u:1,a:['Review','Open']},
- {id:'n2',k:'mention',who:'sara',t:'t101',h:'Sara Malik mentioned you',b:()=>'“@Bill can you confirm the yield range before Friday?”',w:'2 h ago',g:'Today',u:1,a:['Reply']},
- {id:'n3',k:'claim',who:'sara',t:'t101',h:'A claim was flagged as disputed',b:()=>`The yield figure in “${ttl('t101')}” is contradicted by a second source.`,w:'3 h ago',g:'Today',u:1,a:['Check claim']},
- {id:'n4',k:'blocker',t:'t108',h:'Blocker added',b:()=>`The supplier test report is outstanding for “${ttl('t108')}”.`,w:'Yesterday',g:'Earlier',u:0,a:['Open']},
- {id:'n5',k:'approval',who:'tomas',t:'t106',h:'Tomás signed off the margin model',b:()=>`“${ttl('t106')}” can go to the VP for approval.`,w:'Yesterday',g:'Earlier',u:0,a:['Send to VP']},
- {id:'n6',k:'system',h:'3 sources indexed',b:()=>'Your uploaded files are parsed and ready to cite.',w:'Yesterday',g:'Earlier',u:0,a:[]}];
-const NQ=[{k:'mention',who:'priya',t:'t104',h:'Dr. Priya Nair commented',b:()=>`“Approving once dual sourcing is written into the plan.”`,w:'just now',g:'Today',u:1,a:['Reply']}];
-let nfF='all';
-const nfUn=()=>NF.filter(x=>x.u).length;
-const ni=(n,i)=>{const [ic0,c]=NI[n.k];return `<div class="nf${n.u?' un':''}" style="animation-delay:${i*45}ms" data-id="${n.id}"><span class="nfi" style="--c:${c}">${ic(ic0,16)}</span><div class="nfb"><div class="nft">${n.who?av(n.who,1):''}<b>${esc(n.h)}</b></div><div class="nfd">${esc(n.b())}</div><div class="nfm"><span class="faint">${n.w}</span>${n.a.map((x,j)=>`<button class="btn sm${j===0&&n.u?' pri':''}" data-act="nfgo" data-id="${n.id}">${x}</button>`).join('')}${n.u?`<button class="btn sm ghost" data-act="nfread" data-id="${n.id}">Mark read</button>`:''}</div></div></div>`};
+const HN=window.HaldenNotifications;
+if(!HN)console.error('notif-store.js did not load: notifications are unavailable');
+const NS=HN&&HN.store,NA=HN&&HN.actions,SEL=HN&&HN.selectors;
+const nfItems=()=>NS?SEL.selectItems(NS.getState()):[];
+const nfUn=()=>NS?SEL.selectUnreadCount(NS.getState()):0;
+const nfF=()=>NS?SEL.selectFilter(NS.getState()):'all';
+const nfDo=a=>{if(NS)NS.dispatch(a)};
+const openNotifTask=n=>{if(n&&n.t){const b=document.createElement('button');b.dataset.act='openTask';b.dataset.id=n.t;b.hidden=true;document.body.appendChild(b);b.click();b.remove()}};
+const ni=(n,i)=>{const [ic0,c]=NI[n.k]||NI.system;return `<div class="nf${n.u?' un':''}" style="animation-delay:${i*45}ms" data-id="${esc(n.id)}"><span class="nfi" style="--c:${c}">${ic(ic0,16)}</span><div class="nfb"><div class="nft">${n.who?av(n.who,1):''}<b>${esc(n.h)}</b></div><div class="nfd">${esc(HN.resolveBody(n,ttl))}</div><div class="nfm"><span class="faint">${esc(n.w)}</span>${n.a.map((x,j)=>`<button class="btn sm${j===0&&n.u?' pri':''}" data-act="nfgo" data-id="${esc(n.id)}">${esc(x)}</button>`).join('')}${n.u?`<button class="btn sm ghost" data-act="nfread" data-id="${esc(n.id)}">Mark read</button>`:''}</div></div></div>`};
 function notifHTML(){
  const tc=$('#nfToast');if(tc)tc.innerHTML='';
- const l=NF.filter(n=>nfF==='all'||(nfF==='me'&&n.u&&n.a.length)||(nfF==='mention'&&n.k==='mention')||(nfF==='agent'&&(n.k==='agent'||n.k==='system')));
+ const l=NS?SEL.selectVisible(NS.getState()):[];
  const grp=['Today','Earlier'].map(g=>{const x=l.filter(n=>n.g===g);return x.length?`<div class="nfg">${g}</div>${x.map(ni).join('')}`:''}).join('')||'<div class="muted" style="padding:28px 4px;text-align:center">Nothing here. You are all caught up. Switch the filter to see everything.</div>';
  return `<div class="sh"><div class="grow"><b style="font-size:16px">Notifications</b><div class="faint" style="font-size:12px">${nfUn()?nfUn()+' unread':'All caught up'}</div></div><button class="btn sm" data-act="nfall">Mark all read</button><button class="iconbtn" data-act="closeSide" aria-label="Close">${ic('x',18)}</button></div>
- <div class="sb" id="nfBody"><div class="chips">${[['all','All'],['me','Needs you'],['mention','Mentions'],['agent','Agents']].map(([k,t])=>`<button class="fchip${nfF===k?' on':''}" data-act="nff" data-k="${k}">${t}</button>`).join('')}</div>${grp}</div>`}
+ <div class="sb" id="nfBody"><div class="chips">${[['all','All'],['me','Needs you'],['mention','Mentions'],['agent','Agents']].map(([k,t])=>`<button class="fchip${nfF()===k?' on':''}" data-act="nff" data-k="${k}">${t}</button>`).join('')}</div>${grp}</div>`}
 const repaint=()=>{const sd=$('#side');if(sd&&sd.classList.contains('on')&&sd.querySelector('#nfBody'))sd.innerHTML=notifHTML();window.__renderTop&&window.__renderTop()};
-function go(id){const n=NF.find(x=>x.id===id);if(!n)return;n.u=0;const c=$('#side [data-act=closeSide]');c&&c.click();if(n.t){const b=document.createElement('button');b.dataset.act='openTask';b.dataset.id=n.t;b.hidden=true;document.body.appendChild(b);b.click();b.remove()}window.__renderTop&&window.__renderTop()}
+/* every store change (this page, another tab, the React shell) lands here, so the bell and panel can never drift */
+let nfSig='';
+function nfSync(){if(!NS)return;S.unread=SEL.selectShowDot(NS.getState());const sig=JSON.stringify(NS.getState().notifications);if(sig===nfSig)return;nfSig=sig;repaint()}
+if(NS){S.unread=SEL.selectShowDot(NS.getState());nfSig=JSON.stringify(NS.getState().notifications);NS.subscribe(nfSync)}
+function go(id){const n=nfItems().find(x=>x.id===id);if(!n)return;nfDo(NA.markRead(id));const c=$('#side [data-act=closeSide]');c&&c.click();openNotifTask(n)}
 document.addEventListener('click',ev=>{const el=ev.target.closest('[data-act^="nf"]');if(!el)return;const a=el.dataset.act;if(!['nfgo','nfread','nfall','nff'].includes(a))return;ev.stopPropagation();
- if(a==='nff'){nfF=el.dataset.k;repaint()}else if(a==='nfread'){const n=NF.find(x=>x.id===el.dataset.id);n.u=0;repaint()}else if(a==='nfall'){NF.forEach(n=>n.u=0);S.unread=false;repaint()}else go(el.dataset.id)},true);
-function pushToast(n){let c=$('#nfToast');if(!c){c=document.createElement('div');c.id='nfToast';document.body.appendChild(c)}
- const [ic0,col]=NI[n.k],e=document.createElement('div');e.className='nft2';e.innerHTML=`<span class="nfi" style="--c:${col}">${ic(ic0,16)}</span><div class="nfb"><div class="nft">${n.who?av(n.who,1):''}<b>${esc(n.h)}</b></div><div class="nfd">${esc(n.b())}</div><div class="nfm"><button class="btn sm pri" data-act="nftoastgo" data-id="${n.id}">Open</button><button class="btn sm ghost" data-act="nftoastx">Dismiss</button></div></div><i class="nfbar"></i>`;c.appendChild(e);
+ if(a==='nff')nfDo(NA.setFilter(el.dataset.k));else if(a==='nfread')nfDo(NA.markRead(el.dataset.id));else if(a==='nfall')nfDo(NA.markAllRead());else go(el.dataset.id)},true);
+function pushToast(n){if(!n)return;let c=$('#nfToast');if(!c){c=document.createElement('div');c.id='nfToast';document.body.appendChild(c)}
+ const [ic0,col]=NI[n.k]||NI.system,e=document.createElement('div');e.className='nft2';e.innerHTML=`<span class="nfi" style="--c:${col}">${ic(ic0,16)}</span><div class="nfb"><div class="nft">${n.who?av(n.who,1):''}<b>${esc(n.h)}</b></div><div class="nfd">${esc(HN.resolveBody(n,ttl))}</div><div class="nfm"><button class="btn sm pri" data-act="nftoastgo" data-id="${esc(n.id)}">Open</button><button class="btn sm ghost" data-act="nftoastx">Dismiss</button></div></div><i class="nfbar"></i>`;c.appendChild(e);
  const kill=()=>{e.classList.add('out');setTimeout(()=>e.remove(),300)};e._k=kill;setTimeout(kill,7000)}
-document.addEventListener('click',ev=>{const el=ev.target.closest('[data-act="nftoastgo"],[data-act="nftoastx"]');if(!el)return;ev.stopPropagation();const t=el.closest('.nft2');t&&t._k&&t._k();if(el.dataset.act==='nftoastgo'){const n=NF.find(x=>x.id===el.dataset.id);if(n){n.u=0;if(n.t){const b=document.createElement('button');b.dataset.act='openTask';b.dataset.id=n.t;b.hidden=true;document.body.appendChild(b);b.click();b.remove()}window.__renderTop&&window.__renderTop()}}},true);
-function incoming(){const q=NQ.shift();if(!q)return;const n=Object.assign({id:'n'+Date.now()},q);NF.unshift(n);S.unread=true;window.__renderTop&&window.__renderTop();pushToast(n);repaint()}
+document.addEventListener('click',ev=>{const el=ev.target.closest('[data-act="nftoastgo"],[data-act="nftoastx"]');if(!el)return;ev.stopPropagation();const t=el.closest('.nft2');t&&t._k&&t._k();if(el.dataset.act==='nftoastgo'){const n=nfItems().find(x=>x.id===el.dataset.id);if(n){nfDo(NA.markRead(n.id));openNotifTask(n)}}},true);
+/* delivery is idempotent by id: a reload, a second tab, or a late timer can never add the same notification twice */
+function incoming(){if(!NS)return;const q=HN.LIVE_QUEUE.find(x=>!nfItems().some(n=>n.id===x.id));if(!q)return;nfDo(NA.received(q));pushToast(nfItems().find(n=>n.id===q.id))}
 setTimeout(incoming,14000);
-window.__notifHTML=notifHTML;window.__notifIncoming=incoming;
+window.__notifHTML=notifHTML;window.__notifIncoming=incoming;window.__notifSeen=()=>nfDo(NA.dotSeen());
 
 /* ---------- expanded model research ---------- */
 const STEPS=['Broke the question into sub-questions and listed what evidence would settle each.','Searched journals, patents and internal reports; kept the passages that answered a sub-question.','Compared figures across sources and noted where units or test conditions differed.','Graded each claim against the exact passage it relied on.','Wrote the answer and listed what it could not confirm.'];
+const say=m=>{const e=document.createElement('div');e.className='toast';e.innerHTML='<span>'+esc(m)+'</span>';$('#toasts').appendChild(e);setTimeout(()=>e.remove(),2600)};
+/* the answer a "Expand full research" button belongs to: the open task, else the Ask thread on screen */
+function modelCtx(){
+ const t=byId(S.openId);if(t)return{a:getAns(t),key:V.akey(t),seed:t.id};
+ const th=String(S.route||'').startsWith('thread-')&&S.threads.find(x=>'thread-'+x.id===S.route);
+ return th&&th.key?{a:V.ansByKey(th.key),key:th.key,seed:th.id}:null}
+/* live answers: only what the backend actually measured, nothing invented */
+function whyRemoved(code){
+ const r=String(code||''),[k,arg]=[r.split(':')[0],r.split(':').slice(1).join(':')];
+ const m={quote_not_found:'the quoted passage could not be found in the source',quote_too_short:'the quote was too short to check',
+  weak_support:'the source does not clearly support this statement',negation_mismatch:'it changed a "not" or "no" from the source',
+  direction_mismatch:'it reversed a direction stated in the source (for example higher vs lower)',
+  unsupported_quantifier:'it used an absolute word the source does not use',chunk_not_allowed:'it cited text outside the selected sources',
+  unsealed:'the cited passage could not be verified',hash_mismatch:'the stored passage no longer matches its original'}[k];
+ if(k==='ungrounded_number')return 'it contained a number ('+arg+') that is not in the source';
+ if(k==='unit_mismatch')return 'a number and its unit ('+arg+') do not match the source';
+ if(k==='unsupported_quantifier'&&arg)return 'it used the word "'+arg.replace(/[\[\]']/g,'')+'", which the source does not use';
+ return m||'it could not be verified against the source'}
+function liveModelPanel(p,o,a){
+ const pass=[...new Set((p.mc||[]).flatMap(c=>c.ref))],g=a.gate||{};
+ const nV=(p.mc||[]).filter(c=>c.ok).length,nX=(p.mc||[]).length-nV;
+ const sim=g.top==null?'None':g.top.toFixed(2)+(g.need==null?'':' / '+g.need.toFixed(2)+' needed');
+ const tiles=[['Verdict',p.v],['Confidence',p.cf+'%'],['Claims verified',nV],['Claims removed',nX],['Best source match',sim]];
+ const steps=['Searched your sources and kept the passages closest to the question'+(g.top==null?'.':' (best match '+g.top.toFixed(2)+', the bar is '+(g.need==null?'':g.need.toFixed(2))+').'),
+  esc(p.m)+' read those passages on its own and answered with a quote for every claim.',
+  'Each quote was checked against the stored source text: '+nV+' verified, '+nX+' removed.',
+  'A judge matched the two models’ claims. Only claims both models back are shown as confirmed.'];
+ const claims=(p.mc||[]).length?`<div><div class="eyebrow" style="margin-bottom:8px">What ${esc(p.m)} claimed</div><div class="stack" style="gap:8px">${p.mc.map(c=>`<div class="card" style="padding:10px 12px;margin:0"><div style="display:flex;gap:8px;align-items:flex-start"><span class="pill ${c.ok?'ok':'warn'}" style="flex:none">${c.ok?'Verified':'Removed'}</span><span style="font-size:13.5px">${c.text}</span></div><div class="faint" style="font-size:12px;margin-top:6px">${c.ok?(c.kind?esc(c.kind)+' quote match':'Quote found in source'):'Not shown: '+esc(whyRemoved(c.reason))}${c.ref.length?' · Cites ':''}${c.ref.map(n=>`<button class="cite" data-act="cite" data-n="${n}">${(SRC[n]&&SRC[n].ord)||n}</button>`).join('')}</div></div>`).join('')}</div></div>`:`<div class="muted" style="font-size:13.5px">${esc(p.m)} returned no claims to show for this question.</div>`;
+ const passages=pass.length?`<div><div class="eyebrow" style="margin-bottom:8px">Passages it relied on</div><div class="stack" style="gap:8px">${pass.filter(n=>SRC[n]).map(n=>`<button class="rsrc" data-act="cite" data-n="${n}" style="align-items:flex-start"><span><b>${esc(SRC[n].t)}</b><small>${SRC[n].ty} · ${esc(SRC[n].v)} · ${SRC[n].y}</small><span style="display:block;margin-top:4px;font-size:13px;color:var(--fg2)">“${esc(String(SRC[n].p||'').replace(/[«»]/g,'')).slice(0,260)}”</span></span></button>`).join('')}</div></div>`:'';
+ return `<div class="sh"><div class="grow"><b style="font-size:16px">${esc(p.m)}</b><div class="faint" style="font-size:12px">${esc(p.r)} · full research for this answer</div></div><button class="iconbtn" data-act="closeSide" aria-label="Close">${ic('x',18)}</button></div>
+ <div class="sb"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">${tiles.map(x=>`<div class="tile"><div class="eyebrow">${x[0]}</div><div style="font-size:18px;font-weight:700;margin-top:2px">${x[1]}</div></div>`).join('')}</div>
+ <div><div class="eyebrow" style="margin-bottom:8px">How it worked</div><div class="stack" style="gap:8px">${steps.map((x,k)=>`<div style="display:flex;gap:10px"><span class="rn" style="font-size:12px">${k+1}</span><span style="font-size:13.5px">${x}</span></div>`).join('')}</div></div>
+ ${claims}${passages}
+ <div class="disagree"><div class="eyebrow">Where it differs from ${esc(o.m)}</div><p style="margin:6px 0 0">${a.dis}</p></div></div>`}
 function modelPanel(i){
- const t=byId(S.openId);if(!t)return;const a=getAns(t),key=V.akey(t),p=a.panel[i],o=a.panel[1-i],cs=W.claimsOf(key),h=D.hash(t.id+p.m);
+ const cx=modelCtx();if(!cx){say('Open an answer first to see the full research');return}
+ const a=cx.a,key=cx.key,p=a&&a.panel&&a.panel[i],o=a&&a.panel&&a.panel[1-i];
+ if(!p){say('This answer has no model detail yet');return}
+ if(a.live){const sd=$('#side');const html=liveModelPanel(p,o,a);sd.innerHTML=html;sd.classList.add('wide');window.__openSide&&window.__openSide(html);sd.classList.add('wide');return}
+ const cs=W.claimsOf(key),h=D.hash(cx.seed+p.m);
  const ck=Object.keys(a.cl),pass=[...new Set(p.ci)];
  const stance=c=>{const g=W.gradeOf(key,c);return p.vc==='warn'&&g!=='v'?['Disagrees','warn']:g==='v'?['Agrees','ok']:['Unsure','']};
  const html=`<div class="sh"><div class="grow"><b style="font-size:16px">${esc(p.m)}</b><div class="faint" style="font-size:12px">${esc(p.r)} · full research for this task</div></div><button class="iconbtn" data-act="closeSide" aria-label="Close">${ic('x',18)}</button></div>
@@ -1802,19 +1887,28 @@ function renderTop(){$('#top').innerHTML=V.topHTML()}
 function renderMain(){
  const r=S.route,m=$('#main');m.scrollTop=0;
  if(r==='home')m.innerHTML=V.homeHTML();
- else if(r.startsWith('thread-')){const th=S.threads.find(t=>'thread-'+t.id===r);if(!th){go('home');return}m.innerHTML=V.threadHTML(th);if(th.fresh)stream(th)}
- else if(['list','board','roadmap','radar'].includes(r))m.innerHTML=V.pvHTML(r);
+ else if(r.startsWith('thread-')){const th=S.threads.find(t=>'thread-'+t.id===r);if(!th){go('home');return}
+  if(th.needsLoad){
+   m.innerHTML='<div class="page"><p class="muted">Loading this chat…</p></div>';const kc=KC();
+   if(!kc){m.innerHTML='<div class="page"><p class="muted">The live backend is not loaded, so this chat cannot be opened.</p></div>';return}
+   kc.loadThread(th).then(()=>{if(S.route===r)renderMain()},err=>{if(S.route===r)m.innerHTML='<div class="page"><p class="muted">Could not load this chat: '+esc(err.message)+'</p></div>'});return}
+  if(!th.key){m.innerHTML='<div class="page"><p class="muted">This chat has no answers yet. Ask a question on the Ask page.</p></div>';return}
+  m.innerHTML=V.threadHTML(th);if(th.fresh)stream(th)}
+ else if(r==='radar')m.innerHTML=V.radarHTML();
+ else if(r==='roadmap'){m.innerHTML=V.roadmapHTML();after()}
+ else if(['list','board'].includes(r))m.innerHTML=V.pvHTML(r);
  else if(r==='sources')m.innerHTML=V.sourcesHTML();else if(r==='projects')m.innerHTML=V.projectsHTML();else if(r==='methods')m.innerHTML=V.methodsHTML();else if(r==='team')m.innerHTML=V.teamHTML();
  else if(r==='clipper'){m.innerHTML=V.clipperHTML();setTimeout(()=>{if(S.route==='clipper'&&!S.scanned){S.scanned=1;sideScan()}},900)}
  else if(r==='executive')m.innerHTML=W.execHTML();
  after();
 }
-function renderAll(){renderNav();renderTop();renderMain()}document.addEventListener('change',ev=>{if(ev.target.id==='pfilsel'){S.pfil=ev.target.value;renderMain()}});function nrRead(){const n=S.pj.nr,g=i=>{const x=document.getElementById(i);return x?x.value:undefined};if(n.step===1){n.title=g('nr_t');n.q=g('nr_q');n.bg=g('nr_b');n.out=g('nr_o')}else if(n.step===2){const r=document.querySelector('input[name=nr_m]:checked');if(r)n.method=r.value}else{n.lead=g('nr_l')}}
+function renderAll(){renderNav();renderTop();renderMain()}document.addEventListener('change',ev=>{if(ev.target.id==='pfilsel'){S.pfil=ev.target.value;renderMain()}
+ if(ev.target.id==='projsel'){const kc=KC();kc&&kc.switchProject(ev.target.value).then(()=>renderAll(),err=>{toast(esc(err.message));renderTop()})}});function nrRead(){const n=S.pj.nr,g=i=>{const x=document.getElementById(i);return x?x.value:undefined};if(n.step===1){n.title=g('nr_t');n.q=g('nr_q');n.bg=g('nr_b');n.out=g('nr_o')}else if(n.step===2){const r=document.querySelector('input[name=nr_m]:checked');if(r)n.method=r.value}else if(n.step===3){const r=document.querySelector('input[name=nr_s]:checked');if(r)n.scope=r.value;n.links=g('nr_k')}else if(n.step===4){n.lead=g('nr_l')}}
 function after(){if(S.route==='roadmap')requestAnimationFrame(drawDeps)}
 function refreshBody(){const b=$('#pv-body');if(b){b.innerHTML=V.pvBody(S.route);after()}}
 function refreshDrawer(){const t=byId(S.openId);if(t){$('#drawer').innerHTML=W.drawerHTML(t)}}
 function refreshDrawerBody(){const t=byId(S.openId);if(t){$('#dbody').innerHTML=W.drawerBody(t);const d=$('#ddoc');if(d)d.innerHTML=W.docBody(t)}}
-function go(r){if(!ROUTES.includes(r)&&!r.startsWith('thread-'))r='home';if(r==='executive'&&S.role!=='vp')r='home';S.route=r;if(location.hash.slice(1)!==r){try{history.replaceState(null,'','#'+r)}catch(e){location.hash=r}}closeAllPanels();renderAll()}
+function go(r){if(!ROUTES.includes(r)&&!r.startsWith('thread-'))r='home';if(r==='executive'&&S.role!=='vp')r='home';S.route=r;try{sessionStorage.setItem('keycodes_route',r)}catch(_){}if(location.hash.slice(1)!==r){try{history.replaceState(null,'','#'+r)}catch(e){location.hash=r}}closeAllPanels();renderAll()}
 function closeAllPanels(){closePop();closeSide();closeDrawer();$('#nav').classList.remove('open');overlayState()}
 function drawDeps(){
  const svg=$('#deps'),host=$('#rmin');if(!svg||!host)return;const hb=host.getBoundingClientRect();
@@ -1835,8 +1929,47 @@ function keyFor(q){const l=q.toLowerCase();
  if(/immersion|cold.?plate|cooling|thermal|propagation|dielectric/.test(l))return'cooling';
  if(/llzo|electrolyte|garnet|interlayer|freedom|fto|solid.?state/.test(l))return'electrolyte';
  if(/sodium|hard carbon|20 gwh|na-ion/.test(l))return'sodium';return null}
+const KC=()=>window.__KC_BRIDGE;
+const DEMO=/[?&]demo=1\b/.test(location.search);
+function srcMenuHTML(){
+ const opts=Object.keys(V.SCOPES).map(k=>pi('setScope',`data-k="${k}"`,S.scope===k?'check':'',V.SCOPES[k][0],V.SCOPES[k][1])).join('');
+ const up=S.scope==='api'?'<div class="faint" style="font-size:12px;padding:0 10px 4px">Uploaded papers are not used in Online-only mode.</div>':'';
+ return `<div style="min-width:320px;max-width:360px"><h5>Where should answers come from?</h5>${opts}${S.scope!=='uploads'?'<div style="padding:4px 10px 8px;display:flex;gap:8px;align-items:center"><button class="btn sm" data-act="morePapers">Find more papers</button><span class="faint" style="font-size:12px">for the question you typed</span></div>':''}<h5 style="margin-top:6px">Your papers</h5><div style="padding:0 10px 6px;display:flex;gap:8px;align-items:center"><button class="btn sm" data-act="attach">${ic('clipb',14)} Upload PDF</button><span class="faint" style="font-size:12px">PDF files only</span></div>${up}<div class="attc" style="padding:0 10px 6px">${V.attChips()}</div><div class="faint" style="padding:6px 10px 8px;font-size:12px;border-top:1px solid var(--line)">Every answer cites the exact passage it came from. Two AI models check each other first.</div></div>`}
+let attTick=null;
+function refreshChips(){document.querySelectorAll('.attc').forEach(el=>{el.innerHTML=V.attChips()});
+ const b=V.busy();document.querySelectorAll('.send').forEach(x=>{x.disabled=b;x.title=b?'Waiting for your paper to finish reading':''});
+ if(b&&!attTick)attTick=setInterval(refreshChips,1000);else if(!b&&attTick){clearInterval(attTick);attTick=null}
+ document.querySelectorAll('[data-act="srcmenu"]').forEach(b=>{b.innerHTML=V.srcLabel()});
+ if(popEl&&popEl.querySelector('[data-act="setScope"]'))popEl.innerHTML=srcMenuHTML()}
+function pickPdfs(){
+ const kc=KC();if(!kc){toast('The live backend is not loaded, so papers cannot be attached');return}
+ const f=document.createElement('input');f.type='file';f.accept='.pdf,application/pdf';f.multiple=true;
+ f.onchange=()=>[...f.files].forEach(async file=>{
+  const a={name:file.name,status:'uploading',t0:Date.now()};S.attachments.push(a);refreshChips();
+  try{a.id=(await kc.upload(file)).source_id;a.status='ready'}catch(e){a.status='error';toast(esc(file.name+': '+e.message))}
+  refreshChips()});
+ f.click()}
 function sendQ(q){
  q=(q||'').trim();if(!q){toast('Type a question to ask Halden');return}
+ if(DEMO){demoQ(q);return}
+ const kc=KC();if(!kc){toast('The live backend is not loaded. Open with ?demo=1 for the offline demo.');return}
+ if(S.attachments.some(a=>a.status==='uploading')){toast('Wait until the attached papers finish uploading');return}
+ const id='th'+(++S.thId),ids=S.attachments.filter(a=>a.status==='ready').map(a=>a.id);
+ const card=(m,r,v,pts)=>({m,r,v,vc:'',cf:0,pts,ci:[]});
+ const waiting=(v,pt)=>[card('Model A','Lead research scientist',v,[pt]),card('Model B','Speed auditor',v,[pt])];
+ ANS[id]={title:q,acc:0,cl:{},dis:'',fups:[],html:'Searching your sources and cross-checking the answer with two models…',panel:waiting('Working','Reading the most relevant passages')};
+ const th=openTurn(q,id);
+ const adopt=()=>{if(th.srv&&th.id!==th.srv){const old='thread-'+th.id;th.id=th.srv;if(S.route===old){S.route='thread-'+th.id;try{history.replaceState(null,'','#'+S.route);sessionStorage.setItem('keycodes_route',S.route)}catch(_){}}}};
+ kc.ask(q,ids,S.scope,th).then(r=>{ANS[id]=kc.toAnswer(r,q);th.fresh=true},e=>{
+  const msg=esc(e.message);ANS[id]={...ANS[id],html:'No answer: '+msg,panel:waiting('Not run',msg)};toast(msg)})
+ .finally(()=>{adopt();renderNav();if(S.route==='thread-'+th.id&&th.key===id){renderMain();const sc=$('#tscroll');if(sc)sc.scrollTop=sc.scrollHeight}})}
+/* A question asked while a chat is open continues that chat (earlier turns stay visible); otherwise it starts a new chat. */
+function openTurn(q,key){
+ const cur=String(S.route||'').startsWith('thread-')&&S.threads.find(t=>'thread-'+t.id===S.route);
+ if(cur){(cur.prev=cur.prev||[]).push({q:cur.q,key:cur.key,pre:cur.pre});cur.q=q;cur.key=key;cur.pre='';cur.fresh=false;renderMain();const sc=$('#tscroll');if(sc)sc.scrollTop=sc.scrollHeight;return cur}
+ const th={id:key,title:q.length>56?q.slice(0,54)+'…':q,key,q,t:'Just now',fresh:false,pre:'',live:true};
+ S.threads.unshift(th);go('thread-'+key);return th}
+function demoQ(q){
  let key=keyFor(q),pre='';
  if(!key){const top=ranked(q).slice(0,3).map(x=>x.n);const id='q'+(++S.thId);
   const ps={id,title:q.length>70?q.slice(0,68)+'…':q,sector:'Materials',owner:'amina',acc:86+hash(q)%6,src:top};
@@ -1859,13 +1992,13 @@ const shead=(t,s)=>`<div class="sh"><div class="grow"><b style="font-size:15px">
 const citeFmt=n=>{const s=SRC[n];return `${s.t}. ${s.v}, ${s.y}.`};
 function sideCite(n){
  const s=SRC[n],inT=T.filter(t=>t.src.includes(+n));
- openSide(shead('Source '+n,s.ty+' · '+s.y)+`<div class="sb"><h3 style="margin:0;font-size:17px;line-height:1.35">${esc(s.t)}</h3>
+ openSide(shead('Source '+(s.ord||n),s.ty+' · '+s.y)+`<div class="sb"><h3 style="margin:0;font-size:17px;line-height:1.35">${esc(s.t)}</h3>
  <div class="chips"><span class="pill accent">${s.ty}</span><span class="pill">${esc(s.v)}</span><span class="pill ${s.ok?'ok':'warn'}">${s.ok?'Citation verified':'Needs check'}</span></div>
  <div><div class="eyebrow" style="margin-bottom:6px">Passage the models used</div><div class="quote">${hlr(esc(s.p).replace(/&#39;/g,"'"))}</div></div>
  <div style="display:flex;align-items:center;gap:10px"><span class="muted">Relevance</span><span class="bar" style="flex:1"><i style="width:${s.rel}%"></i></span><b>${s.rel}%</b></div>
  <div><div class="eyebrow" style="margin-bottom:6px">Citation</div><div class="tile" style="font-size:13px">${esc(citeFmt(n))}</div></div>
  <div><div class="eyebrow" style="margin-bottom:6px">Used in ${inT.length} task${inT.length===1?'':'s'}</div><div class="stack" style="gap:6px">${inT.map(t=>`<button class="hi" data-act="openTask" data-id="${t.id}"><div class="grow"><b style="font-size:13.5px">${esc(t.title)}</b><div class="faint" style="font-size:12px">${t.code}</div></div>${ic('chev',13)}</button>`).join('')||'<div class="muted">Not yet attached to a task.</div>'}</div></div>
- <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" data-act="pickFor" data-kind="src" data-n="${n}">${ic('plus',14)} Add to research task</button><button class="btn" data-act="copyCite" data-n="${n}">${ic('copy',14)} Copy citation</button><button class="btn ghost" data-act="openOrig" data-n="${n}">${ic('ext',14)} Open original</button></div></div>`)}
+ <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" data-act="pickFor" data-kind="src" data-n="${n}">${ic('plus',14)} Add to research task</button><button class="btn" data-act="copyCite" data-n="${n}">${ic('copy',14)} Copy citation</button><button class="btn ghost" data-act="openOrig" data-n="${n}">${ic('ext',14)} Open original</button>${s.sid&&s.lib===false?`<button class="btn" data-act="saveLib" data-n="${n}">${ic('db',14)} Save to library</button>`:''}</div>${s.sid&&s.lib===false?'<div class="faint" style="font-size:12px">Found online for this answer. It is kept as a link and is not in your Knowledge Library unless you save it.</div>':''}</div>`)}
 function sideClaim(k){
  const {a,c,m,g}=claimMeta(k),key=k.split(':')[0],tx=claimsOf(key)[c];
  openSide(shead('Claim check',GL[g])+`<div class="sb"><div class="quote" style="font-size:15px">“${tx}”</div><div>${gp(g)}</div>
@@ -1926,7 +2059,7 @@ function addToTask(id,kind,n,txt){
 
 /* ---------- actions ---------- */
 function setStatus(id,st,extra){const t=byId(id);Object.assign(t,{status:st},extra||{});if(st!=='blocked')t.blk=null}
-function openTask(id){const t=byId(id);if(!t)return;closePop();closeModal();S.openId=id;S.tab=t.status==='running'?'evidence':'claims';$('#drawer').innerHTML=W.drawerHTML(t);$('#drawer').classList.add('on');$('#drawer .db').scrollTop=0;overlayState()}
+function openTask(id){const t=byId(id);if(!t){toast('That research was just updated. Showing the latest list.');renderMain();return}closePop();closeModal();S.openId=id;S.tab=t.status==='running'?'evidence':'claims';$('#drawer').innerHTML=W.drawerHTML(t);$('#drawer').classList.add('on');$('#drawer .db').scrollTop=0;overlayState()}
 function moveTask(id,st){
  const t=byId(id);if(t.stage===st)return;
  if(t.status==='running'){toast('Agents are still running on '+t.code+'. It can move once the run finishes.');return}
@@ -1948,7 +2081,7 @@ const A={
    <p class="muted" style="font-size:13px;line-height:1.5;margin:0;">Define the research scope, core hypothesis, and lead investigator to start an isolated research project.</p>
    <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
     Project Title *
-    <input class="in" id="np_title" placeholder="e.g. Oncology mAb Bio-Formulation & Viscosity Control" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;" autofocus>
+    <input class="in" id="np_title" placeholder="e.g. Oncology mAb Bio-Formulation & Viscosity Control" style="width:100%;padding:9px 12px;border-radius:8px;border:1px solid var(--line);background:var(--surface);color:var(--fg);font-size:13px;">
    </label>
    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
     <label class="pjl" style="display:flex;flex-direction:column;gap:5px;font-size:12px;font-weight:600;">
@@ -1992,6 +2125,7 @@ const A={
   </div>`;
   const foot=`<button class="btn ghost sm" data-act="closeModal">Cancel</button><button class="btn sm primary" data-act="submitNewProject" style="display:inline-flex;align-items:center;gap:6px;font-weight:600;">${ic('plus',14)} Create Project</button>`;
   modal((W.mwrap || (window.__W && window.__W.mwrap))('Create New Research Project', body, foot));
+  setTimeout(()=>{const f=document.getElementById('np_title');f&&f.focus()},60);
  },
  submitNewProject:()=>{
   const title=($('#np_title')?.value||'').trim();
@@ -2001,6 +2135,10 @@ const A={
   const method=$('#np_method')?.value||'Technical Feasibility Assessment';
   const out=($('#np_output')?.value||'').trim()||'Technical research report';
   if(!title){toast('Please enter a project title');$('#np_title')?.focus();return}
+  const kc=KC();
+  if(kc&&S.live){
+   kc.createProject({name:title,meta:{sector,lead,question:q,method,output:out}}).then(()=>{closeModal();toast('Project "'+title+'" created. It is now the active project.','ok');S.route='projects';renderAll()},err=>toast(esc(err.message)));
+   return}
   const id='p_'+Date.now();
   const newPj={id,title,q,bg:q,out,method,sector,lead,owner:'amina',stage:'Discovery',prog:15,tasks:1,created:'Just now'};
   S.extra.nr=S.extra.nr||[];
@@ -2020,9 +2158,9 @@ const A={
  },
  nav:e=>go(e.r),closeAll:()=>closeTop(),closeSide:()=>closeSide(),closeModal:()=>closeModal(),
  toggleNav:()=>$('#nav').classList.toggle('open'),
- role:e=>{S.role=e.r;if(S.route==='executive'&&e.r!=='vp')S.route='home';if(e.r==='vp'){go('executive')}else{renderAll()}toast('Switched to '+(e.r==='vp'?'VP R&D':'Researcher')+' view')},
+ role:e=>{S.role=e.r;if(S.route==='executive'&&e.r!=='vp'){S.route='home';try{history.replaceState(null,'','#home')}catch(_){}};if(e.r==='vp'){go('executive')}else{renderAll()}toast('Switched to '+(e.r==='vp'?'VP R&D':'Researcher')+' view')},
  theme:()=>{const n=dk()?'light':'dark';document.documentElement.dataset.theme=n;ls.set('verity-theme',n);refreshChartsOnly()},
- notif:()=>{S.unread=false;renderTop();openSide(window.__notifHTML());$('#side').classList.remove('wide')},
+ notif:()=>{window.__notifSeen&&window.__notifSeen();renderTop();openSide(window.__notifHTML());$('#side').classList.remove('wide')},
  markRead:()=>{closePop();toast('All caught up','ok')},
  cmdk:()=>{modal(W.cmdkHTML(''));setTimeout(()=>{const i=$('#ckin');i&&i.focus()},30)},
  askFrom:e=>{closeModal();sendQ(e.q)},
@@ -2030,27 +2168,38 @@ const A={
  openTask:e=>{if(popEl)closePop();openTask(e.id)},
  newThread:()=>go('home'),
  openThread:e=>go('thread-'+e.id),
+ switchProj:e=>{const kc=KC();if(!kc)return;kc.switchProject(e.id,'projects').then(()=>renderAll(),err=>toast(esc(err.message)))},
  chip:e=>sendQ(V.SUG[+e.i][0]),
  send:()=>sendQ($('#q').value),send2:()=>{const q=$('#q2');sendQ(q.value)},
  followup:e=>sendQ(ansByKey(e.k).fups[+e.i]),
- attach:()=>{S.attached=!S.attached;if(S.route==='home')renderMain();else toast(S.attached?'Attached TL-2291-thermal-report.pdf':'Attachment removed','ok')},
- detach:()=>{S.attached=false;renderMain()},
- srcsel:(e,el)=>pop(el,`<h5>Search across</h5>${Object.keys(S.srcSel).map(k=>`<button class="pi" data-act="srcTog" data-k="${k}"><span class="cb" style="width:16px;height:16px;border-radius:5px;border:2px solid var(--line2);display:grid;place-items:center;${S.srcSel[k]?'background:var(--accent);border-color:var(--accent);color:#fff':''}">${S.srcSel[k]?ic('check',10):''}</span><b style="font-weight:600">${{Scholar:'Scholarly journals',IEEE:'IEEE and standards',Patents:'Patent databases',Web:'Live web',Uploads:'Upload library',Drive:'Company drive'}[k]}</b></button>`).join('')}`),
- srcTog:(e,el)=>{S.srcSel[e.k]=S.srcSel[e.k]?0:1;closePop();if(S.route==='home')renderMain()},
- modelsel:(e,el)=>pop(el,`<h5>Models</h5>${[['panel','Panel · 2 models','Perplexity Sonar + Claude Opus'],['open','Open-weight','Perplexity + Llama, runs in your environment'],['pplx','Perplexity only','Fast, web-grounded'],['claude','Claude only','Deep reasoning']].map(m=>pi('setModel',`data-m="${m[0]}"`,S.model===m[0]?'check':'',m[1],m[2])).join('')}<div class="faint" style="padding:6px 10px 8px;font-size:12px">US-acceptable models only.</div>`),
- setModel:e=>{S.model=e.m;closePop();if(S.route==='home')renderMain();toast('Model set','ok')},
+ attach:()=>pickPdfs(),
+ detach:e=>{S.attachments.splice(+e.i,1);refreshChips()},
+ srcmenu:(e,el)=>pop(el,srcMenuHTML()),
+ setScope:e=>{S.scope=e.k;refreshChips()},
+ morePapers:()=>{const q=((document.getElementById('q')||document.getElementById('q2')||{}).value||'').trim(),kc=window.__KC_BRIDGE;
+  if(!kc){toast('The live backend is not loaded');return}if(q.length<3){toast('Type your question first, then find more papers');return}
+  toast('Searching OpenAlex, Unpaywall and Europe PMC...');
+  kc.findMorePapers(q).then(r=>toast('Found '+r.sources.length+' paper'+(r.sources.length===1?'':'s')+' ('+r.sources.filter(x=>x.fulltext==='full_text').length+' with full text). They are used for answers and kept as links, not added to your library.','ok')).catch(err=>toast(err.message))},
+ modelsel:(e,el)=>pop(el,`<div style="min-width:300px;max-width:340px"><h5>How answers are checked</h5><div style="padding:2px 10px 4px"><b style="font-weight:600">Model A</b> · lead research scientist<div class="faint" style="font-size:12px">Drafts the answer from the sources, with a citation for every claim.</div></div><div style="padding:2px 10px 6px"><b style="font-weight:600">Model B</b> · speed auditor<div class="faint" style="font-size:12px">Independently checks Model A. Claims they disagree on are flagged, not hidden.</div></div><div class="faint" style="padding:6px 10px 8px;font-size:12px;border-top:1px solid var(--line)">Citations are verified against the original text before you see them.</div></div>`),
  cite:(e)=>{closePop();closeModal();sideCite(e.n)},
  claim:e=>{closePop();sideClaim(e.k)},
  setGrade:e=>{S.cg[e.k]=e.g;toast('Marked as '+GN[e.g].toLowerCase(),'ok');if($('#side').classList.contains('on')&&$('#side').textContent.includes('Claim check'))sideClaim(e.k);if(S.openId)refreshDrawerBody();const b=$('#abody');if(b&&S.route.startsWith('thread-')){const th=S.threads.find(t=>'thread-'+t.id===S.route);if(th&&!th.fresh){b.innerHTML=rich(ansByKey(th.key).html,th.key)}}},
  askReviewer:e=>{toast('Tomás Rivera will review this claim','ok')},
  saveAns:e=>sidePick('ans',{label:ansByKey(e.k).title||'Answer with citations',n:citesIn(ansByKey(e.k).html)[0],txt:ansByKey(e.k).title||'Saved answer'}),
- copyAns:e=>{const a=ansByKey(e.k);copy(a.html.replace(/\{[vdu]\|([^|]+)\|[^}]+\}/g,'$1').replace(/<br>/g,'\n')+'\n\nSources:\n'+citesIn(a.html).map(n=>n+'. '+citeFmt(n)).join('\n'),'Copied with citations')},
- flagAns:()=>toast('Flagged for review by Tomás Rivera','ok'),
+ copyAns:e=>{const a=ansByKey(e.k),od=n=>(SRC[n]&&SRC[n].ord)||n;copy(a.html.replace(/\{[vdu]\|([^|]+)\|[^}]+\}/g,'$1').replace(/<br>/g,'\n').replace(/\[(\d+)\]/g,(m,n)=>SRC[n]?'['+od(n)+']':m)+'\n\nSources:\n'+citesIn(a.html).map(n=>od(n)+'. '+citeFmt(n)).join('\n'),'Copied with citations')},
+ saveLib:e=>{const s=SRC[e.n],kc=window.__KC_BRIDGE;if(!s||!s.sid||!kc){toast('This paper cannot be saved from here');return}
+  kc.saveToLibrary(s.sid).then(()=>{s.lib=true;toast('Saved to your Knowledge Library','ok');sideCite(e.n)},err=>toast(esc(err.message)))},
+ flagAns:e=>{const a=ansByKey(e.k),kc=window.__KC_BRIDGE;
+  if(!a||!a.mid||!kc){toast('Only answers from the live backend can be flagged');return}
+  kc.flagAnswer(a.tid,a.mid).then(()=>toast('Flagged for review. It is recorded in the project audit log.','ok'),err=>toast(esc(err.message)))},
  pickFor:(e)=>sidePick('src',{label:SRC[e.n].t,n:e.n}),
  pickSel:(e)=>{const pk=$('#pick');pk.dataset.sel=e.id;pk.innerHTML=pickList(e.id)},
  pickAdd:()=>{const pk=$('#pick');if(!pk.dataset.sel)return;addToTask(pk.dataset.sel,pk.dataset.kind,pk.dataset.n,pk.dataset.txt)},
  copyCite:e=>copy(citeFmt(e.n),'Citation copied'),
- openOrig:e=>toast('The publisher page opens in a new tab in production'),
+ openOrig:e=>{const s=SRC[e.n],d=String(s&&s.doi||'').trim();
+  if(s&&/^https?:\/\//.test(String(s.url||''))&&!/^10\./.test(d)){window.open(s.url,'_blank','noopener')}
+  else if(/^10\.\d{4,9}\/\S+$/.test(d)){window.open('https://doi.org/'+d.split('/').map(encodeURIComponent).join('/'),'_blank','noopener')}
+  else toast(s&&s.ty==='Uploaded PDF'?'This source is a file you uploaded and has no public link. Its passage and citation are shown here.':'No link is stored for this source')},
  dtab:e=>{S.tab=e.t;refreshDrawer();const b=$('#dbody');b&&(b.scrollTop=0)},
  jump:e=>{const go2=()=>{const el=document.getElementById(e.to);el&&el.scrollIntoView({behavior:'smooth',block:'start'})};if(S.tab==='case'){const t=byId(S.openId);S.tab=t&&t.status==='running'?'evidence':'claims';refreshDrawer();setTimeout(go2,60)}else go2()},
  finalReview:e=>{S.tab='case';refreshDrawer()},
@@ -2077,7 +2226,11 @@ const A={
  nrOpen:()=>{S.pj=S.pj||{v:'overview'};S.pj.nr={step:1,method:'Technical Feasibility Assessment',out:'Technical research report'};renderMain()},
  nrClose:()=>{S.pj.nr=null;renderMain()},
  nrBack:()=>{nrRead();S.pj.nr.step--;renderMain()},
- nrNext:()=>{const n=S.pj.nr;nrRead();if(n.step===1&&!n.title){toast('Enter a research title');return}if(n.step<3){n.step++;renderMain();return}const id='n'+Date.now();(S.extra.nr=S.extra.nr||[]).push({id,title:n.title,q:n.q,bg:n.bg,out:n.out,method:n.method,lead:n.lead||P.amina.n});S.pj={v:'r',id,sub:'overview'};renderMain();toast('Research created','ok')},
+ nrNext:()=>{const n=S.pj.nr;nrRead();if(n.step===1&&!n.title){toast('Enter a research title');return}if(n.step<5){n.step++;renderMain();return}
+  const make=()=>{const id='n'+Date.now();(S.extra.nr=S.extra.nr||[]).push({id,title:n.title,q:n.q,bg:n.bg,out:n.out,method:n.method,lead:n.lead||P.amina.n,scope:n.scope||'both',links:n.links||''});if(n.scope)S.scope=n.scope;S.pj={v:'r',id,sub:'overview'};renderMain();toast('Research started','ok')};
+  const kc=window.__KC_BRIDGE;if(!kc){make();return}
+  const brief=['Question: '+(n.q||'-'),'Background: '+(n.bg||'-'),'Expected output: '+(n.out||'-'),'Method: '+(n.method||'-'),'Sources: '+(n.scope||'both'),(n.links||'').trim()&&'Links:\n'+n.links.trim()].filter(Boolean).join('\n');
+  kc.createResearch(n.title,brief).then(make).catch(err=>toast(err.message))},
   postUpd:()=>{const i=$('#updtxt'),v=(i&&i.value||'').trim();if(!v){toast('Write an update first');return}(S.extra.upd=S.extra.upd||[]).push(['Bill Carter',v,'Just now']);renderMain();toast('Update posted','ok')},
  libTab:e=>{S.lib=e.t;S.sq='';renderMain()},
  repoTog:e=>{const m=S.extra.repoSt=S.extra.repoSt||{};const cur=m[e.id]||(['rp2','rp4','rp7','rp13'].includes(e.id)?'Inactive':'Active');m[e.id]=cur==='Active'?'Inactive':'Active';renderMain()},
@@ -2087,12 +2240,15 @@ const A={
  moveMenu:(e,el)=>{const t=byId(e.id);pop(el,`<h5>Move to</h5>${STAGES.map(s=>pi('moveTo',`data-id="${t.id}" data-s="${s}"`,t.stage===s?'check':'',s,s==='Decided'?'Advance or park':'')).join('')}`,{right:true})},
  moveTo:e=>{closePop();moveTask(e.id,e.s)},
  notifyMe:e=>toast('We will notify you when '+byId(e.id).code+' finishes','ok'),
- submitVP:e=>{setStatus(e.id,'vp');toast('Submitted to Dr. Priya Nair for approval','ok');refreshDrawer();refreshBody()},
+ submitVP:e=>{const kc=window.__KC_BRIDGE,t=byId(e.id),done=who=>{setStatus(e.id,'vp');toast('Submitted to '+who+' for approval','ok');refreshDrawer();refreshBody()};
+  if(kc&&t&&t.kc)kc.requestApproval(t.id).then(r=>done(r.names)).catch(err=>toast(err.message));else done('Dr. Priya Nair')},
  nudge:e=>toast('Reminder sent to Dr. Priya Nair','ok'),
- approve:e=>{const t=byId(e.id);setStatus(e.id,'done',{stage:'Decided',prog:100});(S.comments[t.id]=S.comments[t.id]||[]).push(['priya','Approved. Proceed to the pilot.','now']);toast(t.code+' approved. '+P[t.owner].n+' has been notified','ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
+ approve:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE;if(kc&&t&&t.kc){kc.decideApproval(t.id,'approved','').then(()=>A.approve2(e)).catch(err=>toast(err.message));return}A.approve2(e)},
+ approve2:e=>{const t=byId(e.id);setStatus(e.id,'done',{stage:'Decided',prog:100});(S.comments[t.id]=S.comments[t.id]||[]).push(['priya','Approved. Proceed to the pilot.','now']);toast(t.code+' approved. '+P[t.owner].n+' has been notified','ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
  changes:e=>{const t=byId(e.id);modal(W.mwrap('Request changes',`<div class="stack"><div class="muted">${esc(t.title)}</div><div class="field"><label>What should ${P[t.owner].n.split(' ')[0]} change?</label><textarea class="in" id="fb" rows="4" placeholder="Be specific. This feeds back into the next run."></textarea></div><div class="chips">${['Source a primary dataset','Re-run with a stricter threshold','Add a sensitivity range'].map(x=>`<button class="fchip" data-act="fbChip" data-v="${x}">${x}</button>`).join('')}</div></div>`,`<button class="btn ghost" data-act="closeModal">Cancel</button><button class="btn pri" data-act="sendFb" data-id="${t.id}">Send feedback</button>`))},
  fbChip:e=>{const f=$('#fb');f.value=(f.value?f.value+' ':'')+e.v+'.';f.focus()},
- sendFb:e=>{const t=byId(e.id),v=($('#fb').value||'').trim()||'Please revisit the flagged claims.';setStatus(e.id,'review');(S.comments[t.id]=S.comments[t.id]||[]).push(['priya',v,'now']);closeModal();toast('Feedback sent to '+P[t.owner].n,'ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
+ sendFb:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE,v=($('#fb').value||'').trim()||'Please revisit the flagged claims.';if(kc&&t&&t.kc){kc.decideApproval(t.id,'changes_requested',v).then(()=>A.sendFb2(e,v)).catch(err=>toast(err.message));return}A.sendFb2(e,v)},
+ sendFb2:(e,v)=>{const t=byId(e.id);setStatus(e.id,'review');(S.comments[t.id]=S.comments[t.id]||[]).push(['priya',v,'now']);closeModal();toast('Feedback sent to '+P[t.owner].n,'ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
  unblock:e=>{setStatus(e.id,'review');byId(e.id).rag='g';toast('Blocker marked as resolved','ok');refreshDrawer();refreshBody()},
  reopen:e=>{const t=byId(e.id);t.stage='Validation';setStatus(e.id,'review');toast(t.code+' reopened in Validation','ok');refreshDrawer();refreshBody()},
  post:e=>{const i=$('#cmtIn'),v=i.value.trim();if(!v){toast('Write a comment first');return}(S.comments[e.id]=S.comments[e.id]||[]).push(['amina',v,'now']);refreshDrawerBody();toast('Comment posted','ok')},
@@ -2183,7 +2339,7 @@ function addFiles(names){S.extra.lib=S.extra.lib||[];names.forEach((n,i)=>{const
 
 document.addEventListener('click',ev=>{
  const el=ev.target.closest('[data-act]');
- if(popEl&&!ev.target.closest('.pop')&&!(el&&['notif','clipPop','srcsel','modelsel','moveMenu','linkSig'].includes(el.dataset.act)))closePop();
+ if(popEl&&!ev.target.closest('.pop')&&!(el&&['notif','clipPop','srcmenu','modelsel','moveMenu','linkSig'].includes(el.dataset.act)))closePop();
  if(ev.detail>=3){const sel=String(getSelection()).trim();if(sel.length>14&&!ev.target.closest('.side,input,textarea,.mbox,.pop')){ev.preventDefault();sideClip(sel);return}}
  if(!el)return;
  if(el.dataset.act==='closeAll'&&ev.target!==el)return;
@@ -2304,7 +2460,7 @@ const SOURCES={
  ieee:{n:'IEEE Xplore and standards',sub:'Standards, conference and journal papers',prov:'IEEE · IEC · ISO · UL · SAE · UN · DoD',ico:'layers',ci:1,grp:'IEEE',c:'#0A7C93'},
  web:{n:'Web and news',sub:'Monitored news, trade press and releases',prov:'Live search with dated, attributable citations',ico:'globe',ci:3,grp:'Web',c:'#1F7A4A'},
  library:{n:'Upload library',sub:'Everything your team has uploaded',prov:'PDF · DOCX · PPTX · XLSX · CSV · TXT',ico:'upload',ci:4,grp:'Uploads',c:'#5B49BD'},
- drive:{n:'Company drive',sub:'Shared reports, lab data and minutes',prov:'SharePoint and Google Drive folders',ico:'folder',ci:5,grp:'Uploads',c:'#A3306B'}
+ drive:{n:'Company drive (later release)',sub:'Not connected: company systems are out of scope for the pilot',prov:'Add documents through Upload library instead',ico:'folder',ci:5,grp:'Uploads',c:'#A3306B'}
 };
 const KEYS=Object.keys(SOURCES);
 const connV=k=>{const i=SOURCES[k].ci,a=S.extra.conn;return a?a[i]:D.CONN[i][2]};
@@ -2355,7 +2511,7 @@ const kwOf=t=>t.replace(/[^\w\s-]/g,'').split(/\s+/).filter(w=>w.length>5).slice
  [3,'Marchetti L., Sato K.','Applied Thermal Engineering','2024-06-03','Journal article',112,'sc-imm','t102','10.1016/j.applthermaleng.2024.123018'],
  [6,'Varga P., Chen Y., Adeyemi T.','Joule','2025-05-21','Journal article',76,'sc-na','t104','10.1016/j.joule.2025.04.007'],
  [10,'Duarte M., Khalil R.','Renewable & Sustainable Energy Reviews','2024-09-14','Review',203,'sc-pcm','t103','10.1016/j.rser.2024.114702']
-].forEach(([n,au,venue,date,type,cites,folder,task,doi],i)=>add({id:'sc'+n,src:'scholar',srcN:n,t:SRC[n].t,au,venue,date,type,cites,folder,area:FAREA[parentOf('scholar',folder)],tasks:[task],doi,oa:i%2===0,peer:true,db:'Google Scholar',lang:'English',abs:strip(SRC[n].p),kw:kwOf(SRC[n].t),added:ago(6+i*5),by:['amina','sara','tomas','james'][i]}));
+].filter(r=>SRC[r[0]]).forEach(([n,au,venue,date,type,cites,folder,task,doi],i)=>add({id:'sc'+n,src:'scholar',srcN:n,t:SRC[n].t,au,venue,date,type,cites,folder,area:FAREA[parentOf('scholar',folder)],tasks:[task],doi,oa:i%2===0,peer:true,db:'Google Scholar',lang:'English',abs:strip(SRC[n].p),kw:kwOf(SRC[n].t),added:ago(6+i*5),by:['amina','sara','tomas','james'][i]}));
 const SCT={'sc-solid':['Lithium dendrite suppression in garnet electrolytes via grain-boundary engineering','Air stability of Ta-doped LLZO powders during dry-room processing','Sulfide–polymer hybrid electrolytes with stable lithium-metal cycling','Tape casting of thin LLZO sheets above 100 cm²','Halide solid electrolytes for high-voltage cathodes'],
  'sc-anode':['Silicon–carbon anodes with self-healing polymer binders','Cross-linked alginate binders for high-loading silicon electrodes','Prelithiation strategies for silicon-dominant anodes'],
  'sc-int':['Atomic-layer-deposited Al₂O₃ coatings on garnet surfaces','Interfacial degradation of nickel-rich cathodes in solid-state cells','In situ impedance mapping of polymer–ceramic interfaces'],
@@ -2474,7 +2630,7 @@ Object.keys(PT).forEach(folder=>{const L=PT[folder];L.t.forEach((t,ti)=>{
  [0,'Phase-change interface leak test log','PDF','Internal lab','Materials lab','lb-lab','james','Internal',['t103'],'2026-10-09','920 KB · 9 pp'],
  [0,'Meridian webinar transcript: hard-carbon pricing','TXT','Web','meridianoutlook.com','lb-mkt','tomas','Public',[],'2026-07-18','34 KB'],
  [0,'MIL-STD-810H Method 501.7 excerpt','PDF','IEEE Xplore','Standards store','lb-pub','amina','Public',['t106'],'2026-06-11','480 KB · 12 pp']
-].forEach(([n,t,ft,origin,db,folder,by,conf,tasks,ret,size],i)=>add({id:'lb'+i,src:'library',file:true,srcN:n||undefined,t:n?SRC[n].t:t,ft,origin,db,folder,by,conf,tasks,ret,date:ret,size,area:byId(tasks[0]||'t102').sector,abs:n?strip(SRC[n].p):`${ft} uploaded by ${nm(by)} from ${origin.toLowerCase()} (${db}).`,added:ret}));
+].forEach(([n,t,ft,origin,db,folder,by,conf,tasks,ret,size],i)=>add({id:'lb'+i,src:'library',file:true,srcN:n||undefined,t:n?SRC[n].t:t,ft,origin,db,folder,by,conf,tasks,ret,date:ret,size,area:(byId(tasks[0]||'t102')||{}).sector,abs:n?strip(SRC[n].p):`${ft} uploaded by ${nm(by)} from ${origin.toLowerCase()} (${db}).`,added:ret}));
 // Company drive (disconnected until someone connects it)
 [['Gate review minutes, October 2026','DOCX','dr-gate','priya','Internal','Thermal'],['Lab data index 2026','XLSX','dr-lab','james','Internal','Materials'],['Supplier qualification tracker','XLSX','dr-qual','tomas','Confidential','Supply chain'],['Pack thermal test plan','DOCX','dr-lab','sara','Internal','Thermal'],['Pilot line safety case','PDF','dr-gate','mei','Confidential','Compliance'],['Hard-carbon second-source shortlist','PPTX','dr-qual','tomas','Confidential','Supply chain']].forEach(([t,ft,folder,by,conf,area],i)=>add({id:'dr'+i,src:'drive',t,ft,folder,by,conf,area,origin:'Company drive',db:'SharePoint',date:ago(3+i*6),ret:ago(3+i*6),added:ago(3+i*6),abs:`Shared ${ft} owned by ${nm(by)}.`}));
 window.__HUB={CAT,SOURCES};
@@ -3101,5 +3257,5 @@ document.addEventListener('focusin',e=>{
 document.addEventListener('focusout',hide);
 })();
 </script>
-<script src="halden-bridge.js"></script>
+<script src="halden-bridge.js?v=scope31"></script>
 </body></html>

@@ -1,5 +1,6 @@
 """Projects, tasks (with the researcher approval lock), threads and the ask endpoint."""
 import asyncio
+import logging
 import json
 from typing import Literal
 from uuid import UUID
@@ -19,8 +20,10 @@ from .deps import get_embedder, get_llms
 from .ingest import store
 from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
 from .orchestration.schema import ContextChunk
+from .orchestration.prompts import fit_to_budget
 from .verification.verifier import VerifyConfig
 
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["tasks"])
 
 
@@ -29,26 +32,41 @@ router = APIRouter(tags=["tasks"])
 class ProjectIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     mode: Literal["open_discovery", "closed_repository"]
+    meta: dict = Field(default_factory=dict)        # sector, lead, question, method... (descriptive only)
+
+
+def _clean_meta(meta: dict) -> dict:
+    """Keep descriptive fields short, flat and textual."""
+    return {str(k)[:40]: str(v)[:2000] for k, v in list(meta.items())[:20] if v is not None}
 
 
 @router.post("/projects", status_code=201)
 async def create_project(body: ProjectIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
     pid = await pool.fetchval(
-        "INSERT INTO projects (owner_id, name, mode) VALUES ($1, $2, $3) RETURNING id",
-        user, body.name, body.mode,
+        "INSERT INTO projects (owner_id, name, mode, meta) VALUES ($1, $2, $3, $4::jsonb) RETURNING id",
+        user, body.name.strip(), body.mode, json.dumps(_clean_meta(body.meta)),
     )
     await audit(pool, pid, user, "project.create", "project", pid, name=body.name, mode=body.mode)
-    return {"id": pid, "name": body.name, "mode": body.mode}
+    return {"id": pid, "name": body.name.strip(), "mode": body.mode, "meta": _clean_meta(body.meta)}
 
 
 @router.get("/projects")
 async def list_projects(user: UUID = Depends(require_user), pool=Depends(get_pool)):
     rows = await pool.fetch(
-        """SELECT p.id, p.name, p.mode::text AS mode, p.created_at, m.role::text AS role
-           FROM projects p JOIN project_members m ON m.project_id = p.id AND m.user_id=$1 ORDER BY p.created_at DESC""",
+        """SELECT p.id, p.name, p.mode::text AS mode, p.meta, p.created_at, m.role::text AS role
+           FROM projects p JOIN project_members m ON m.project_id = p.id AND m.user_id=$1
+           ORDER BY (SELECT max(ms.created_at) FROM messages ms JOIN threads th ON th.id = ms.thread_id
+                       JOIN tasks t ON t.id = th.task_id WHERE t.project_id = p.id) DESC NULLS LAST,
+                    p.created_at DESC""",
         user,
     )
-    return {"projects": [dict(r) for r in rows]}
+    out = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("meta"), str):
+            d["meta"] = json.loads(d["meta"])
+        out.append(d)
+    return {"projects": out}
 
 
 @router.get("/projects/{project_id}")
@@ -60,7 +78,7 @@ async def get_project(project=Depends(project_for_user)):
 async def list_tasks(project=Depends(project_for_user), pool=Depends(get_pool)):
     rows = await pool.fetch(
         """SELECT id, title, brief, status::text AS status, created_at
-           FROM tasks WHERE project_id=$1 ORDER BY created_at DESC""", project["id"])
+           FROM tasks WHERE project_id=$1 AND kind='research' ORDER BY created_at DESC""", project["id"])
     return {"tasks": [dict(r) for r in rows]}
 
 
@@ -69,7 +87,7 @@ async def list_sources(project=Depends(project_for_user), pool=Depends(get_pool)
     rows = await pool.fetch(
         """SELECT s.id, s.title, s.doi, s.filename, s.origin::text AS origin, s.fulltext::text AS fulltext,
                   s.year, s.page_count, (SELECT count(*) FROM chunks c WHERE c.source_id=s.id) AS chunks
-           FROM sources s WHERE s.project_id=$1 ORDER BY s.created_at""",
+           FROM sources s WHERE s.project_id=$1 AND s.in_library ORDER BY s.created_at""",
         project["id"],
     )
     return {"sources": [dict(r) for r in rows]}
@@ -186,7 +204,11 @@ async def get_thread(
 
 class AskIn(BaseModel):
     question: str = Field(min_length=3, max_length=4000)
-    top_k: int = Field(default=8, ge=1, le=20)
+    top_k: int = Field(default=5, ge=1, le=20)
+    # open discovery only: restrict to uploaded PDFs, to discovered papers, or both
+    scope: Literal["uploads", "api", "both"] = "both"
+    # open discovery only: search just these sources (e.g. the PDFs attached to this question)
+    source_ids: list[UUID] | None = None
 
 
 def render_content(r: DualResult) -> str:
@@ -204,6 +226,23 @@ def render_content(r: DualResult) -> str:
         cites = ", ".join(str(i) for i in c.chunk_ids)
         lines.append(f"- {c.text} [cite: {cites}]" + ("" if c.confirmed else " (single-model)"))
     return "\n".join(lines)
+
+
+def _cross_check_note(detail: str) -> str:
+    """A plain-language reason the two-model check could not finish (the raw detail stays in the response and the log)."""
+    d = detail.lower()
+    if "http 429" in d or "rate limit" in d:
+        return ("The AI models are busy right now (the provider's usage limit was reached). "
+                "No answer is shown because it could not be cross-checked. Wait about a minute and ask again.")
+    if "http 401" in d or "http 403" in d:
+        return ("The AI provider rejected the access key, so the models could not be reached. "
+                "Ask an administrator to check the API key.")
+    if "json_validate_failed" in d or "invalid output" in d or "malformed" in d:
+        return ("One of the models returned an unusable reply. No answer is shown because it could not be "
+                "cross-checked. Please ask again.")
+    if "timeout" in d or "connect" in d or "transport" in d or "readerror" in d:
+        return "The AI models could not be reached. Check the connection and try again."
+    return "No answer is shown because it could not be cross-checked. Please try again."
 
 
 @router.post("/threads/{thread_id}/ask")
@@ -224,10 +263,19 @@ async def ask(
         if compute_lock_hash(sources) != th["source_lock_hash"]:
             raise HTTPException(409, "source lock mismatch: the task's sources changed after approval")
         source_ids = [s["id"] for s in sources]
-    elif sources:
-        source_ids = [s["id"] for s in sources]
-    else:  # open discovery without an explicit selection: the session's whole source of truth
-        rows = await pool.fetch("SELECT id FROM sources WHERE project_id=$1", th["project_id"])
+    else:
+        # Open discovery: explicit selection, else the project's whole source of truth,
+        # narrowed by the requested scope (user uploads vs papers found via the APIs).
+        cond = {"uploads": "origin = 'user_upload'", "api": "origin <> 'user_upload'", "both": "true"}[body.scope]
+        if body.source_ids:
+            rows = await pool.fetch(
+                f"SELECT id FROM sources WHERE project_id=$1 AND id = ANY($2::uuid[]) AND {cond}",
+                th["project_id"], body.source_ids)
+        elif sources:
+            rows = await pool.fetch(f"SELECT id FROM sources WHERE id = ANY($1::uuid[]) AND {cond}",
+                                    [s["id"] for s in sources])
+        else:
+            rows = await pool.fetch(f"SELECT id FROM sources WHERE project_id=$1 AND {cond}", th["project_id"])
         source_ids = [r["id"] for r in rows]
 
     await pool.execute(
@@ -259,17 +307,20 @@ async def ask(
             if m["doi"]:
                 label += f", doi:{m['doi']}"
             chunks.append(ContextChunk(h.chunk_id, h.text, label, h.page_start, h.page_end, h.sha256))
+        chunks, trimmed = fit_to_budget(chunks, cfg.llm_context_token_budget)
+        gate["passages_trimmed_for_budget"] = trimmed
         await check_budget(pool, th["project_id"])
         meter = Meter(llms)
         a, b = meter.llms
         vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)
         try:
-            result = await run_dual(body.question, chunks, a, b, verify=vcfg)
+            result = await run_dual(body.question, chunks, a, b, judge=a, verify=vcfg)  # the stronger model matches claims; it never decides who is right
         except CrossCheckFailed as e:
             await meter.record(pool, th["project_id"], user, "ask")
+            log.warning("ask cross-check unavailable: %s", e)
             raise HTTPException(503, {
                 "error": "cross_check_unavailable", "detail": str(e),
-                "note": "No answer is shown because it could not be cross-checked.",
+                "note": _cross_check_note(str(e)),
             })
 
     if gate["passed"]:
@@ -308,6 +359,7 @@ async def ask(
         "claims": result.claims, "disagreement": result.disagreement, "top_similarity": top,
         "verification": {"status": "complete", "verified": n_ok, "purged": n_bad},
         "gate": gate,
+        "models": _model_breakdown(result),
         "chunks": await _chunk_meta(pool, result),
     })
     await audit(pool, th["project_id"], user, "ask", "message", mid, kind=result.kind, reason=result.reason,
@@ -319,12 +371,46 @@ async def ask(
     return payload
 
 
+@router.post("/threads/{thread_id}/messages/{message_id}/flag")
+async def flag_message(
+    thread_id: UUID, message_id: UUID,
+    user: UUID = Depends(require_user),
+    pool=Depends(get_pool),
+):
+    """Record that a person asked for this answer to be reviewed (kept in the project's audit log)."""
+    th = await thread_for_user(pool, thread_id, user, "researcher")
+    msg = await pool.fetchrow(
+        "SELECT id, answer_kind FROM messages WHERE id=$1 AND thread_id=$2 AND role='assistant'", message_id, thread_id)
+    if not msg:
+        raise HTTPException(404, "answer not found")
+    await audit(pool, th["project_id"], user, "answer.flag", "message", message_id, kind=msg["answer_kind"])
+    return {"message_id": str(message_id), "flagged": True}
+
+
 def _chunk_ids(result: DualResult) -> set:
     ids = {cid for c in result.claims for cid in c.chunk_ids}
     d = result.disagreement or {}
     for cl in (*d.get("model_a_claims", []), *d.get("model_b_claims", [])):
         ids.update(cl["chunk_ids"])
+    for checks in result.checks.values():       # the expanded model view shows each model's own claims
+        for c in checks:
+            ids.update(c.chunk_ids)
     return ids
+
+
+def _model_breakdown(result: DualResult) -> dict:
+    """What each model itself claimed and how every claim fared against the source text (empty if no model ran)."""
+    if not result.checks:
+        return {}
+    return {
+        key: {
+            "verified": sum(c.verified for c in checks),
+            "purged": sum(not c.verified for c in checks),
+            "claims": [{"text": c.claim_text, "quote": c.quote, "verified": c.verified, "reason": c.reason,
+                        "match_kind": c.match_kind, "chunk_ids": c.chunk_ids} for c in checks],
+        }
+        for key, checks in result.checks.items()
+    }
 
 
 async def _chunk_meta(pool, result: DualResult) -> dict:
@@ -333,7 +419,8 @@ async def _chunk_meta(pool, result: DualResult) -> dict:
     return {
         str(cid): {
             "label": (r["title"] or r["filename"] or "untitled") + (f", doi:{r['doi']}" if r["doi"] else ""),
-            "source_id": str(r["source_id"]), "filename": r["filename"], "doi": r["doi"],
+            "source_id": str(r["source_id"]), "filename": r["filename"], "doi": r["doi"], "origin": str(r["origin"]),
+            "url": f"https://doi.org/{r['doi']}" if r["doi"] else r["source_url"], "in_library": r["in_library"],
             "page_start": r["page_start"], "page_end": r["page_end"],
             "sha256": r["sha256"], "text": r["text"],
         } for cid, r in rows.items()

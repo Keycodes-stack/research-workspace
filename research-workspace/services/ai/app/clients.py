@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 import asyncpg
 import boto3
+from botocore.exceptions import ClientError
 import redis.asyncio as aioredis
 from pgvector.asyncpg import register_vector
 
@@ -80,10 +81,15 @@ def get_s3():
                     aws_secret_access_key=s.s3_secret_key,
                     region_name=s.s3_region,
                 )
-                client.head_bucket(Bucket=s.s3_bucket)
+                try:
+                    client.head_bucket(Bucket=s.s3_bucket)
+                except ClientError as e:
+                    if e.response["Error"]["Code"] not in ("404", "NoSuchBucket", "NotFound"):
+                        raise
+                    client.create_bucket(Bucket=s.s3_bucket)  # first run: no separate init step needed
                 _s3 = client
             except Exception:
-                _s3 = LocalStorageClient()
+                return LocalStorageClient()  # not cached, so a later call retries the real store
     return _s3
 
 

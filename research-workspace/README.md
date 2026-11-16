@@ -28,6 +28,18 @@ uvicorn app.main:app --reload --port 8000
 curl localhost:8000/health
 ```
 
+## Windows one-click start (no Docker, no Go)
+
+`start_project.bat` starts the AI backend (:8001), the Python gateway (:8080) and the web app (:3000, or :3001 if
+3000 is taken), waits for the backend to be healthy, then opens the browser already signed in (it mints a
+short-lived token from `JWT_SECRET` and passes it in the URL fragment, which is never sent to a server).
+Requirements: `.env` (copy `.env.example`), the Python venv in `services/ai/.venv`, Node 20+.
+
+- The backend runs through `python -m uvicorn`, not `uvicorn.exe`: the `.exe` shims inside a copied venv still
+  point at the machine the venv was created on.
+- Keep the repository outside OneDrive if you can: syncing the venv makes the first backend start very slow.
+- No sign-in token is built into the app. Mint one by hand with `python services/gateway/mint_token.py [--days N]`.
+
 ## Build phases
 
 1. Foundation and database (done)
@@ -44,7 +56,7 @@ curl localhost:8000/health
 - Models never answer from training memory; they only see retrieved chunks.
 - Every chunk stores `sha256(text)`; citations are verified against it.
 - Unverified claims are purged before display.
-- Answers are refused if best cosine similarity is below 0.76.
+- Answers are refused if best cosine similarity is below `SIMILARITY_THRESHOLD` (0.65 with bge-base: the original 0.76 refused about half of answerable questions in the eval; tune it with `services/ai/eval`).
 
 ## Running the tests
 
@@ -68,7 +80,7 @@ npm install && npm run dev                      # :3000   (npm run build && npm 
 npm test && npm run typecheck
 ```
 
-- Sign in by pasting a JWT (dev: `go run ./cmd/mint-token`); a 401 signs the user out.
+- Sign in by pasting a JWT (dev: `python services/gateway/mint_token.py`, or run `start_project.bat`, which signs you in automatically); a 401 signs the user out.
 - Flow: projects -> sources (PDF upload, or discovery for open projects) -> task (choose sources, approve and lock)
   -> research session. The answer view shows: verified / disagreement / insufficient state, how many model
   claims were verified and removed, best source match vs the 0.76 gate, per-claim "confirmed by both" vs
@@ -253,3 +265,47 @@ What it does on a concept page, for several people at once:
 Found while testing live (and fixed): a browser closing the tab cancelled the stream task and its cleanup was cancelled too, so presence lingered and a database connection could leak (cleanup is now shielded, with a regression test); the gateway's 5 req/s limit rejected a busy collaboration session (default raised to 10 req/s, burst 60, and the page now coalesces event-driven refetches).
 
 **Not built, on purpose:** this is not Google-Docs-style character-level co-editing (no CRDT/OT, no live cursors, no merged typing). Two people typing into the same section concurrently resolve through versions and the conflict panel. Live notifications work across several API processes (Postgres fans them out); presence and locks are stored in Postgres, not in memory. Redis is still unused.
+
+## Phase 14: approval chain and VP view
+
+Migration `009_approvals.sql`, `app/routes_approvals.py`.
+
+- `POST /concepts/{id}/approval/request` `{vp_ids: [...], ceo_id?}` (researcher or above; reviewers must be project
+  members) opens a round. Every named VP then approves or requests changes; remarks (10+ characters) are mandatory
+  for changes. The CEO, if named, can only sign off after all VPs approved.
+- `POST /concepts/{id}/approval/decide` `{decision: approved|changes_requested, remarks}`: only a reviewer with a
+  pending review can call it. Changes requested end the round; the researcher requests again for round 2.
+- `GET /concepts/{id}/approval`: status, reviewers, whether it awaits you, earlier rounds.
+- `GET /projects/{id}/executive`: the VP view (active concepts, progress, approval state, what waits for you,
+  blockers with remarks). Everything is written to the audit log.
+- In the Halden UI: "Submit for VP approval", "Approve" and "Request changes" call these endpoints for tasks that
+  come from the backend. The 5-step "New Research" wizard creates a real task with the brief.
+
+## Context budget
+
+`LLM_CONTEXT_TOKEN_BUDGET` (default 4500) caps the source text sent to a model per question; the lowest-ranked
+passages are dropped first (never cut short, so exact-match citations stay valid). It keeps requests under provider
+per-minute token caps. `0` disables it. Discovery is skipped when the project's already-indexed papers cover the
+question (`POST /projects/{id}/discover-and-ingest` with `force: true` searches for more).
+
+## Run everything with one command (Docker)
+
+Requires Docker Desktop (or Docker Engine + Compose v2). No local Python, Node or Go needed.
+
+```bash
+cp .env.example .env        # then set MISTRAL_API_KEY / GROQ_API_KEY, JWT_SECRET, INTERNAL_TOKEN
+docker compose up --build
+```
+
+| Service | URL | Notes |
+|---|---|---|
+| Web (Next.js) | http://localhost:3000/intelligence | |
+| Gateway (Go) | http://localhost:8080 | the only public API entry; the AI service is not exposed |
+| MinIO console | http://127.0.0.1:9001 | PDF storage |
+
+- Postgres (pgvector), Redis and MinIO start first; the AI service waits until they are healthy.
+- Database migrations in `db/migrations` run automatically on the first start (empty volume only).
+  To reset everything: `docker compose down -v`.
+- The embedding model downloads on first start (~400 MB) and is cached in the `models` volume,
+  so the AI service can take a few minutes to become healthy the first time.
+- Stop with `docker compose down`.

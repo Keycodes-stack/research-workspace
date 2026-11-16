@@ -42,6 +42,19 @@ class OpenAICompatLLM:
         self.backoff = backoff
         self._client = client
 
+    def _wait(self, r: httpx.Response, attempt: int) -> float:
+        """Backoff, but never shorter than the provider's Retry-After (capped at 60 s).
+        A 429 with no hint usually means a per-minute quota (e.g. 2 requests/min on a free tier): wait long
+        enough for the minute to roll over instead of burning every retry in the first few seconds."""
+        try:
+            hint = float(r.headers.get("retry-after", 0))
+        except ValueError:
+            hint = 0.0
+        wait = self.backoff * 2**attempt
+        if r.status_code == 429 and hint <= 0 and self.backoff > 0:
+            wait = max(wait, 25.0 * (attempt + 1))
+        return max(wait, min(hint + 0.5, 60.0)) if hint > 0 else min(wait, 60.0)
+
     async def complete(self, system: str, user: str) -> str:
         payload = {
             "model": self.model,
@@ -52,6 +65,10 @@ class OpenAICompatLLM:
                 {"role": "user", "content": user},
             ],
         }
+        if "gpt-oss" in self.model:
+            # Reasoning models can spend the whole output budget thinking and return an empty reply
+            # (Groq: json_validate_failed). Low effort keeps the reply and uses fewer tokens per minute.
+            payload["reasoning_effort"] = "low"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
         for attempt in range(self.retries):
@@ -68,8 +85,10 @@ class OpenAICompatLLM:
                 await asyncio.sleep(self.backoff * 2**attempt)
                 continue
 
-            if r.status_code in RETRY_STATUS and not last:
-                await asyncio.sleep(self.backoff * 2**attempt)
+            transient = r.status_code in RETRY_STATUS or (
+                r.status_code == 400 and "json_validate_failed" in r.text)  # flaky empty JSON reply
+            if transient and not last:
+                await asyncio.sleep(self._wait(r, attempt))
                 continue
             if r.status_code != 200:
                 # Truncate: provider error bodies can echo parts of the prompt.
@@ -81,47 +100,30 @@ class OpenAICompatLLM:
         raise LLMError(f"{self.name}: retries exhausted")
 
 
+# provider -> (base_url setting, api-key setting or None, API-key env var, default model for slot A / slot B)
+PROVIDERS = {
+    "mistral": ("mistral_base_url", "mistral_api_key", "MISTRAL_API_KEY", ("mistral-small-latest", "ministral-8b-latest")),
+    "groq": ("groq_base_url", "groq_api_key", "GROQ_API_KEY", ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")),
+    "ollama": ("ollama_base_url", None, "", ("mistral-small:24b", "llama3.1:8b")),
+}
+
+
+def build_llm(s: Settings, slot: str) -> OpenAICompatLLM:
+    """Build model A or B purely from settings: MODEL_<slot>_PROVIDER and MODEL_<slot>_NAME."""
+    provider = getattr(s, f"model_{slot.lower()}_provider")
+    if provider not in PROVIDERS:
+        raise LLMError(f"unknown MODEL_{slot}_PROVIDER {provider!r}; use one of {sorted(PROVIDERS)}")
+    url_attr, key_attr, key_var, defaults = PROVIDERS[provider]
+    key = getattr(s, key_attr) if key_attr else ""
+    if key_attr and not key:
+        raise LLMError(f"{key_var} is not set")
+    name = getattr(s, f"model_{slot.lower()}_name") or defaults[slot == "B"]
+    return OpenAICompatLLM(
+        name=f"model_{slot.lower()}:{provider}", base_url=getattr(s, url_attr), model=name,
+        api_key=key, timeout=s.llm_timeout_s,
+    )
+
+
 def build_llms(s: Settings) -> tuple[LLM, LLM]:
     """Model A (Lead Research Scientist) and Model B (Speed Auditor)."""
-
-    def need_key(key: str, var: str) -> str:
-        if not key:
-            raise LLMError(f"{var} is not set")
-        return key
-
-    if s.model_a_provider == "mistral":
-        a = OpenAICompatLLM(
-            name="model_a:mistral", base_url=s.mistral_base_url, model=s.mistral_model,
-            api_key=need_key(s.mistral_api_key, "MISTRAL_API_KEY"), timeout=s.llm_timeout_s,
-        )
-    elif s.model_a_provider == "groq":
-        a = OpenAICompatLLM(
-            name="model_a:groq", base_url=s.groq_base_url, model=s.mistral_model or "qwen/qwen3.8-27b",
-            api_key=need_key(s.groq_api_key, "GROQ_API_KEY"), timeout=s.llm_timeout_s,
-        )
-    elif s.model_a_provider == "ollama":
-        a = OpenAICompatLLM(
-            name="model_a:ollama", base_url=s.ollama_base_url, model=s.ollama_model_a,
-            timeout=s.llm_timeout_s,
-        )
-    else:
-        raise LLMError(f"unknown MODEL_A_PROVIDER {s.model_a_provider!r}")
-
-    if s.model_b_provider == "groq":
-        b = OpenAICompatLLM(
-            name="model_b:groq", base_url=s.groq_base_url, model=s.llama_model,
-            api_key=need_key(s.groq_api_key, "GROQ_API_KEY"), timeout=s.llm_timeout_s,
-        )
-    elif s.model_b_provider == "mistral":
-        b = OpenAICompatLLM(
-            name="model_b:mistral", base_url=s.mistral_base_url, model="ministral-8b-latest",
-            api_key=need_key(s.mistral_api_key, "MISTRAL_API_KEY"), timeout=s.llm_timeout_s,
-        )
-    elif s.model_b_provider == "ollama":
-        b = OpenAICompatLLM(
-            name="model_b:ollama", base_url=s.ollama_base_url, model=s.ollama_model_b,
-            timeout=s.llm_timeout_s,
-        )
-    else:
-        raise LLMError(f"unknown MODEL_B_PROVIDER {s.model_b_provider!r}")
-    return a, b
+    return build_llm(s, "A"), build_llm(s, "B")

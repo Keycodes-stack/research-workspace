@@ -21,12 +21,13 @@ class Settings(BaseSettings):
 
     mistral_api_key: str = ""
     groq_api_key: str = ""
-    mistral_model: str = "mistral-small-latest"
-    llama_model: str = "llama-3.1-8b-instant"
 
     contact_email: str = ""
 
-    # --- LLM providers. Model A: mistral | ollama. Model B: groq | ollama. ---
+    # --- LLM models: swap providers or models by editing .env only (see .env.example). ---
+    # Providers: mistral | groq | ollama. An empty *_NAME uses the provider's default model.
+    model_a_name: str = ""
+    model_b_name: str = ""
     # NOTE: mistral/groq are cloud APIs; chunk text (including confidential Mode B
     # documents) is sent to them. Use "ollama" for fully local processing.
     model_a_provider: str = "mistral"
@@ -34,18 +35,22 @@ class Settings(BaseSettings):
     mistral_base_url: str = "https://api.mistral.ai/v1"
     groq_base_url: str = "https://api.groq.com/openai/v1"
     ollama_base_url: str = "http://localhost:11434/v1"
-    ollama_model_a: str = "mistral-small:24b"
-    ollama_model_b: str = "llama3.1:8b"
     llm_timeout_s: float = 120.0
+    # Max source-text tokens sent to a model per question (0 = unlimited). Keeps requests under provider
+    # per-minute token caps (e.g. Groq free tier: 8,000); the least relevant passages are dropped first.
+    llm_context_token_budget: int = 4500
 
     # Shared secret between the Go gateway and this service. Requests without it
     # are rejected, so user identity headers can only come from the gateway.
     internal_token: str = ""
 
+    # "bge" (real semantic model) or "hash" (keyword hashing, tests/dev only).
+    # There is no silent fallback: if bge cannot load, requests fail with 503.
+    embedder: str = "bge"
     embedding_model: str = "BAAI/bge-base-en-v1.5"
     max_pdf_mb: int = 50
     embedding_dim: int = 768
-    similarity_threshold: float = 0.01
+    similarity_threshold: float = 0.76
     # Citation verifier (app/verification)
     fuzzy_threshold: float = 0.9
     min_quote_tokens: int = 3

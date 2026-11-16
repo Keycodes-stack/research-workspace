@@ -147,10 +147,17 @@ def test_decide_numeric_overrides_judge_agreement():
     assert "4" in dis["conflicts"][0]["explanation"] and "25" in dis["conflicts"][0]["explanation"]
 
 
-def test_decide_no_overlap():
+def test_decide_no_overlap_shows_verified_claims_as_single_model():
     v = JudgeVerdict.model_validate_json(verdict("not_addressed"))
-    kind, reason, _, dis = decide(parsed("a"), parsed("b"), v, [])
-    assert (kind, reason) == ("disagreement", "no_overlap") and dis["conflicts"] == []
+    kind, reason, claims, dis = decide(parsed("a"), parsed("b"), v, [])
+    assert (kind, reason, dis) == ("consensus", "no_overlap", None)
+    assert [c.confirmed for c in claims] == [False, False]  # one from each model, none confirmed by both
+
+
+def test_numeric_check_ignores_unrelated_quantities():
+    a = parsed("High temperatures above 90 C accelerate both DNA denaturation and degradation")
+    b = parsed("For every 10 C increase the degradation reaction rate rises two to three times")
+    assert numeric_conflicts(a.claims, b.claims) == []
 
 
 # ---- run_dual ------------------------------------------------------------
@@ -220,9 +227,9 @@ def test_conditional_disagreement_keeps_both_positions_with_conditions():
 
 
 def test_numeric_check_catches_what_the_judge_missed():
-    a = Fake("A", lambda s, u, n: ans(claim("Stable at 4 C", quote="stable at 4 C")))
+    a = Fake("A", lambda s, u, n: ans(claim("Injection stable at 4 C", quote="stable at 4 C")))
     b = Fake("B", lambda s, u, n: verdict("agreed") if is_judge(s)
-             else ans(claim("Tolerated 25 C", cites=("C1", "C2"), quote="tolerated 25 C")))
+             else ans(claim("Injection tolerated 25 C", cites=("C1", "C2"), quote="tolerated 25 C")))
     r = run(a, b)
     assert r.kind == "disagreement"
     assert r.disagreement["conflicts"][0]["detected_by"] == "numeric"
@@ -338,3 +345,31 @@ def test_build_llms_provider_selection():
     a, b = build_llms(Settings(_env_file=None, model_a_provider="ollama", model_b_provider="ollama"))
     assert a.model == "mistral-small:24b" and b.model == "llama3.1:8b"
     assert a.url.startswith("http://localhost:11434/v1") and not a.api_key
+
+
+def test_model_names_come_from_settings():
+    s = Settings(_env_file=None, mistral_api_key="x", groq_api_key="y", model_a_provider="groq",
+                 model_a_name="custom/model-a", model_b_provider="mistral")
+    a, b = build_llms(s)
+    assert a.model == "custom/model-a" and a.name == "model_a:groq"
+    assert b.model == "ministral-8b-latest"  # empty name falls back to the provider default
+
+
+def test_papers_that_disagree_are_surfaced_even_if_models_agree():
+    from app.orchestration.schema import ParsedAnswer
+    a = ParsedAnswer("answered", [Claim("Compound degraded by 15% after 4 weeks in the lab study", [C1], ["C1"], "q")])
+    b = ParsedAnswer("answered", [Claim("Compound degraded by 40% after 4 weeks in the field study", [C2], ["C2"], "q")])
+    v = JudgeVerdict.model_validate_json(verdict("agreed"))
+    kind, reason, _, dis = decide(a, b, v, [], {C1: "Silva 2023", C2: "Weber 2024"})
+    assert (kind, reason) == ("disagreement", "conflicting_claims")
+    assert dis["conflicts"][0]["detected_by"] == "sources"
+    assert "15" in dis["conflicts"][0]["explanation"] and "40" in dis["conflicts"][0]["explanation"]
+
+
+def test_same_source_or_unrelated_claims_are_not_a_source_conflict():
+    from app.orchestration.numeric import source_conflicts
+    x = Claim("Compound degraded by 15% after 4 weeks", [C1], ["C1"], "q")
+    same_src = Claim("Compound degraded by 40% after 4 weeks", [C2], ["C2"], "q")
+    assert source_conflicts([x, same_src], {C1: "Silva", C2: "Silva"}) == []          # same paper
+    other_topic = Claim("Patients reported 40% improvement in sleep quality", [C2], ["C2"], "q")
+    assert source_conflicts([x, other_topic], {C1: "Silva", C2: "Weber"}) == []        # different topic

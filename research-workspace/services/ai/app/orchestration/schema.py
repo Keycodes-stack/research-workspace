@@ -57,11 +57,30 @@ def _validation_message(e: ValidationError) -> str:
 
 # ---- answer schema ---------------------------------------------------------
 
+def _as_text(v):
+    """Different models format free-text fields differently (a string, a list of strings, an object, a number).
+    Turn any of them into one plain string; the claim is still verified exactly as before."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return v
+    if isinstance(v, dict):
+        v = [f"{k}: {x}" for k, x in v.items()]
+    if isinstance(v, (list, tuple)):
+        v = "; ".join(str(x).strip() for x in v if x is not None and str(x).strip())
+    return str(v)
+
+
 class RawClaim(BaseModel):
     text: str = ""
     cites: list[str] = []
     quote: str = ""
     conditions: str | None = None
+
+    @field_validator("conditions", mode="before")
+    @classmethod
+    def _conditions_text(cls, v):
+        return _as_text(v)
 
     @field_validator("cites", mode="before")
     @classmethod
@@ -75,6 +94,11 @@ class RawAnswer(BaseModel):
     status: Literal["answered", "insufficient_source_evidence"]
     claims: list[RawClaim] = []
     notes: str | None = None
+
+    @field_validator("notes", mode="before")
+    @classmethod
+    def _notes_text(cls, v):
+        return _as_text(v)
 
 
 @dataclass
