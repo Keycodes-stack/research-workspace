@@ -3,6 +3,8 @@ import type {
 } from "./types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/$/, "");
+/** The static Halden page can't read env vars, so it gets the gateway address in its URL (read by halden-bridge.js). */
+export const HALDEN_SRC = `/halden.html?api=${encodeURIComponent(API_URL)}`;
 const TOKEN_KEY = "kc_token";
 
 export function getToken(): string | null {

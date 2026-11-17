@@ -1,0 +1,57 @@
+# Backend on the VPS: AI service + gateway behind Caddy (automatic HTTPS).
+# The database (Neon) and Redis (Upstash) are cloud services set in .env; the frontend stays on Render.
+#   docker compose -f docker-compose.vps.yml up -d --build
+services:
+  minio:  # PDF storage, internal only
+    image: cgr.dev/chainguard/minio:latest
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - miniodata:/data
+    restart: unless-stopped
+
+  ai:
+    build: ./services/ai
+    env_file: .env
+    environment:
+      S3_ENDPOINT_URL: http://minio:9000  # the "local" storage fallback does not work inside the container
+    depends_on: [minio]
+    volumes:
+      - models:/models  # embedding model is downloaded once, then cached
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 120s
+    restart: unless-stopped
+
+  gateway:
+    build: ./services/gateway
+    env_file: .env
+    environment:
+      AI_URL: http://ai:8000
+      CORS_ORIGINS: ${WEB_ORIGIN:-https://research-workspace-frontend.onrender.com}
+    depends_on:
+      ai: {condition: service_healthy}
+    restart: unless-stopped
+
+  caddy:  # the only public entry: ports 80/443, gets a free certificate for API_DOMAIN
+    image: caddy:2-alpine
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env, e.g. 162.35.31.162.sslip.io}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+    depends_on: [gateway]
+    restart: unless-stopped
+
+volumes:
+  miniodata:
+  models:
+  caddydata:

@@ -7,7 +7,8 @@
   const remember = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
 
   const state = {
-    apiBase: stored('keycodes_api_base') || DEFAULT_API_BASE,
+    // ?api= is set by the Next.js host page from NEXT_PUBLIC_API_URL (lib/api.ts HALDEN_SRC).
+    apiBase: new URLSearchParams(location.search).get('api') || stored('keycodes_api_base') || DEFAULT_API_BASE,
     // kc_token is the key the Next.js app (lib/api.ts) signs in with.
     token: stored('kc_token') || stored('keycodes_token') || '',
     // No hardcoded project: an explicit choice, else the user's open-discovery project.

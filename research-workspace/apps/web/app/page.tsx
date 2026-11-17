@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { consumeTokenFragment, getToken, setToken } from "@/lib/api";
+import { HALDEN_SRC, consumeTokenFragment, getToken, setToken } from "@/lib/api";
 
 /** Hosts the Halden workspace UI. The workspace only loads once the user holds a gateway-issued token. */
 export default function Home() {
@@ -42,7 +42,7 @@ export default function Home() {
 
   return (
     <div style={{ width: "100vw", height: "100vh", margin: 0, padding: 0, overflow: "hidden" }}>
-      <iframe src="/halden.html" style={{ width: "100%", height: "100%", border: "none", display: "block" }} title="Halden R&D Intelligence" />
+      <iframe src={HALDEN_SRC}style={{ width: "100%", height: "100%", border: "none", display: "block" }} title="Halden R&D Intelligence" />
     </div>
   );
 }
