@@ -30,7 +30,7 @@ def get_embedder() -> Embedder:
     try:
         return _load_embedder()
     except Exception as e:
-        raise HTTPException(503, f"embedding model unavailable ({e.__class__.__name__}); "
+        raise HTTPException(503, f"embedding model unavailable ({e.__class__.__name__}: {e}); "
                                  "install requirements-ml.txt or set EMBEDDER=hash for development")
 
 
@@ -38,7 +38,7 @@ def get_tokenizer() -> Tokenizer:
     try:
         return _load_tokenizer()
     except Exception as e:
-        raise HTTPException(503, f"tokenizer unavailable ({e.__class__.__name__}); "
+        raise HTTPException(503, f"tokenizer unavailable ({e.__class__.__name__}: {e}); "
                                  "install requirements-ml.txt or set EMBEDDER=hash for development")
 
 

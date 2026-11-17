@@ -1,0 +1,11 @@
+# Python dependencies for the research workspace (AI service).
+# Install with: pip install -r requirements.txt
+#
+# Runtime deps
+-r services/ai/requirements.txt
+# Local embedding model (EMBEDDER=bge). Without this the app answers
+# "embedding model unavailable (ModuleNotFoundError)". Large PyTorch install.
+-r services/ai/requirements-ml.txt
+
+# Optional, for running tests:
+#   -r services/ai/requirements-dev.txt

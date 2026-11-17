@@ -28,6 +28,14 @@ uvicorn app.main:app --reload --port 8000
 curl localhost:8000/health
 ```
 
+## Docker vs. venv
+
+- **Docker** (`docker compose up -d --build`): the `ai` image installs `services/ai/requirements.txt` and
+  `requirements-ml.txt` itself. After changing dependencies, rebuild: `docker compose build --no-cache ai`.
+  The root `requirements.txt` is not used.
+- **venv / `start_project.bat`**: install into `services/ai/.venv` with `pip install -r requirements.txt` from the
+  repo root (it includes the ML deps). Without them you get "embedding model unavailable (ModuleNotFoundError)".
+
 ## Windows one-click start (no Docker, no Go)
 
 `start_project.bat` starts the AI backend (:8001), the Python gateway (:8080) and the web app (:3000, or :3001 if

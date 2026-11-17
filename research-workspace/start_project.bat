@@ -24,7 +24,7 @@ if not exist "%ROOT%.env" (
 )
 if not exist "%PY%" (
   echo [ERROR] Python virtual environment missing: %PY%
-  echo         Create it:  cd services\ai ^&^& python -m venv .venv ^&^& .venv\Scripts\python.exe -m pip install -r requirements.txt
+  echo         Create it:  cd services\ai ^&^& python -m venv .venv ^&^& .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-ml.txt
   pause & exit /b 1
 )
 if not exist "%WEB_DIR%\node_modules" (
