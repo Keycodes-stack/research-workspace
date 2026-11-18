@@ -1908,7 +1908,7 @@ function after(){if(S.route==='roadmap')requestAnimationFrame(drawDeps)}
 function refreshBody(){const b=$('#pv-body');if(b){b.innerHTML=V.pvBody(S.route);after()}}
 function refreshDrawer(){const t=byId(S.openId);if(t){$('#drawer').innerHTML=W.drawerHTML(t)}}
 function refreshDrawerBody(){const t=byId(S.openId);if(t){$('#dbody').innerHTML=W.drawerBody(t);const d=$('#ddoc');if(d)d.innerHTML=W.docBody(t)}}
-function go(r){if(!ROUTES.includes(r)&&!r.startsWith('thread-'))r='home';if(r==='executive'&&S.role!=='vp')r='home';S.route=r;try{sessionStorage.setItem('keycodes_route',r)}catch(_){}if(location.hash.slice(1)!==r){try{history.replaceState(null,'','#'+r)}catch(e){location.hash=r}}closeAllPanels();renderAll()}
+function go(r){if(!ROUTES.includes(r)&&!r.startsWith('thread-'))r='home';if(r==='executive'&&S.role!=='vp')r='home';S.route=r;try{sessionStorage.setItem('keycodes_route',r)}catch(_){}if(location.hash.slice(1)!==r){try{history.replaceState(null,'','#'+r)}catch(e){location.hash=r}}closeAllPanels();renderAll();window.__kcRoute&&window.__kcRoute(r)}
 function closeAllPanels(){closePop();closeSide();closeDrawer();$('#nav').classList.remove('open');overlayState()}
 function drawDeps(){
  const svg=$('#deps'),host=$('#rmin');if(!svg||!host)return;const hb=host.getBoundingClientRect();
@@ -3257,5 +3257,5 @@ document.addEventListener('focusin',e=>{
 document.addEventListener('focusout',hide);
 })();
 </script>
-<script src="halden-bridge.js?v=scope32"></script>
+<script src="halden-bridge.js?v=scope33"></script>
 </body></html>

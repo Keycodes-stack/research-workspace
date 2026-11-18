@@ -131,148 +131,179 @@
     }
   }
 
+  // ---- Data loading ----
+  // Sources always load (the library, ask scope and counts use them). Signals, concepts and audit load only
+  // for the screens that show them, and only when that screen opens. Requests for one screen run in parallel.
+  // There is no cache: each screen's data is fetched when the screen opens. `pending` only stops the same
+  // request being sent twice while it is still in flight.
+  const pending = {};    // `${projectId}:${kind}` -> request in flight
+
+  // Which screen shows which data. Concepts feed most screens (task counts, board, chats, projects).
+  const ROUTE_NEEDS = {
+    home: ['concepts', 'audit'],
+    radar: ['concepts', 'signals'],
+    list: ['concepts'], board: ['concepts'], roadmap: ['concepts'], executive: ['concepts'],
+    clipper: ['concepts'], projects: ['concepts'], sources: ['concepts'],
+  };
+  const routeNeeds = (route) => ROUTE_NEEDS[route] || (String(route || '').startsWith('thread-') ? ['concepts'] : []);
+  const currentRoute = () => (window.__V && window.__V.S ? window.__V.S.route : '');
+
+  function applySources(srcList) {
+    state.sources = srcList;
+    if (srcList && srcList.length > 0 && window.__D.LIB) {
+      const newLib = srcList.map((s, idx) => ({
+        id: 'l_kc_' + (idx + 1),
+        n: s.title || s.filename || `Research Paper ${idx + 1}`,
+        ty: `${s.fulltext === 'abstract_only' ? 'Abstract only (no full text found)' : 'Full text'} · ${s.chunks || s.chunk_count || 1} chunk${(s.chunks || 1) === 1 ? '' : 's'} · ${String(s.origin || 'indexed').replace('_', ' ')}`,
+        st: s.fulltext === 'abstract_only' ? 'Abstract only' : s.fulltext === 'failed' ? 'No text' : 'Indexed',
+        ad: s.year ? `${s.year}` : 'Indexed',
+        src: (idx % 8) + 1,
+        sha256: s.doi || s.id
+      }));
+      window.__D.LIB.splice(0, window.__D.LIB.length, ...newLib);
+    }
+  }
+
+  function applySignals(sigList) {
+    state.signals = sigList;
+    if (sigList && sigList.length > 0 && window.__D.RAD) {
+      const ringMap = { 'high': 0, 'medium': 1, 'low': 2 };
+      const newRad = sigList.map((sig, i) => ({
+        id: 'r_kc_' + (i + 1),
+        t: sig.text || sig.statement,
+        s: sig.category === 'opportunity' ? 'Materials' : sig.category === 'risk' ? 'Compliance' : 'Thermal',
+        ring: ringMap[sig.confidence] ?? (i % 3),
+        pos: 0.2 + (i * 0.15) % 0.6,
+        sd: 0.3 + (i * 0.1) % 0.5,
+        cf: sig.confidence === 'high' ? 95 : sig.confidence === 'medium' ? 82 : 65,
+        tr: sig.models_agree ? 'up' : 'flat',
+        task: 't101',
+        n: sig.source_count || 1,
+        raw: sig
+      }));
+      window.__D.RAD.splice(0, window.__D.RAD.length, ...newRad);
+    }
+  }
+
+  function applyConcepts(cList) {
+    state.concepts = cList;
+    if (cList && cList.length > 0 && window.__D.T) {
+      const STAGE_MAP = {
+        'ideation': 'Discovery',
+        'evaluation': 'Validation',
+        'business_case': 'Business case',
+        'pilot': 'Business case',
+        'decision': 'Decided',
+        'decided': 'Decided'
+      };
+      const newTasks = cList.map((c, i) => ({
+        id: c.id,
+        kc: true,                      // backed by a real concept
+        code: `C-${100 + i + 1}`,
+        title: c.title,
+        sector: 'Materials',
+        stage: STAGE_MAP[c.stage] || (c.status === 'active' ? 'Validation' : 'Discovery'),
+        owner: 'amina',
+        prog: c.stage === 'decided' ? 100 : c.stage === 'business_case' ? 75 : c.stage === 'evaluation' ? 50 : 30,
+        pri: 'High',
+        due: c.status === 'active' ? 'Active' : 'Draft',
+        acc: 94,
+        rag: c.status === 'active' ? 'g' : 'a',
+        status: c.status === 'active' ? 'running' : 'review',
+        s: 0,
+        e: 2.5,
+        deps: [],
+        src: [1, 2],
+        ans: 'cooling'
+      }));
+      window.__D.T.splice(0, window.__D.T.length, ...newTasks);
+    }
+  }
+
+  function applyAudit(entries) {
+    if (entries.length > 0 && window.__V && window.__V.S) {
+      const actionLabels = {
+        'pipeline.advance': e => `Advanced stage to ${e.detail?.to_stage || 'next stage'}: "${(e.detail?.reason || '').slice(0, 75)}"`,
+        'concept.status': e => `Updated concept status to ${e.detail?.status || 'active'}`,
+        'concept.create': e => `Created new research concept: "${e.detail?.title || 'Formulation study'}"`,
+        'signal.promote': e => `Promoted verified signal: "${(e.detail?.reason || 'Critical insight').slice(0, 65)}"`,
+        'signals.scan': e => `AI engine scanned & extracted ${e.detail?.created || 10} verified signals from literature`,
+        'task.approve': e => `Approved and locked ${e.detail?.sources || 'the'} sources for a research task`,
+        'source.discover': e => `Searched online and found ${e.detail?.found ?? 'some'} papers for a question (kept as links, not added to the library)`,
+        'source.save': e => `Saved a paper to the Knowledge Library`,
+        'answer.flag': e => `Flagged an answer for review`,
+        'chat.delete': e => `Deleted a chat`,
+        'project.create': e => `Initialized research programme: "${e.detail?.name || 'mRNA Stability'}"`,
+        'ask': e => `Ran multi-model verification query on task evidence`
+      };
+      const realUpdates = entries.slice(0, 6).map(e => {
+        const txt = actionLabels[e.action] ? actionLabels[e.action](e) : `Completed ${String(e.action).replace(/[._]/g, ' ')}`;
+        const dateStr = e.created_at ? new Date(e.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Today';
+        return {
+          who: 'amina',
+          txt: txt,
+          w: dateStr,
+          tk: (window.__D && window.__D.T && window.__D.T[0]) || { title: 'mRNA-LNP Instability' }
+        };
+      });
+      window.__V.S.auditUpdates = realUpdates;
+    }
+  }
+
+  const KINDS = {
+    sources:  { fetch: (pid) => apiFetch(`/projects/${pid}/sources`).then((r) => r.sources || r), apply: applySources },
+    signals:  { fetch: (pid) => apiFetch(`/projects/${pid}/signals`).then((r) => r.signals || r), apply: applySignals },
+    concepts: { fetch: (pid) => apiFetch(`/projects/${pid}/concepts`).then((r) => r.concepts || r), apply: applyConcepts },
+    audit:    { fetch: (pid) => apiFetch(`/projects/${pid}/audit`).then((r) => r.entries || []), apply: applyAudit },
+  };
+
+  /** Fetch one kind of data for the active project. Resolves true only if a fetch was actually sent and applied. */
+  function load(kind) {
+    const pid = state.projectId;
+    const key = `${pid}:${kind}`;
+    if (pending[key]) return pending[key].then(() => false);
+    const p = (async () => {
+      try {
+        const data = await KINDS[kind].fetch(pid);
+        if (state.projectId !== pid) return false;          // the user moved to another project meanwhile
+        KINDS[kind].apply(data);
+        return true;
+      } catch (e) {
+        console.warn(`${kind} fetch failed:`, e);
+        return false;
+      } finally {
+        delete pending[key];
+      }
+    })();
+    pending[key] = p;
+    return p;
+  }
+
   async function syncFromBackend() {
     if (!window.__D) return;
     try {
       state.loading = true;
       mountStatusBar();
 
-      // 1. Project
+      // 1. Project (must come first: every other request needs its id)
       await ensureProject();
 
-      // 2. Sources -> Knowledge Library
-      try {
-        const srcRes = await apiFetch(`/projects/${state.projectId}/sources`);
-        const srcList = srcRes.sources || srcRes;
-        state.sources = srcList;
-        if (srcList && srcList.length > 0 && window.__D.LIB) {
-          const newLib = srcList.map((s, idx) => ({
-            id: 'l_kc_' + (idx + 1),
-            n: s.title || s.filename || `Research Paper ${idx + 1}`,
-            ty: `${s.fulltext === 'abstract_only' ? 'Abstract only (no full text found)' : 'Full text'} · ${s.chunks || s.chunk_count || 1} chunk${(s.chunks || 1) === 1 ? '' : 's'} · ${String(s.origin || 'indexed').replace('_', ' ')}`,
-            st: s.fulltext === 'abstract_only' ? 'Abstract only' : s.fulltext === 'failed' ? 'No text' : 'Indexed',
-            ad: s.year ? `${s.year}` : 'Indexed',
-            src: (idx % 8) + 1,
-            sha256: s.doi || s.id
-          }));
-          window.__D.LIB.splice(0, window.__D.LIB.length, ...newLib);
-        }
-      } catch (e) {
-        console.warn('Sources fetch failed:', e);
-      }
-
-      // 3. Signals -> Radar
-      try {
-        const sigRes = await apiFetch(`/projects/${state.projectId}/signals`);
-        const sigList = sigRes.signals || sigRes;
-        state.signals = sigList;
-        if (sigList && sigList.length > 0 && window.__D.RAD) {
-          const ringMap = { 'high': 0, 'medium': 1, 'low': 2 };
-          const newRad = sigList.map((sig, i) => ({
-            id: 'r_kc_' + (i + 1),
-            t: sig.text || sig.statement,
-            s: sig.category === 'opportunity' ? 'Materials' : sig.category === 'risk' ? 'Compliance' : 'Thermal',
-            ring: ringMap[sig.confidence] ?? (i % 3),
-            pos: 0.2 + (i * 0.15) % 0.6,
-            sd: 0.3 + (i * 0.1) % 0.5,
-            cf: sig.confidence === 'high' ? 95 : sig.confidence === 'medium' ? 82 : 65,
-            tr: sig.models_agree ? 'up' : 'flat',
-            task: 't101',
-            n: sig.source_count || 1,
-            raw: sig
-          }));
-          window.__D.RAD.splice(0, window.__D.RAD.length, ...newRad);
-        }
-      } catch (e) {
-        console.warn('Signals fetch failed:', e);
-      }
-
-      // 4. Concepts -> Kanban Tasks
-      try {
-        const cRes = await apiFetch(`/projects/${state.projectId}/concepts`);
-        const cList = cRes.concepts || cRes;
-        state.concepts = cList;
-        if (cList && cList.length > 0 && window.__D.T) {
-          const STAGE_MAP = {
-            'ideation': 'Discovery',
-            'evaluation': 'Validation',
-            'business_case': 'Business case',
-            'pilot': 'Business case',
-            'decision': 'Decided',
-            'decided': 'Decided'
-          };
-          const newTasks = cList.map((c, i) => ({
-            id: c.id,
-            kc: true,                      // backed by a real concept
-            code: `C-${100 + i + 1}`,
-            title: c.title,
-            sector: 'Materials',
-            stage: STAGE_MAP[c.stage] || (c.status === 'active' ? 'Validation' : 'Discovery'),
-            owner: 'amina',
-            prog: c.stage === 'decided' ? 100 : c.stage === 'business_case' ? 75 : c.stage === 'evaluation' ? 50 : 30,
-            pri: 'High',
-            due: c.status === 'active' ? 'Active' : 'Draft',
-            acc: 94,
-            rag: c.status === 'active' ? 'g' : 'a',
-            status: c.status === 'active' ? 'running' : 'review',
-            s: 0,
-            e: 2.5,
-            deps: [],
-            src: [1, 2],
-            ans: 'cooling'
-          }));
-          window.__D.T.splice(0, window.__D.T.length, ...newTasks);
-        }
-      } catch (e) {
-        console.warn('Concepts fetch failed:', e);
-      }
-
-      // 5. Audit Log -> Updates and Feedback
-      try {
-        const auditRes = await apiFetch(`/projects/${state.projectId}/audit`);
-        const entries = auditRes.entries || [];
-        if (entries.length > 0 && window.__V && window.__V.S) {
-          const actionLabels = {
-            'pipeline.advance': e => `Advanced stage to ${e.detail?.to_stage || 'next stage'}: "${(e.detail?.reason || '').slice(0, 75)}"`,
-            'concept.status': e => `Updated concept status to ${e.detail?.status || 'active'}`,
-            'concept.create': e => `Created new research concept: "${e.detail?.title || 'Formulation study'}"`,
-            'signal.promote': e => `Promoted verified signal: "${(e.detail?.reason || 'Critical insight').slice(0, 65)}"`,
-            'signals.scan': e => `AI engine scanned & extracted ${e.detail?.created || 10} verified signals from literature`,
-            'task.approve': e => `Approved and locked ${e.detail?.sources || 'the'} sources for a research task`,
-            'source.discover': e => `Searched online and found ${e.detail?.found ?? 'some'} papers for a question (kept as links, not added to the library)`,
-            'source.save': e => `Saved a paper to the Knowledge Library`,
-            'answer.flag': e => `Flagged an answer for review`,
-            'chat.delete': e => `Deleted a chat`,
-            'project.create': e => `Initialized research programme: "${e.detail?.name || 'mRNA Stability'}"`,
-            'ask': e => `Ran multi-model verification query on task evidence`
-          };
-          const realUpdates = entries.slice(0, 6).map(e => {
-            const txt = actionLabels[e.action] ? actionLabels[e.action](e) : `Completed ${String(e.action).replace(/[._]/g, ' ')}`;
-            const dateStr = e.created_at ? new Date(e.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : 'Today';
-            return {
-              who: 'amina',
-              txt: txt,
-              w: dateStr,
-              tk: (window.__D && window.__D.T && window.__D.T[0]) || { title: 'mRNA-LNP Instability' }
-            };
-          });
-          window.__V.S.auditUpdates = realUpdates;
-        }
-      } catch (e) {
-        console.warn('Audit fetch failed:', e);
-      }
+      // 2. Sources, the projects list, the chat list and the data for the screen in view: all in parallel.
+      const needChats = state.chatsFor !== state.projectId;
+      if (needChats) state.chatsFor = state.projectId;
+      await Promise.all([
+        load('sources'),
+        ...routeNeeds(currentRoute()).map((k) => load(k)),
+        refreshProjects().catch((e) => console.warn('Projects fetch failed:', e)),
+        needChats ? loadChatList().catch((e) => console.warn('Chat list failed:', e)) : null,
+      ]);
 
       state.connected = true;
       mountStatusBar();
 
-      // Trigger UI re-render
-      await refreshProjects().catch((e) => console.warn('Projects fetch failed:', e));
       if (!state.migrated) { state.migrated = true; await migrateLocalProjects().catch((e) => console.warn('Project migration failed:', e)); }
       if (window.__V && window.__V.S) window.__V.S.live = true;
-      if (state.chatsFor !== state.projectId) {
-        state.chatsFor = state.projectId;
-        try { await loadChatList(); } catch (e) { console.warn('Chat list failed:', e); }
-      }
+
       // The page exposes its renderer as __renderAll; calling a name it does not define left stale data on screen.
       const rerender = window.__renderAll || window.renderAll;
       if (typeof rerender === 'function') rerender();
@@ -284,6 +315,13 @@
       state.loading = false;
     }
   }
+
+  /** halden.html calls this when a screen opens: fetch only what that screen shows, then redraw if anything arrived. */
+  window.__kcRoute = async (route) => {
+    if (!window.__D || !state.projectId) return;   // the first sync will load the screen it opens on
+    const results = await Promise.all(routeNeeds(route).map((k) => load(k)));
+    if (results.some(Boolean) && currentRoute() === route && window.__renderAll) window.__renderAll();
+  };
 
   // ---- Chat: real RAG answers (halden.html sendQ and Attach call these) ----
 
@@ -588,6 +626,9 @@
     try { sessionStorage.removeItem('keycodes_route'); } catch { /* storage blocked */ }
     const V = window.__V;
     if (V && V.S) { V.S.attachments.length = 0; V.S.route = route; V.S.threads.length = 0; }
+    // Clear the previous project's data so its tasks, signals and sources are not shown while the new ones load.
+    const D = window.__D;
+    if (D) { D.T.length = 0; D.RAD.length = 0; D.LIB.length = 0; }
     try { history.replaceState(null, '', '#' + route); } catch { /* ignore */ }
     await syncFromBackend();
   }
