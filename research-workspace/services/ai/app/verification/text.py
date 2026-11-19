@@ -152,21 +152,62 @@ def _digitize(text: str) -> str:
     return _SINGLE.sub(lambda m: str(_ONES.get(m.group(1), _TENS.get(m.group(1)))), low)
 
 
+# Measurement units only. A word after a number that is not one ("2023 review", "1 daughter", "20 patients") is a
+# label or a count, not a unit; numbers themselves are checked separately (strict_numbers), so nothing is lost.
+_UNITS = frozenset("""
+% c f k s sec second min minute h hr hour d day wk week mo month yr year ms us µs ns
+g mg ug µg μg ng pg kg kda da mol mmol umol µmol μmol nmol pmol m mm um µm μm nm pm cm km
+l ml ul µl μl nl dl mm m molar ppm ppb ppt wt vol v mv kv a ma µa w mw kw mwh kwh wh j kj mj ev kev mev cal kcal
+pa kpa mpa gpa bar mbar atm psi torr hz khz mhz ghz rpm rcf iu u mah ah ohm kohm db lux cd gy sv bq ci kbp bp mb gb kb
+""".split())
+
+
 def _unit(u: str) -> str | None:
     u = u.lower().replace("°", "").replace(" ", "")
     if u in _UNIT_STOP or not u:
         return None
     u = _TEMP.get(u, u)
-    return u[:-1] if len(u) > 3 and u.endswith("s") else u
+    u = u[:-1] if len(u) > 3 and u.endswith("s") else u          # years -> year, hours -> hour
+    parts = u.split("/")
+    return u if all(p in _UNITS for p in parts if p) and any(parts) else None
 
 
 def number_units(text: str) -> set[tuple[str, str]]:
     """{(number, unit)} for numbers directly followed by a unit; spelled numbers are digitised."""
     out = set()
-    for m in _PAIR.finditer(_digitize(text)):
+    # "4-year", "10-mg" read like "4 year", "10 mg"
+    for m in _PAIR.finditer(re.sub(r"(?<=\d)-(?=[a-zµμ])", " ", _digitize(text))):
         u = _unit(m.group(2))
         if u:
             out.add((canon_num(m.group(1)), u))
+    return out
+
+
+_WORDTOK = re.compile(r"\d+(?:[.,]\d+)*|[a-zµμ]+")
+
+
+def _stem(w: str) -> str:
+    return w[:-1] if len(w) > 3 and w.endswith("s") else w
+
+
+def number_words(text: str) -> set[tuple[str, str]]:
+    """{(number, word)} for numbers followed by a word that is not a measurement unit ("240 children")."""
+    out = set()
+    for m in _PAIR.finditer(re.sub(r"(?<=\d)-(?=[a-zµμ])", " ", _digitize(text))):
+        w = m.group(2).lower()
+        if w not in _UNIT_STOP and not _unit(w) and w.isalpha():
+            out.add((canon_num(m.group(1)), _stem(w)))
+    return out
+
+
+def number_neighbours(text: str, span: int = 3) -> dict[str, set[str]]:
+    """number -> stems of the words within `span` tokens of each place it occurs."""
+    toks = _WORDTOK.findall(re.sub(r"(?<=\d)-(?=[a-zµμ])", " ", _digitize(text)))
+    out: dict[str, set[str]] = {}
+    for i, t in enumerate(toks):
+        if t[0].isdigit():
+            words = {_stem(x) for x in toks[max(0, i - span): i + span + 1] if not x[0].isdigit()}
+            out.setdefault(canon_num(t), set()).update(words)
     return out
 
 
@@ -191,6 +232,13 @@ def semantic_problem(claim: str, quote: str, context: str, chunk_text: str) -> s
     for n, u in sorted(number_units(claim)):
         if (n, u) not in src:
             return f"unit_mismatch:{n} {u}"
+    # 3b. counts and labels ("240 children", "1 daughter"): where the source has the same number, the claim's word must
+    # appear near it there. Catches "240 children" when the source says "240 adults"; "a 2023 review" passes "a review
+    # (2023)". A number the source lacks is rejected elsewhere (strict_numbers).
+    near = number_neighbours(chunk_text)
+    for n, w in sorted(number_words(claim)):
+        if n in near and w not in near[n]:
+            return f"unit_mismatch:{n} {w}"
     # 4. absolute words the source does not use
     q = {t for t in tokens(claim.lower()) if t in _QUANT} - set(tokens(ev.lower()))
     if q:
