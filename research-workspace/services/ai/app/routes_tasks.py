@@ -3,7 +3,7 @@ import asyncio
 import logging
 import time
 import json
-from typing import Literal
+from typing import Literal, NamedTuple
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -246,6 +246,32 @@ def progress(thread_id, text: str | None = None, *, reset: bool = False) -> None
     _PROGRESS[key] = (now, steps)
 
 
+class EvidencePlan(NamedTuple):
+    search_ids: list          # saved sources to search
+    fresh: bool               # also run a fresh OpenAlex + Europe PMC search (at the same time) and use its top papers
+    must_cover: bool          # saved sources must answer; otherwise the client is told and asks again with "online"
+
+
+def plan_evidence(scope: str, evidence: str, first_question: bool, upload_ids: list, paper_ids: list,
+                  online_ok: bool) -> EvidencePlan:
+    """Which sources answer a question.
+
+    uploads: the project's uploads only, never online.
+    api:     first question of a chat -> fresh search only. Follow-ups -> the project's stored papers; online only
+             if they do not answer.
+    both:    first question -> uploads and a fresh search at the same time, one combined answer. Follow-ups ->
+             uploads + stored papers; if they do not answer, uploads + a fresh search again.
+    Nothing stored to search -> straight to the fresh search."""
+    if scope == "uploads" or not online_ok:
+        ids = upload_ids if scope == "uploads" else paper_ids if scope == "api" else upload_ids + paper_ids
+        return EvidencePlan(ids, False, False)
+    uploads = upload_ids if scope == "both" else []      # Online never uses uploads
+    if evidence == "online" or first_question:
+        return EvidencePlan(uploads, True, False)
+    saved = uploads + paper_ids
+    return EvidencePlan(saved, False, True) if saved else EvidencePlan([], True, False)
+
+
 ONLINE_TOP_N = 10                  # papers stored per online search, in the search engines' own relevance order
 ONLINE_SEARCH_LIMIT = 50           # results requested, so 10 remain after skipping papers the project already has
 
@@ -340,14 +366,22 @@ class AskIn(BaseModel):
     top_k: int = Field(default=5, ge=1, le=20)
     # open discovery only: restrict to uploaded PDFs, to discovered papers, or both
     scope: Literal["uploads", "api", "both"] = "both"
-    # open discovery only: search just these sources (e.g. the PDFs attached to this question)
+    # open discovery only: search just these sources (API clients; the web app searches every project upload)
     source_ids: list[UUID] | None = None
-    # Online lookup is enabled for "api" and "both". In "both", saved-source retrieval and online research run
-    # concurrently; "uploads" never makes an online request.
+    # Online lookup is allowed for "api" and "both"; "uploads" never makes an online request.
     online: bool = False
+    # "auto": the server decides from the scope and the chat's history (see plan_evidence).
+    # "online": search online now; the client sends it after a "not_in_saved_sources" reply.
+    evidence: Literal["auto", "online"] = "auto"
 
 
 def render_content(r: DualResult) -> str:
+    if r.reason == "no_uploads":
+        return ("INSUFFICIENT_SOURCE_EVIDENCE: this project has no uploaded documents yet. Upload a PDF, or set "
+                "Sources to Online or Uploads + online.")
+    if r.reason == "online_search_failed":
+        return ("INSUFFICIENT_SOURCE_EVIDENCE: the online search returned no papers (OpenAlex and Europe PMC did not "
+                "answer or found nothing). Please try again in a minute.")
     if r.reason == "below_similarity_threshold":
         return ("INSUFFICIENT_SOURCE_EVIDENCE: none of the selected sources is similar enough "
                 "to the question to answer it.")
@@ -420,82 +454,88 @@ async def ask(
             raise HTTPException(409, "source lock mismatch: the task's sources changed after approval")
         source_ids = [s["id"] for s in sources]
     else:
-        # Open discovery: explicit selection, else the project's whole source of truth,
-        # narrowed by the requested scope (user uploads vs papers found via the APIs).
-        cond = {"uploads": "origin = 'user_upload'", "api": "origin <> 'user_upload'", "both": "true"}[body.scope]
+        # Open discovery: every upload in the project (attached files are uploads, chunked and embedded when they were
+        # added), narrowed by an explicit selection or the task's own source list; plus every paper stored online.
         if body.source_ids:
-            rows = await pool.fetch(
-                f"SELECT id FROM sources WHERE project_id=$1 AND id = ANY($2::uuid[]) AND {cond}",
-                th["project_id"], body.source_ids)
+            rows = await pool.fetch("SELECT id FROM sources WHERE project_id=$1 AND id = ANY($2::uuid[]) "
+                                    "AND origin = 'user_upload'", th["project_id"], body.source_ids)
         elif sources:
-            rows = await pool.fetch(f"SELECT id FROM sources WHERE id = ANY($1::uuid[]) AND {cond}",
+            rows = await pool.fetch("SELECT id FROM sources WHERE id = ANY($1::uuid[]) AND origin = 'user_upload'",
                                     [s["id"] for s in sources])
         else:
-            rows = await pool.fetch(f"SELECT id FROM sources WHERE project_id=$1 AND {cond}", th["project_id"])
-        source_ids = [r["id"] for r in rows]
-    online = body.online and th["mode"] != "closed_repository" and body.scope != "uploads"
-    if online:   # papers found online for this project are always searched, whatever the selection
-        source_ids = list({*source_ids, *[r["id"] for r in await pool.fetch(
-            "SELECT id FROM sources WHERE project_id=$1 AND origin <> 'user_upload'", th["project_id"])]})
+            rows = await pool.fetch("SELECT id FROM sources WHERE project_id=$1 AND origin = 'user_upload'",
+                                    th["project_id"])
+        upload_ids = [r["id"] for r in rows]
+        paper_ids = [r["id"] for r in await pool.fetch(
+            "SELECT id FROM sources WHERE project_id=$1 AND origin <> 'user_upload'", th["project_id"])]
 
     cfg = get_settings()
+    first_question = not await pool.fetchval(
+        "SELECT EXISTS (SELECT 1 FROM messages WHERE thread_id=$1 AND role='user')", thread_id)
+    if th["mode"] == "closed_repository":
+        plan = EvidencePlan(source_ids, False, False, False)
+    else:
+        online_ok = body.online and body.scope != "uploads"
+        plan = plan_evidence(body.scope, body.evidence, first_question, upload_ids, paper_ids, online_ok)
     context = topic_context(
         body.question,
         await pool.fetchval("SELECT name FROM projects WHERE id=$1", th["project_id"]),
         [r["content"] for r in await pool.fetch("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
-                                                   ORDER BY created_at DESC OFFSET 1 LIMIT 5""", thread_id)])
+                                                   ORDER BY created_at DESC LIMIT 5""", thread_id)])
     # The search and ranking get the topic first ("down syndrome cure"); the models get it as a note. The stored
     # question stays as the user wrote it.
     search_text = f"{context} {body.question}" if context else body.question
     question = f"{body.question} (topic: {context})" if context else body.question
-    progress(thread_id, reset=True)
+    # A new answer starts a new step list; the search confirmed after "not in saved sources" continues it.
+    progress(thread_id, reset=body.evidence != "online")
     if context:
         progress(thread_id, f"Your question refers back to a topic, so it is searched together with: {context[:80]}")
     q = await asyncio.to_thread(embedder.embed_query, search_text)
-    progress(thread_id, f"Searching this project's {len(source_ids)} saved sources..." if source_ids
-             else "This project has no saved sources yet.")
 
-    online_stats = None
-    saved_top = None
-    if online and body.scope == "api":
-        # "Online" sources: a fresh search every time; the answer uses only the APIs' top papers (uploads ignored).
-        results, picked, found, online_stats = await search_and_store(
-            pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text, reuse_known=True)
-        source_ids = [r.source_id for r in results if r.chunks]
-        stored = await store.search_chunks(pool, q, source_ids, body.top_k * 3) if source_ids else []
-    elif online and body.scope == "both":
-        # Search the project's saved sources while the fresh OpenAlex + Europe PMC search ingests its top papers.
-        # The UI polls the same progress list, so either branch can report its results while the other is still working.
-        saved_ids = list(source_ids)
+    online_stats, online_ids = None, []
+    search_ids = list(plan.search_ids)
 
-        async def search_saved_sources():
-            hits = await store.search_chunks(pool, q, saved_ids, body.top_k * 3) if saved_ids else []
-            progress(thread_id, f"Uploaded and saved sources are ready ({len(hits)} relevant passages).")
-            return hits
+    async def search_saved():
+        progress(thread_id, f"Searching this project's {len(search_ids)} "
+                            f"{'uploaded documents' if plan.fresh or body.scope == 'uploads' else 'saved sources'}...")
+        hits = await store.search_chunks(pool, q, search_ids, body.top_k * 3)
+        progress(thread_id, f"Saved sources searched ({len(hits)} passages).")
+        return hits
 
-        progress(thread_id, "Searching uploaded and saved sources while researching online...")
-        saved_task = asyncio.create_task(search_saved_sources())
-        online_task = asyncio.create_task(search_and_store(
-            pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text, reuse_known=True))
-        stored, online_result = await asyncio.gather(saved_task, online_task)
-        results, picked, found, online_stats = online_result
-        saved_top = max((h.similarity for h in stored if h.intact()), default=None)
+    if plan.fresh:
+        # Uploads (Uploads + online) are searched while the fresh search downloads and stores its top papers.
+        async def online_job():
+            """(stored papers, stats); a failure while saving papers is reported, not raised."""
+            try:
+                results, _picked, _found, stats = await search_and_store(
+                    pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text, reuse_known=True)
+                return results, stats
+            except Exception as e:
+                log.exception("online research failed")
+                progress(thread_id, "The online search failed; answering from what was found.")
+                return [], {"found": 0, "stored": 0, "errors": [f"online:{e.__class__.__name__}"]}
+
+        if search_ids:
+            stored, (results, online_stats) = await asyncio.gather(search_saved(), online_job())
+        else:
+            stored, (results, online_stats) = [], await online_job()
         online_ids = [r.source_id for r in results if r.chunks]
-        added_ids = [sid for sid in online_ids if sid not in saved_ids]
-        if added_ids:
-            progress(thread_id, "Online papers are ready; retrieving passages to combine with the uploaded sources...")
-            stored.extend(await store.search_chunks(pool, q, added_ids, body.top_k * 3))
-        source_ids = list(dict.fromkeys([*saved_ids, *online_ids]))
-        online_stats.update({"saved_before": len(saved_ids), "saved_top": saved_top})
+        if online_ids:
+            progress(thread_id, "Online papers are ready; finding their passages for the answer...")
+            stored = stored + await store.search_chunks(pool, q, online_ids, body.top_k * 3)
+        search_ids = list(dict.fromkeys([*search_ids, *online_ids]))
         await audit(pool, th["project_id"], user, "source.discover", "project", th["project_id"],
-                    question=body.question[:200], found=len(added_ids))
+                    question=body.question[:200], found=len(online_ids))
     else:
-        stored = await store.search_chunks(pool, q, source_ids, body.top_k * 3)
-        saved_top = max((h.similarity for h in stored if h.intact()), default=None)
-    best_similarity = max((h.similarity for h in stored if h.intact()), default=None)
-    covered = best_similarity is not None and best_similarity >= cfg.similarity_threshold
-    if covered and saved_top is not None:
-        progress(thread_id, f"Found relevant passages in the saved sources (best match {saved_top:.2f}).")
+        stored = await search_saved() if search_ids else []
+    best = max((h.similarity for h in stored if h.intact()), default=None)
+    if plan.must_cover and (best is None or best < cfg.similarity_threshold):
+        # Saved sources exist but none answers: say so first; the client then asks again with evidence="online".
+        note = (f"No relevant information in this project's {len(search_ids)} saved sources. "
+                "Searching OpenAlex and Europe PMC for new papers...")
+        progress(thread_id, note)
+        return {"kind": "not_in_saved_sources", "thread_id": str(thread_id), "saved_sources": len(search_ids),
+                "top_similarity": best, "threshold": cfg.similarity_threshold, "note": note}
     all_hits = diversify(stored, body.top_k)
 
     await pool.execute(
@@ -507,11 +547,18 @@ async def ask(
     top = max((h.similarity for h in hits), default=None)
     gate = {"threshold": cfg.similarity_threshold, "top_similarity": top, "passed": False,
             "corrupt_chunks_dropped": dropped, "online": online_stats, "topic_context": context,
-            "evidence_from": "online_search" if online_stats else "saved_sources", "saved_sources": len(source_ids)}
+            "evidence_from": "online_search" if plan.fresh else "saved_sources", "saved_sources": len(search_ids)}
 
     if top is None:
-        result = DualResult("insufficient_evidence",
-                            "integrity_failure" if dropped else "no_source_chunks")
+        if dropped:
+            reason = "integrity_failure"
+        elif plan.fresh and not online_ids and not plan.search_ids:
+            reason = "online_search_failed"            # nothing came back from the APIs (or saving failed)
+        elif body.scope == "uploads" and not search_ids:
+            reason = "no_uploads"
+        else:
+            reason = "no_source_chunks"
+        result = DualResult("insufficient_evidence", reason)
     elif top < cfg.similarity_threshold:
         # Refuse without calling any model.
         result = DualResult("insufficient_evidence", "below_similarity_threshold")
@@ -634,44 +681,6 @@ async def list_papers(thread_id: UUID, body: PapersIn, user: UUID = Depends(requ
     await audit(pool, th["project_id"], user, "papers.search", "message", mid,
                 question=body.question[:200], found=len(found.papers))
     return payload
-
-
-class NewPapersIn(BaseModel):
-    question: str = Field(min_length=3, max_length=4000)
-
-
-@router.post("/threads/{thread_id}/new-papers")
-async def new_papers(
-    thread_id: UUID,
-    body: NewPapersIn,
-    user: UUID = Depends(require_user),
-    pool=Depends(get_pool),
-    embedder=Depends(get_embedder),
-    tokenizer=Depends(get_tokenizer),
-    s3=Depends(get_s3),
-):
-    """After an answer from the project's saved sources: find the top new papers for the same question and store them
-    in the project (full text + embeddings) for later questions. The answer is not changed."""
-    th = await thread_for_user(pool, thread_id, user, "researcher")
-    if th["mode"] == "closed_repository":
-        raise HTTPException(409, "closed repository projects do not search online")
-    cfg = get_settings()
-    progress(thread_id, reset=True)
-    context = topic_context(
-        body.question,
-        await pool.fetchval("SELECT name FROM projects WHERE id=$1", th["project_id"]),
-        [r["content"] for r in await pool.fetch("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
-                                                   ORDER BY created_at DESC OFFSET 1 LIMIT 5""", thread_id)])
-    search_text = f"{context} {body.question}" if context else body.question
-    results, picked, found, stats = await search_and_store(
-        pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text)
-    by_doi = {p.doi: p for p in picked}
-    papers = [{**_paper_row(by_doi.get(r.doi) or next(p for p in picked if p.title == r.title)),
-               "source_id": str(r.source_id), "fulltext": r.fulltext}
-              for r in results if r.chunks]
-    await audit(pool, th["project_id"], user, "source.discover", "project", th["project_id"],
-                question=body.question[:200], found=len(papers))
-    return jsonable_encoder({"papers": papers, "stats": stats, "errors": found.errors})
 
 
 @router.post("/threads/{thread_id}/messages/{message_id}/flag")

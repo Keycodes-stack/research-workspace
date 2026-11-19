@@ -425,10 +425,10 @@
   }
 
   async function runAsk(threadId, question, scope, sourceIds, t0, onSteps) {
-    // The server searches saved sources and fresh online papers together for "both"; it stores online papers in
-    // the project before combining their passages into one cited answer. Uploads scope never searches online.
+    // The server picks the sources from the scope and the chat's history (see plan_evidence in routes_tasks.py).
+    // Every upload in the project counts, so attached files need no selection. When the saved sources do not answer
+    // a follow-up, the server says so first ("not_in_saved_sources") and the same question is asked again online.
     const body = { question, scope, online: scope !== 'uploads', top_k: 10 };
-    if (scope === 'uploads' && sourceIds && sourceIds.length) body.source_ids = sourceIds;
     const stop = watchProgress(threadId, onSteps);
     let result;
     try {
@@ -436,8 +436,7 @@
       if (result && result.kind === 'not_in_saved_sources') {
         console.info('📚', result.note);
         if (typeof onSteps === 'function') onSteps([result.note]);
-        // Kept for responses from an older backend during a rolling deployment.
-        result = await apiFetch(`/threads/${threadId}/ask`, post({ ...body, search_online: true }));
+        result = await apiFetch(`/threads/${threadId}/ask`, post({ ...body, evidence: 'online' }));
         result.__searched_after_saved = true;
       }
     } finally {
@@ -460,19 +459,6 @@
     if ((on.errors || []).length) console.warn('Online sources that did not answer:', on.errors);
     result.thread_id = threadId;
     return result;
-  }
-
-  /** After an answer from saved sources: the top new papers for the same question, stored in the project. */
-  async function newPapers(threadId, question, onSteps) {
-    const stop = watchProgress(threadId, onSteps);
-    try {
-      const r = await apiFetch(`/threads/${threadId}/new-papers`, post({ question }));
-      console.info(`📚 New papers stored: ${(r.papers || []).length}`, r.stats);
-      if ((r.errors || []).length) console.warn('Paper search sources that did not answer:', r.errors);
-      return r;
-    } finally {
-      stop();
-    }
   }
 
   async function ask(question, sourceIds, scope = 'both', th = { title: question.slice(0, 80) }, onSteps) {
@@ -852,7 +838,6 @@
     apiFetch,
     upload,
     ask,
-    newPapers,
     toAnswer,
     requestApproval,
     decideApproval,

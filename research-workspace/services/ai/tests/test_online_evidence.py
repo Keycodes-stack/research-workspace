@@ -61,3 +61,34 @@ def test_top_10_keep_the_apis_relevance_order_and_skip_known_papers():
     picked = top_by_api_relevance(papers[::-1], known_dois={"10.1/0"}, known_titles={"paper 1"})
     # highest API relevance first, citations ignored; known and unreadable papers skipped
     assert [p.title for p in picked] == [f"Paper {i}" for i in range(3, 13)]
+
+
+def test_evidence_plan_for_every_scope_and_turn():
+    from app.routes_tasks import EvidencePlan, plan_evidence as plan
+    U, P = ["u1"], ["p1", "p2"]                          # project uploads, papers stored by earlier searches
+    # My uploads: uploads only, never online, first question or follow-up
+    for first in (True, False):
+        assert plan("uploads", "auto", first, U, P, online_ok=False) == EvidencePlan(U, False, False)
+    # Online: first question searches (uploads never used); follow-ups use stored papers first
+    assert plan("api", "auto", True, U, P, True) == EvidencePlan([], True, False)
+    assert plan("api", "auto", False, U, P, True) == EvidencePlan(P, False, True)
+    assert plan("api", "auto", False, U, [], True) == EvidencePlan([], True, False)      # nothing stored yet
+    assert plan("api", "online", False, U, P, True) == EvidencePlan([], True, False)     # confirmed search
+    # Uploads + online: first question = uploads and a fresh search together (one combined answer)
+    assert plan("both", "auto", True, U, P, True) == EvidencePlan(U, True, False)
+    assert plan("both", "auto", True, [], P, True) == EvidencePlan([], True, False)
+    # follow-ups: uploads + stored papers first; the confirmed search again combines uploads and new papers
+    assert plan("both", "auto", False, U, P, True) == EvidencePlan(U + P, False, True)
+    assert plan("both", "auto", False, [], [], True) == EvidencePlan([], True, False)
+    assert plan("both", "online", False, U, P, True) == EvidencePlan(U, True, False)
+    # online not allowed (the client sent online=false): saved sources of the scope, no search
+    assert plan("api", "auto", True, U, P, False) == EvidencePlan(P, False, False)
+    assert plan("both", "auto", True, U, P, False) == EvidencePlan(U + P, False, False)
+
+
+def test_nothing_to_read_refusals_say_why():
+    from app.orchestration.engine import DualResult
+    from app.routes_tasks import render_content
+    assert "no uploaded documents yet" in render_content(DualResult("insufficient_evidence", "no_uploads"))
+    assert "online search returned no papers" in render_content(DualResult("insufficient_evidence",
+                                                                           "online_search_failed"))

@@ -1,42 +1,57 @@
-# Ask and research source behavior
+# Ask: which sources answer a question
 
-Status: **work in progress; not committed, pushed, or deployed.**
+Status: **local changes on top of `473bf09`; not committed, pushed or deployed.**
+Local tests: AI service 142 passed (77 database tests need CI), verifier suites 42 passed, web 56 passed, typecheck clean.
 
-## Source modes
+## Rules (decided in `plan_evidence()`, `services/ai/app/routes_tasks.py`)
 
-| Sources selection | Behavior |
-|---|---|
-| **My uploads** (`uploads`) | Search uploaded documents only. If they do not support an answer, return insufficient evidence. There is no Search online button and no online request. |
-| **Online** (`api`) | Run a fresh OpenAlex + Europe PMC search for each question, take the APIs' top 10 relevant papers, store/reuse their project records, and answer only from those papers. Uploaded documents are excluded. |
-| **Uploads + online** (`both`) | Search saved project sources while the fresh online search runs. Store the online papers and combine passages from saved sources and the new papers into one cited answer. |
+| Sources | First question in a chat | Follow-up questions |
+|---|---|---|
+| **My uploads** | Every upload in the project, from any chat (attached files are uploads, chunked and embedded when added). Never online. | Same |
+| **Online** | Fresh OpenAlex + Europe PMC search. The APIs' top 10 papers are stored in the project and the answer uses only them. Uploads are never used. | The project's stored papers (from any chat) first. If they don't answer: tell the user, then search online. |
+| **Uploads + online** | Uploads are searched **while** the fresh online search runs, giving **one combined answer**. | Uploads + the project's stored papers first. If they don't answer: tell the user, then search online again, combined with the uploads. |
 
-## Shared behavior
+"Don't answer" means the best match is below the similarity threshold (0.65). If nothing is stored yet, the online search runs straight away.
 
-- Keep papers permanently in the project database and list them in the Knowledge Library.
-- Store open-access full text when available, otherwise the abstract, with embeddings.
-- Select papers in API relevance order, without re-ranking by citation count or year.
-- The waiting answer polls `GET /threads/{id}/progress` every second. Upload search completion and online search/storage steps are shown as they arrive; one final answer is generated from the combined evidence.
-- Source records and answer history come from the database. Progress is temporary status only.
+## Shared behaviour
+- **Top 10 papers:** online searches take the top 10 papers in the APIs' own relevance order, with no re-ranking by citations or year. Papers the project already has are reused, not stored twice.
+- **Stored with full text:** each paper is stored with its full text (the open-access PDF, otherwise the abstract) and embeddings.
+- **Kept per project:** papers belong to the project, are kept permanently (the 14-day cleanup was removed), and are listed in the Knowledge Library.
+- **No in-memory caches:** everything is served from the database.
+- **Live progress:** the page polls `GET /threads/{id}/progress` every second and shows each step, e.g. "Stored 3 of 10: <title> (full text, 42 passages)".
+- **"Not in saved sources" two-step:**
+  1. The server replies `kind: "not_in_saved_sources"` and stores nothing.
+  2. The page shows the note, then asks again with `evidence: "online"`.
+  3. The question is stored only once.
 
-## Implementation notes
+## Edge cases covered
+- **My uploads, no uploads in the project:** a clear message suggesting an upload or another Sources setting (`no_uploads`).
+- **APIs return nothing** (down, rate-limited, or no results): "the online search returned no papers, try again" (`online_search_failed`).
+- **Saving online papers fails:**
+  - It's logged and reported in the progress steps and `gate.online.errors`.
+  - Uploads + online still answers from the uploads instead of failing.
+- **PDF fails to download or parse:** the paper falls back to its abstract. Papers with no PDF and no abstract are skipped.
+- **Closed-repository projects:** never search online; they use the task's locked sources.
+- **Uploads + online with no uploads:** goes straight to the online search.
 
-- `services/ai/app/routes_tasks.py`: the `both` mode runs saved-source retrieval and `search_and_store()` concurrently, then retrieves passages from the newly available online papers and combines them for the answer. `api` mode performs a fresh online search and excludes uploads. `uploads` mode does not search online.
-- `services/ai/app/ingest/service.py`: online papers are ingested into the project library.
-- `services/ai/app/routes_sources.py`: removed the 14-day purge of uncited online papers.
-- `services/ai/app/retrieval/pipeline.py`: removed the in-memory paper search cache.
-- `services/ai/app/online_evidence.py`: removed the former abstract-only/vector-cache path.
-- `services/ai/tests/test_tasks_api.py`: database integration coverage for project-level persistence, fresh Online searches, uploads exclusion, and concurrent Uploads + online work.
-- `apps/web/public/halden-bridge.js` and `halden.html`: submit the selected source scope and display live progress. The background new-papers request is limited to Uploads + online mode. Cache query version is `scope50`.
-- The web app is hosted separately. VPS deployment should rebuild the AI and gateway services only.
+## Removed
+- `POST /threads/{id}/new-papers` and the "new papers saved" list under answers (unused under these rules).
+- The second-answer idea for Uploads + online (replaced by one combined answer).
 
-## Verification and rollout
+## Files
+- **Backend:**
+  - `services/ai/app/routes_tasks.py`
+  - `app/ingest/service.py`
+  - `app/routes_sources.py`
+  - `app/retrieval/pipeline.py`
+- **Tests:**
+  - `tests/test_online_evidence.py`: `plan_evidence` for every scope and turn, refusal texts.
+  - `tests/test_tasks_api.py`: database tests for each mode, concurrency and the edge cases.
+- **Web:**
+  - `apps/web/public/halden-bridge.js`
+  - `apps/web/public/halden.html` (cache version `scope51`).
 
-- Last local AI run: 140 passed, 73 skipped. Database-backed tests skip without `TEST_DATABASE_URL`.
-- Last web run: 56 passed; TypeScript typecheck passed.
-- No GitHub Actions workflow is checked into this repository. The local Docker daemon was unavailable, so the database tests and remote CI were not run here.
-- The live site still needs verification with a safe test project. Do not send test questions to real project data.
-- Commit/push and deployment are pending. The repo's VPS compose file documents `docker compose -f docker-compose.vps.yml up -d --build`; deploy only `ai` and `gateway` for backend-only changes.
-
-## Known trade-off
-
-The final answer waits for both saved-source retrieval and online ingestion. The UI streams progress and paper-storage updates, not a provisional uploads-only answer.
+## Rollout
+1. Run the database tests in CI (push a branch and open a pull request; that doesn't deploy).
+2. Merge to `main`. Render redeploys the web app.
+3. Run `deploy-vps.ps1` to update the AI service on the VPS.
