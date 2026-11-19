@@ -330,24 +330,6 @@ def test_long_rate_limit_fails_fast_instead_of_waiting():
     assert any(e.startswith("openalex") for e in res.errors)
 
 
-def test_search_cache_serves_the_followup_without_calling_apis(monkeypatch):
-    from app.retrieval import pipeline
-    pipeline._cache.clear()
-    calls = []
-
-    def handler(request):
-        calls.append(request.url.host)
-        return httpx.Response(200, json=_oa_page(3, 0)) if request.url.host == "api.openalex.org" \
-            else httpx.Response(200, json={"resultList": {"result": []}})
-
-    monkeypatch.setattr(pipeline, "make_client", lambda email="": make_client(handler))
-    first = run(search_papers("mRNA vaccine stability", limit=50))
-    n = len(calls)
-    again = run(search_papers("Find papers on mRNA vaccine stability", limit=50, with_abstracts=True))
-    assert len(calls) == n and again.stats["cached"] and len(again.papers) == len(first.papers) == 3
-    pipeline._cache.clear()
-
-
 def test_search_words_keep_accented_and_non_latin_letters():
     terms = search_query("¿Cómo afecta la temperatura a la degradación del ARNm?").split()
     assert "degradación" in terms and "temperatura" in terms and "ARNm" in terms
@@ -356,7 +338,6 @@ def test_search_words_keep_accented_and_non_latin_letters():
 
 def test_long_question_falls_back_to_its_most_specific_words():
     from app.retrieval import pipeline
-    pipeline._cache.clear()
     seen = []
 
     def handler(request):
@@ -376,4 +357,3 @@ def test_long_question_falls_back_to_its_most_specific_words():
     res = run(go())
     assert len(res.papers) == 50 and res.stats["relaxed_from"] == search_query(pasted)
     assert len(seen[-1].split()) == pipeline.MAX_TERMS      # the retry used only the most specific words
-    pipeline._cache.clear()

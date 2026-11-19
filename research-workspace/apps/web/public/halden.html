@@ -215,6 +215,7 @@ svg.deps{position:absolute;pointer-events:none;overflow:visible;z-index:1}
 .rsrc .n{background:var(--accent-soft);color:var(--accent);font:700 11px var(--font);min-width:20px;height:20px;border-radius:6px;display:grid;place-items:center;flex:none}
 .rsrc b{font-size:13px;font-weight:600;line-height:1.3;display:block}.rsrc small{color:var(--fg3)}
 .composer.dock{margin:0 28px 18px;max-width:780px;align-self:center;width:calc(100% - 56px)}
+.live-steps{margin:0;padding-left:20px;color:var(--muted,#667)}.live-steps li{margin:3px 0}.live-steps li.now{color:inherit;font-weight:600}.live-steps li.now::after{content:'';display:inline-block;width:6px;height:6px;margin-left:6px;border-radius:50%;background:var(--accent);animation:blink 1s steps(2) infinite}.np{border:1px solid var(--line,#e3e3ea);border-radius:10px;padding:10px 12px}
 .cursor::after{content:'';display:inline-block;width:8px;height:16px;background:var(--accent);margin-left:2px;vertical-align:-2px;animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
 .fade{animation:fade .4s}@keyframes fade{from{opacity:0;transform:translateY(6px)}}
@@ -1080,7 +1081,13 @@ function extras(key,t){
  <div class="legend"><span><i class="sd" style="background:var(--ok)"></i>Verified</span><span><i class="sd" style="background:#E0A020"></i>Disputed</span><span><i class="sd" style="background:var(--bad)"></i>Unverified</span><span>Click any highlight or citation for the evidence</span></div>
  ${panelHTML(a,key)}
  <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri sm" data-act="saveAns" data-k="${key}">${ic('plus',14)} Add to research task</button><button class="btn sm" data-act="copyAns" data-k="${key}">${ic('copy',14)} Copy with citations</button><button class="btn sm" data-act="flagAns" data-k="${key}">${ic('flag',14)} Flag for review</button></div>
+ ${a.newPapers?newPapersHTML(a.newPapers):''}
  ${a.fups&&a.fups.length?`<div><div class="eyebrow" style="margin-bottom:8px">Suggested follow-ups</div><div class="fup">${a.fups.map((f,i)=>`<button class="fchip" data-act="followup" data-k="${key}" data-i="${i}">${esc(f)}</button>`).join('')}</div></div>`:''}</div>`}
+function newPapersHTML(n){
+ if(n.loading)return `<div class="np"><div class="eyebrow">New papers</div><p class="faint" style="margin:6px 0 0">${esc(n.step||'Searching OpenAlex and Europe PMC for new papers…')}</p></div>`;
+ if(n.error)return `<div class="np"><div class="eyebrow">New papers</div><p class="faint" style="margin:6px 0 0">Could not search for new papers: ${esc(n.error)}</p></div>`;
+ if(!n.papers.length)return `<div class="np"><div class="eyebrow">New papers</div><p class="faint" style="margin:6px 0 0">No new papers found: this project already has the top results for this question.</p></div>`;
+ return `<div class="np"><div class="eyebrow" style="margin-bottom:6px">${n.papers.length} new papers saved to this project</div><p class="faint" style="margin:0 0 8px;font-size:12px">The answer above uses the papers already saved. These new ones are used by your next questions.</p><ol style="margin:0;padding-left:18px">${n.papers.map(p=>`<li style="margin:3px 0">${p.url?`<a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a>`:esc(p.title)}<span class="faint"> · ${[p.year,p.venue].filter(Boolean).map(esc).join(' · ')} · ${p.fulltext==='full_text'?'full text':'abstract'}</span></li>`).join('')}</ol></div>`}
 function panelHTML(a,key){
  const fl=Object.keys(a.cl).filter(c=>(S.cg[key+':'+c]||a.cl[c].g)!=='v').length;
  return `<div class="stack" style="gap:12px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:15px">Model panel</b><span class="gold-tag">2 models checked the same question</span><span class="grow"></span><span class="mini muted">Consensus<span style="width:90px;display:inline-block" class="bar"><i style="width:${Math.round((a.panel[0].cf+a.panel[1].cf)/2)}%;background:var(--gold)"></i></span><b>${Math.round((a.panel[0].cf+a.panel[1].cf)/2)}%</b></span></div>
@@ -2012,8 +2019,17 @@ function sendQ(q){
  ANS[id]={title:q,acc:0,cl:{},dis:'',fups:[],html:'Searching your sources and cross-checking the answer with two models…',panel:waiting('Working','Reading the most relevant passages')};
  const th=openTurn(q,id);
  const adopt=()=>{if(th.srv&&th.id!==th.srv){const old='thread-'+th.id;th.id=th.srv;if(S.route===old){S.route='thread-'+th.id;try{history.replaceState(null,'','#'+S.route);sessionStorage.setItem('keycodes_route',S.route)}catch(_){}}}};
- kc.ask(q,ids,S.scope,th).then(r=>{ANS[id]=kc.toAnswer(r,q);th.fresh=true},e=>{
-  HaldenErrors.report('Ask failed',e);const msg=esc(e.message);ANS[id]={...ANS[id],html:'No answer: '+msg,panel:waiting('Not run',msg)};toast(msg)})
+ const live=steps=>{if(ANS[id].done||!steps.length)return;
+  ANS[id]={...ANS[id],html:'<ol class="live-steps">'+steps.map((s,i)=>'<li'+(i===steps.length-1?' class="now"':'')+'>'+esc(s)+'</li>').join('')+'</ol>',panel:waiting('Working',steps[steps.length-1])};
+  const b=$('#abody');if(b&&S.route==='thread-'+th.id&&th.key===id)b.innerHTML=ANS[id].html};
+ const shown=()=>S.route==='thread-'+th.id&&th.key===id;
+ const showExtras=()=>{const x=$('#aextra');if(x&&shown()&&!th.fresh)x.innerHTML=V.extras(id)};
+ kc.ask(q,ids,S.scope,th,live).then(r=>{ANS[id]={...kc.toAnswer(r,q),done:true};th.fresh=true;
+  if(r&&r.gate&&r.gate.evidence_from==='saved_sources'&&S.scope==='both'&&r.thread_id){
+   ANS[id].newPapers={loading:true};
+   kc.newPapers(r.thread_id,q,steps=>{if(ANS[id].newPapers&&ANS[id].newPapers.loading){ANS[id].newPapers={loading:true,step:steps[steps.length-1]};showExtras()}})
+    .then(n=>{ANS[id].newPapers={papers:n.papers||[]};showExtras()},e=>{HaldenErrors.report('New papers search failed',e);ANS[id].newPapers={error:e.message};showExtras()})}},e=>{
+  HaldenErrors.report('Ask failed',e);const msg=esc(e.message);ANS[id]={...ANS[id],done:true,html:'No answer: '+msg,panel:waiting('Not run',msg)};toast(msg)})
  .finally(()=>{adopt();renderNav();if(S.route==='thread-'+th.id&&th.key===id){renderMain();const sc=$('#tscroll');if(sc)sc.scrollTop=sc.scrollHeight}})}
 /* A question asked while a chat is open continues that chat (earlier turns stay visible); otherwise it starts a new chat. */
 function openTurn(q,key){
@@ -3312,5 +3328,5 @@ document.addEventListener('focusout',hide);
 })();
 </script>
 <script src="vendor/redux-toolkit.min.js"></script>
-<script src="halden-bridge.js?v=scope47"></script>
+<script src="halden-bridge.js?v=scope50"></script>
 </body></html>

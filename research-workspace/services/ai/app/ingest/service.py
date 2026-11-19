@@ -88,7 +88,7 @@ class SourceResult:
 INSERT_SOURCE = """
 INSERT INTO sources (project_id, origin, doi, title, authors, venue, year,
                      cited_by_count, abstract, source_url, pdf_url, fulltext, in_library)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', FALSE)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending', $12)
 ON CONFLICT (project_id, doi) DO NOTHING
 RETURNING id
 """
@@ -105,6 +105,7 @@ async def build_session_sources(
     store_pdf: Callable[[str, bytes], None] | None = None,
     on_event: Callable[[str, dict], None] | None = None,
     concurrency: int = 3,
+    in_library: bool = False,
 ) -> list[SourceResult]:
     """Persist discovered papers as sources and ingest them. Tries the PDF first;
     on any download/parse failure falls back to the abstract."""
@@ -115,7 +116,7 @@ async def build_session_sources(
         async with sem:
             sid = await pool.fetchval(
                 INSERT_SOURCE, project_id, p.origin, p.doi, p.title, p.authors, p.venue,
-                p.year, p.cited_by_count, p.abstract, p.source_url, p.pdf_url,
+                p.year, p.cited_by_count, p.abstract, p.source_url, p.pdf_url, in_library,
             )
             if sid is None:  # same DOI already in this project: reuse it
                 row = await pool.fetchrow(

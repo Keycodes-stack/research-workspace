@@ -289,3 +289,132 @@ def test_ui_read_endpoints_and_citation_metadata_in_history(api):
     hist = api.get(f"/threads/{th}/messages", headers=hdr()).json()["messages"]
     assert hist[0]["final"] is None
     assert hist[1]["final"]["claims"][0]["quote"] == QUOTE and hist[1]["final"]["chunks"][cid]["sha256"]
+
+
+# ---- online research: saved sources first, top 10 stored per project --------------------------------------
+
+def test_online_research_is_stored_per_project_and_reused(api, db_url, monkeypatch):
+    import app.routes_tasks as rt
+    from app.retrieval.models import DiscoveryResult, Paper
+
+    calls = []
+
+    async def fake_search(question, **kw):
+        calls.append(question)
+        papers = [Paper(title=f"Liquid injection study {i}", doi=f"10.9/{i}", relevance=1 - i / 20,
+                        abstract=f"Liquid injection samples were stable at 4 C for twelve weeks in study {i}.")
+                  for i in range(12)]
+        return DiscoveryResult(papers=papers, dropped=[], stats={"query": question, "found": 12, "seconds": 0.1},
+                               errors=[])
+    monkeypatch.setattr(rt, "search_papers", fake_search)
+    api.llms = models()
+
+    p = mk_project(api, mode="open_discovery")
+    t = api.post(f"/projects/{p}/tasks", headers=hdr(), json={"title": "t"}).json()["id"]
+    th1 = api.post(f"/tasks/{t}/threads", headers=hdr(), json={}).json()["id"]
+    body = {"question": Q, "online": True, "top_k": 5}
+
+    # 1. nothing saved yet: search once, store the APIs' top 10 in the project, answer from them
+    r = api.post(f"/threads/{th1}/ask", headers=hdr(), json=body)
+    assert r.status_code == 200, r.text
+    assert len(calls) == 1 and r.json()["gate"]["evidence_from"] == "online_search"
+    stored = db_exec(db_url, lambda c: c.fetch(
+        "SELECT title, in_library FROM sources WHERE project_id=$1 AND origin <> 'user_upload' ORDER BY title", UUID(p)))
+    assert [s["title"] for s in stored] == sorted(f"Liquid injection study {i}" for i in range(10))
+    assert all(s["in_library"] for s in stored)          # kept, and listed in the Knowledge Library
+
+    # 2. Follow-ups in this mode run a fresh search alongside saved-source retrieval.
+    for th in (th1, api.post(f"/tasks/{t}/threads", headers=hdr(), json={}).json()["id"]):
+        r = api.post(f"/threads/{th}/ask", headers=hdr(), json=body)
+        assert r.status_code == 200 and r.json()["gate"]["evidence_from"] == "online_search"
+    assert len(calls) == 3
+
+    # 2b. new papers for the same question are found afterwards and stored, without changing the answer
+    r = api.post(f"/threads/{th1}/new-papers", headers=hdr(), json={"question": Q})
+    assert r.status_code == 200, r.text
+    assert len(calls) == 4 and [x["title"] for x in r.json()["papers"]] == ["Liquid injection study 10", "Liquid injection study 11"]
+
+    # 3. Even when saved sources do not meet the threshold, online research already ran concurrently.
+    strict = rt.get_settings().model_copy(update={"similarity_threshold": 1.01})
+    monkeypatch.setattr(rt, "get_settings", lambda: strict)
+    msgs = lambda: db_exec(db_url, lambda c: c.fetchval("SELECT count(*) FROM messages WHERE thread_id=$1", UUID(th1)))
+    before = msgs()
+    r = api.post(f"/threads/{th1}/ask", headers=hdr(), json=body)
+    assert r.status_code == 200 and r.json()["kind"] == "insufficient_evidence"
+    assert r.json()["gate"]["online"]["found"] == 12 and r.json()["gate"]["saved_sources"] == 12
+    assert len(calls) == 5 and msgs() == before + 2
+
+
+def test_uploads_and_online_search_run_concurrently(api, db_url, monkeypatch):
+    import asyncio
+    import app.routes_tasks as rt
+    from app.retrieval.models import DiscoveryResult, Paper
+
+    saved_started, online_started = asyncio.Event(), asyncio.Event()
+    real_search_chunks = rt.store.search_chunks
+
+    async def gated_search_chunks(pool, query, source_ids, limit):
+        if not online_started.is_set():
+            saved_started.set()
+            await asyncio.wait_for(online_started.wait(), timeout=3)
+        return await real_search_chunks(pool, query, source_ids, limit)
+
+    async def fake_search(question, **kw):
+        await asyncio.wait_for(saved_started.wait(), timeout=3)
+        online_started.set()
+        papers = [Paper(title="Parallel online study", doi="10.7/parallel", relevance=1,
+                        abstract="Liquid injection samples were stable at 4 C for twelve weeks.")]
+        return DiscoveryResult(papers=papers, dropped=[], stats={"query": question, "found": 1, "seconds": 0.1},
+                               errors=[])
+
+    monkeypatch.setattr(rt.store, "search_chunks", gated_search_chunks)
+    monkeypatch.setattr(rt, "search_papers", fake_search)
+    api.llms = models()
+
+    p = mk_project(api, mode="open_discovery")
+    upload(api, p, SECRET, "private-upload.pdf")
+    t = api.post(f"/projects/{p}/tasks", headers=hdr(), json={"title": "t"}).json()["id"]
+    th = api.post(f"/tasks/{t}/threads", headers=hdr(), json={}).json()["id"]
+
+    r = api.post(f"/threads/{th}/ask", headers=hdr(), json={"question": Q, "scope": "both", "online": True})
+    assert r.status_code == 200, r.text
+    assert online_started.is_set() and r.json()["gate"]["evidence_from"] == "online_search"
+    assert r.json()["gate"]["saved_sources"] == 2
+
+
+def test_online_scope_fresh_search_uses_api_papers_and_ignores_uploads(api, db_url, monkeypatch):
+    import app.routes_tasks as rt
+    from app.retrieval.models import DiscoveryResult, Paper
+
+    calls = []
+
+    async def fake_search(question, **kw):
+        calls.append(question)
+        papers = [Paper(title=f"Fresh online study {i}", doi=f"10.8/{i}", relevance=1 - i / 20,
+                        abstract=f"Liquid injection samples were stable at 4 C for twelve weeks in online study {i}.")
+                  for i in range(10)]
+        return DiscoveryResult(papers=papers, dropped=[], stats={"query": question, "found": 10, "seconds": 0.1},
+                               errors=[])
+
+    monkeypatch.setattr(rt, "search_papers", fake_search)
+    api.llms = models()
+
+    p = mk_project(api, mode="open_discovery")
+    upload(api, p, SECRET, "private-upload.pdf")
+    t = api.post(f"/projects/{p}/tasks", headers=hdr(), json={"title": "t"}).json()["id"]
+    th = api.post(f"/tasks/{t}/threads", headers=hdr(), json={}).json()["id"]
+    body = {"question": Q, "scope": "api", "online": True, "top_k": 5}
+
+    for _ in range(2):
+        r = api.post(f"/threads/{th}/ask", headers=hdr(), json=body)
+        assert r.status_code == 200, r.text
+        assert r.json()["gate"]["evidence_from"] == "online_search"
+        assert r.json()["gate"]["online"]["found"] == 10
+
+    assert len(calls) == 2  # Online searches OpenAlex and Europe PMC again on every question.
+    assert all("Confidential assay protocol" not in prompt for _, prompt in api.llms[0].calls)
+    stored = db_exec(db_url, lambda c: c.fetch(
+        "SELECT title, origin FROM sources WHERE project_id=$1 ORDER BY title", UUID(p)))
+    assert len(stored) == 11
+    assert sum(s["origin"] == "user_upload" for s in stored) == 1
+    assert sum(s["origin"] != "user_upload" for s in stored) == 10

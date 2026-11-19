@@ -93,27 +93,6 @@ async def search(
     }
 
 
-CACHE_TTL_DAYS = 14
-
-PURGE_STALE_CACHE = """
-WITH stale AS (
-  SELECT s.id FROM sources s
-  WHERE s.project_id=$1 AND NOT s.in_library AND s.created_at < now() - make_interval(days => $2)
-    AND NOT EXISTS (SELECT 1 FROM chunks c JOIN citations ci ON ci.chunk_id=c.id WHERE c.source_id=s.id)
-    AND NOT EXISTS (SELECT 1 FROM chunks c JOIN concept_evidence e ON e.chunk_id=c.id WHERE c.source_id=s.id)
-    AND NOT EXISTS (SELECT 1 FROM chunks c JOIN lens_items l ON l.chunk_id=c.id WHERE c.source_id=s.id)
-    AND NOT EXISTS (SELECT 1 FROM chunks c JOIN signal_evidence e ON e.chunk_id=c.id WHERE c.source_id=s.id)
-    AND NOT EXISTS (SELECT 1 FROM task_sources ts WHERE ts.source_id=s.id)
-), gone AS (DELETE FROM chunks WHERE source_id IN (SELECT id FROM stale))
-DELETE FROM sources WHERE id IN (SELECT id FROM stale)
-"""
-
-
-async def purge_stale_cache(pool, project_id: UUID) -> str:
-    """Drop cached online papers that were never cited, saved or used by a task and are older than CACHE_TTL_DAYS."""
-    return await pool.execute(PURGE_STALE_CACHE, project_id, CACHE_TTL_DAYS)
-
-
 @router.post("/sources/{source_id}/save-to-library", dependencies=[Depends(project_with("researcher"))])
 async def save_to_library(project_id: UUID, source_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
     """Keep a paper that was found online: it moves from the research cache into the Knowledge Library."""
@@ -150,7 +129,6 @@ async def discover_and_ingest(
     """Mode A: find papers (OpenAlex -> Unpaywall -> Europe PMC), then chunk and embed them into the project's
     research cache (hidden from the Knowledge Library) so answers can be verified and cited with a link."""
     s = get_settings()
-    await purge_stale_cache(pool, project_id)
     if not req.force:
         # Already covered? Reuse what is indexed instead of re-searching and re-embedding on every question.
         known = await pool.fetch(

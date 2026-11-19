@@ -175,20 +175,6 @@ EUROPEPMC_PAGE = 25                      # its response time grows with page siz
 MIN_RESULTS = 25                         # fewer papers than this: retry with the most specific words
 MAX_TERMS = 6
 LIST_WEIGHTS = {"relevance": 0.6, "authority": 0.25, "recency": 0.15}
-CACHE_TTL_S = 15 * 60                    # a paper list and the follow-up questions on it reuse one search
-_cache: dict[str, tuple[float, DiscoveryResult]] = {}
-
-
-def _from_cache(terms: str, limit: int, with_abstracts: bool) -> DiscoveryResult | None:
-    hit = _cache.get(terms)
-    if not hit or time.monotonic() - hit[0] > CACHE_TTL_S:
-        return None
-    res = hit[1]
-    papers = [p for p in res.papers if p.abstract] if with_abstracts else res.papers
-    return DiscoveryResult(papers=papers[:limit], dropped=[], errors=res.errors,
-                           stats={**res.stats, "found": len(papers[:limit]), "seconds": 0.0, "cached": True})
-
-
 async def _timed(aw):
     """(result or the exception it raised, seconds taken)."""
     t = time.monotonic()
@@ -222,8 +208,6 @@ async def search_papers(
     (needed when the abstracts are used as evidence)."""
     t0 = time.monotonic()
     terms = search_query(question)
-    if client is None and (cached := _from_cache(terms, limit, with_abstracts)):
-        return cached
     own_client = client is None
     client = client or make_client(contact_email)
     pages = max(1, math.ceil(limit / OPENALEX_PAGE))
@@ -279,6 +263,4 @@ async def search_papers(
             relaxed.stats["relaxed_from"] = terms
             result = relaxed
             papers = relaxed.papers
-    if own_client and papers and (terms not in _cache or len(papers) >= len(_cache[terms][1].papers)):
-        _cache[terms] = (time.monotonic(), result)
     return result

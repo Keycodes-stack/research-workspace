@@ -395,7 +395,7 @@
       scope: 'uploads' = only the user's uploaded PDFs (sourceIds narrows to attached ones),
              'api'     = only papers found via OpenAlex / Unpaywall / Europe PMC (kept in the research cache),
              'both'    = uploads plus discovered papers.
-      Explicit paper searches wait for discovery; ordinary questions use background discovery. */
+      Online mode searches fresh; Uploads + online searches saved sources alongside the live API search. */
   const isPaperDiscoveryRequest = (question) =>
     /\b(?:find|search|discover|compile|gather|collect|identify|list|look\s+for)\b/i.test(question) &&
     /\b(?:papers?|studies|articles|publications|literature)\b/i.test(question);
@@ -407,22 +407,53 @@
     return (m ? m[1] : first).trim();
   };
 
-  async function runAsk(threadId, question, scope, sourceIds, t0) {
-    // The server searches online in the same request and ranks abstracts in memory with the project's own
-    // passages. Only papers the answer cites are stored.
+  /** Calls onSteps(steps) about every second with the server's live progress for this chat, until stop() is called. */
+  function watchProgress(threadId, onSteps) {
+    if (typeof onSteps !== 'function') return () => {};
+    let live = true, last = '';
+    (async function poll() {
+      while (live) {
+        try {
+          const r = await apiFetch(`/threads/${threadId}/progress`);
+          const key = JSON.stringify(r.steps || []);
+          if (live && key !== last) { last = key; onSteps(r.steps || []); }
+        } catch { /* progress is cosmetic: never fail the answer over it */ }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+    })();
+    return () => { live = false; };
+  }
+
+  async function runAsk(threadId, question, scope, sourceIds, t0, onSteps) {
+    // The server searches saved sources and fresh online papers together for "both"; it stores online papers in
+    // the project before combining their passages into one cited answer. Uploads scope never searches online.
     const body = { question, scope, online: scope !== 'uploads', top_k: 10 };
     if (scope === 'uploads' && sourceIds && sourceIds.length) body.source_ids = sourceIds;
-    const result = await apiFetch(`/threads/${threadId}/ask`, post(body));
+    const stop = watchProgress(threadId, onSteps);
+    let result;
+    try {
+      result = await apiFetch(`/threads/${threadId}/ask`, post(body));
+      if (result && result.kind === 'not_in_saved_sources') {
+        console.info('📚', result.note);
+        if (typeof onSteps === 'function') onSteps([result.note]);
+        // Kept for responses from an older backend during a rolling deployment.
+        result = await apiFetch(`/threads/${threadId}/ask`, post({ ...body, search_online: true }));
+        result.__searched_after_saved = true;
+      }
+    } finally {
+      stop();
+    }
     const tm = result.timings || {}, g = result.gate || {}, on = g.online || {};
     console.groupCollapsed(`💬 Ask: ${result.kind} in ${((performance.now() - t0) / 1000).toFixed(1)}s — the AI read ${g.papers_read ?? 0} papers`);
     console.table({
+      'Answered from': g.evidence_from === 'online_search' ? 'new online search' : 'saved project sources',
+      'Saved sources searched first': g.saved_sources ?? 0,
       'Papers found online': on.found ?? 0,
-      'Papers ranked against the question (embedded)': on.papers_ranked ?? 0,
+      'Papers stored (full text / abstract)': on.stored != null ? `${on.stored} (${on.full_text ?? 0} / ${on.abstract_only ?? 0})` : 0,
       'Passages retrieved (max 2 per paper)': tm.passages_used ?? 0,
       'Passages sent to the AI (token budget)': g.passages_sent ?? 0,
       'Passages dropped by the token budget': g.passages_trimmed_for_budget ?? 0,
       'Papers the AI read': g.papers_read ?? 0,
-      'Online papers saved (cited)': g.online_papers_saved ?? 0,
       'Seconds: retrieval / models / total': `${tm.retrieve_s} / ${tm.models_s} / ${tm.total_s}`,
     });
     console.groupEnd();
@@ -431,11 +462,24 @@
     return result;
   }
 
-  async function ask(question, sourceIds, scope = 'both', th = { title: question.slice(0, 80) }) {
+  /** After an answer from saved sources: the top new papers for the same question, stored in the project. */
+  async function newPapers(threadId, question, onSteps) {
+    const stop = watchProgress(threadId, onSteps);
+    try {
+      const r = await apiFetch(`/threads/${threadId}/new-papers`, post({ question }));
+      console.info(`📚 New papers stored: ${(r.papers || []).length}`, r.stats);
+      if ((r.errors || []).length) console.warn('Paper search sources that did not answer:', r.errors);
+      return r;
+    } finally {
+      stop();
+    }
+  }
+
+  async function ask(question, sourceIds, scope = 'both', th = { title: question.slice(0, 80) }, onSteps) {
     await ensureProject();
     const threadId = await ensureChat(th);
     const t0 = performance.now();
-    if (scope === 'uploads' || !isPaperDiscoveryRequest(question)) return runAsk(threadId, question, scope, sourceIds, t0);
+    if (scope === 'uploads' || !isPaperDiscoveryRequest(question)) return runAsk(threadId, question, scope, sourceIds, t0, onSteps);
 
     // "Find papers on X": 1) list every paper the APIs return (no model, nothing indexed), then
     // 2) cross-checked key findings from the most relevant abstracts. The list is kept even if step 2 fails.
@@ -446,7 +490,7 @@
     if ((list.errors || []).length) console.warn('Paper search sources that did not answer:', list.errors);
     list.thread_id = threadId;
     try {
-      const ai = await runAsk(threadId, `What are the key findings on ${topicOf(question)}?`, scope, null, performance.now());
+      const ai = await runAsk(threadId, `What are the key findings on ${topicOf(question)}?`, scope, null, performance.now(), onSteps);
       ai.__papers = list;
       return ai;
     } catch (e) {
@@ -474,7 +518,6 @@
   /** Search stages shared by paper lists and answers, from the server's measured stats. */
   function searchSteps(st, esc) {
     if (!st || st.found == null) return [];
-    if (st.cached) return [`Reused this topic's search from the last 15 minutes: <b>${st.found}</b> papers for <i>${esc(st.query || '')}</i> (no new API calls)`];
     const secs = (s) => (s == null ? '' : ` (${s} s)`);          // older saved results have no per-source timing
     const src = (name, n, s, failed) => failed
       ? `Searched ${name}: <b>no answer</b> (busy or rate limited, skipped${secs(s)})`
@@ -483,7 +526,9 @@
       `Turned the question into search terms: <i>${esc(st.query || '')}</i>`,
       src('OpenAlex', st.openalex, st.openalex_s, st.openalex_failed),
       src('Europe PMC', st.europe_pmc, st.europe_pmc_s, st.europe_pmc_failed),
-      `Removed duplicates and ranked by relevance, citations and recency: <b>${st.found}</b> unique papers (${st.with_pdf || 0} with a free PDF)`,
+      st.order === 'api_relevance'
+        ? `Took the top <b>${st.picked ?? 0}</b> of <b>${st.found}</b> papers in the search engines' relevance order (${st.with_pdf || 0} with a free PDF)`
+        : `Removed duplicates and ranked by relevance, citations and recency: <b>${st.found}</b> unique papers (${st.with_pdf || 0} with a free PDF)`,
     ];
   }
 
@@ -577,8 +622,11 @@
     if (tm.total_s != null) {
       const steps = [
         g.topic_context && `Your question refers back to a topic, so it was searched together with <i>${esc(g.topic_context)}</i>`,
+        g.evidence_from === 'saved_sources'
+          ? `Answered from this project's <b>${g.saved_sources ?? 0}</b> saved sources (no new search)`
+          : (on.saved_before ? `No relevant information in this project's <b>${on.saved_before}</b> saved sources, so a new search was made` : ''),
         ...searchSteps(on.found != null ? on : null, esc),
-        on.found != null && `Ranked <b>${on.papers_ranked ?? 0}</b> paper abstracts against the question in memory (${on.embed_s ?? '?'} s${on.newly_embedded != null && on.newly_embedded < on.embedded ? `, ${on.embedded - on.newly_embedded} passages reused from earlier questions` : ''})`,
+        on.found != null && `Stored <b>${on.stored ?? 0}</b> papers in this project with their embeddings: ${on.full_text ?? 0} full text, ${on.abstract_only ?? 0} abstract only (${on.ingest_s ?? '?'} s)`,
         g.passed === false
           ? `Picked the <b>${tm.passages_used}</b> closest passages (max 2 per paper)`
           : `Picked <b>${tm.passages_used}</b> best passages (max 2 per paper), ${g.passages_sent ?? 0} fit the AI's token budget` +
@@ -586,7 +634,6 @@
         g.passed === false ? `Stopped: best match ${(g.top_similarity ?? 0).toFixed(2)} is below the ${(g.threshold ?? 0).toFixed(2)} needed, so no model was asked`
           : `Models A and B read <b>${g.papers_read ?? 0}</b> papers and answered independently (${tm.models_s} s)`,
         g.passed !== false && `Checked every quote against the source text: <b>${v.verified}</b> verified, ${v.purged} removed`,
-        g.online_papers_saved ? `Saved the <b>${g.online_papers_saved}</b> cited online papers to this project` : '',
       ];
       const head = on.found != null ? `Researched ${on.found} papers · AI read ${g.papers_read ?? 0}` : `AI read ${g.papers_read ?? 0} sources`;
       r.__status = statusBlock(`${head} · ${v.verified} claims verified · ${tm.total_s} s`, steps);
@@ -805,6 +852,7 @@
     apiFetch,
     upload,
     ask,
+    newPapers,
     toAnswer,
     requestApproval,
     decideApproval,

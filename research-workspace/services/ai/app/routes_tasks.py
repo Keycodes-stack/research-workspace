@@ -18,7 +18,10 @@ from .config import get_settings
 from .governance import Meter, audit, check_budget
 from .clients import get_pool
 from .deps import get_embedder, get_llms, get_tokenizer
-from .online_evidence import online_passages, persist_cited
+from .clients import get_s3
+from .deps import make_ingest_config
+from .ingest.service import SourceResult, build_session_sources
+from .retrieval.http import make_client
 from .ingest import store
 from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
 from .orchestration.schema import ContextChunk
@@ -226,6 +229,96 @@ def topic_context(question: str, project_name: str | None, previous_questions: l
     return name if name and name.lower() not in _GENERIC_NAMES else ""
 
 
+# Live progress of a running /ask, read by the client every second so the user sees each step as it happens.
+# Kept per thread for a few minutes only; it is a status display, never a source of answers.
+_PROGRESS: dict[str, tuple[float, list[str]]] = {}
+PROGRESS_TTL_S = 600
+
+
+def progress(thread_id, text: str | None = None, *, reset: bool = False) -> None:
+    now = time.monotonic()
+    for k in [k for k, (t, _) in _PROGRESS.items() if now - t > PROGRESS_TTL_S]:
+        del _PROGRESS[k]
+    key = str(thread_id)
+    steps = [] if reset or key not in _PROGRESS else _PROGRESS[key][1]
+    if text:
+        steps.append(text)
+    _PROGRESS[key] = (now, steps)
+
+
+ONLINE_TOP_N = 10                  # papers stored per online search, in the search engines' own relevance order
+ONLINE_SEARCH_LIMIT = 50           # results requested, so 10 remain after skipping papers the project already has
+
+
+def top_by_api_relevance(papers: list, known_dois: set, known_titles: set, n: int = ONLINE_TOP_N) -> list:
+    """The first n usable papers in the APIs' relevance order (no re-ranking): not already in the project, and with
+    a PDF or an abstract to read."""
+    out = []
+    for p in sorted(papers, key=lambda p: -p.relevance):      # stable: ties keep the APIs' order
+        title = (p.title or "").strip().lower()
+        if (p.doi and p.doi in known_dois) or (title and title in known_titles) or not (p.pdf_url or p.abstract):
+            continue
+        out.append(p)
+        if len(out) == n:
+            break
+    return out
+
+
+async def search_and_store(pool, s3, embedder, tokenizer, cfg, project_id, thread_id, search_text: str,
+                           reuse_known: bool = False):
+    """Search OpenAlex and Europe PMC, then store the APIs' top papers that the project does not have yet, with
+    their full text (PDF when open access, else the abstract) and embeddings. Reports each step as live progress."""
+    t_search = time.monotonic()
+    progress(thread_id, "Searching OpenAlex and Europe PMC...")
+    known = await pool.fetch(
+        """SELECT s.id, s.doi, lower(s.title) AS title, s.fulltext::text AS fulltext,
+                  (SELECT count(*) FROM chunks c WHERE c.source_id = s.id) AS n
+           FROM sources s WHERE s.project_id=$1""", project_id)
+    found = await search_papers(search_text, contact_email=cfg.contact_email, limit=ONLINE_SEARCH_LIMIT)
+    reused = []
+    if reuse_known:
+        # "Online" sources: the APIs' top papers whatever the project has; papers already stored are reused as they are
+        by_doi = {r["doi"]: r for r in known if r["doi"]}
+        by_title = {r["title"]: r for r in known if r["title"]}
+        picked = []
+        for p in top_by_api_relevance(found.papers, set(), set()):
+            row = by_doi.get(p.doi) if p.doi else None
+            row = row or by_title.get((p.title or "").strip().lower())
+            if row and row["n"]:
+                reused.append(SourceResult(row["id"], p.doi, p.title, row["fulltext"], row["n"], "reused"))
+            else:
+                picked.append(p)
+    else:
+        picked = top_by_api_relevance(found.papers, {r["doi"] for r in known if r["doi"]},
+                                      {r["title"] for r in known if r["title"]})
+    progress(thread_id, f"Found {found.stats.get('found', len(found.papers))} papers. Downloading and reading "
+                        f"the top {len(picked)} new ones by relevance (full text when open access)...")
+    titles = {p.doi: p.title for p in picked}
+    done = []
+
+    def on_event(kind, d):
+        if kind == "ingested":
+            done.append(d)
+            what = "full text" if d.get("fulltext") == "full_text" else "abstract"
+            progress(thread_id, f"Stored {len(done)} of {len(picked)}: {(titles.get(d.get('doi')) or 'paper')[:90]} "
+                                f"({what}, {d.get('chunks', 0)} passages)")
+
+    async with make_client(cfg.contact_email) as client:
+        results = await build_session_sources(
+            pool, project_id, picked, make_ingest_config(embedder, tokenizer), client=client, on_event=on_event,
+            in_library=True,                      # stored papers are kept and listed in the Knowledge Library
+            max_pdf_bytes=cfg.max_pdf_mb * 1024 * 1024,
+            store_pdf=lambda key, data: s3.put_object(Bucket=cfg.s3_bucket, Key=key, Body=data))
+    results = reused + results
+    stats = {**found.stats, "errors": found.errors, "order": "api_relevance", "picked": len(picked) + len(reused),
+             "reused": len(reused),
+             "stored": sum(bool(r.chunks) for r in results),
+             "full_text": sum(r.fulltext == "full_text" for r in results),
+             "abstract_only": sum(r.fulltext == "abstract_only" for r in results),
+             "ingest_s": round(time.monotonic() - t_search - found.stats.get("seconds", 0), 1)}
+    return results, picked, found, stats
+
+
 MAX_PASSAGES_PER_SOURCE = 2   # one long PDF must not crowd every other paper out of the models' context
 
 
@@ -249,7 +342,8 @@ class AskIn(BaseModel):
     scope: Literal["uploads", "api", "both"] = "both"
     # open discovery only: search just these sources (e.g. the PDFs attached to this question)
     source_ids: list[UUID] | None = None
-    # open discovery only: also search the literature online; found papers are kept only if the answer cites them
+    # Online lookup is enabled for "api" and "both". In "both", saved-source retrieval and online research run
+    # concurrently; "uploads" never makes an online request.
     online: bool = False
 
 
@@ -298,6 +392,12 @@ def _cross_check_note(detail: str) -> str:
     return "No answer is shown because it could not be cross-checked. Please try again."
 
 
+@router.get("/threads/{thread_id}/progress")
+async def ask_progress(thread_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    await thread_for_user(pool, thread_id, user, "viewer")
+    return {"steps": _PROGRESS.get(str(thread_id), (0, []))[1]}
+
+
 @router.post("/threads/{thread_id}/ask")
 async def ask(
     thread_id: UUID,
@@ -307,6 +407,7 @@ async def ask(
     embedder=Depends(get_embedder),
     tokenizer=Depends(get_tokenizer),
     llms=Depends(get_llms),
+    s3=Depends(get_s3),
 ):
     t0 = time.monotonic()
     th = await thread_for_user(pool, thread_id, user, "researcher")
@@ -332,9 +433,10 @@ async def ask(
         else:
             rows = await pool.fetch(f"SELECT id FROM sources WHERE project_id=$1 AND {cond}", th["project_id"])
         source_ids = [r["id"] for r in rows]
-
-    await pool.execute(
-        "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2)", thread_id, body.question)
+    online = body.online and th["mode"] != "closed_repository" and body.scope != "uploads"
+    if online:   # papers found online for this project are always searched, whatever the selection
+        source_ids = list({*source_ids, *[r["id"] for r in await pool.fetch(
+            "SELECT id FROM sources WHERE project_id=$1 AND origin <> 'user_upload'", th["project_id"])]})
 
     cfg = get_settings()
     context = topic_context(
@@ -346,29 +448,66 @@ async def ask(
     # question stays as the user wrote it.
     search_text = f"{context} {body.question}" if context else body.question
     question = f"{body.question} (topic: {context})" if context else body.question
+    progress(thread_id, reset=True)
+    if context:
+        progress(thread_id, f"Your question refers back to a topic, so it is searched together with: {context[:80]}")
     q = await asyncio.to_thread(embedder.embed_query, search_text)
-    online = body.online and th["mode"] != "closed_repository" and body.scope != "uploads"
-    passages, online_stats = [], None
-    if online:
-        known = {r["doi"] for r in await pool.fetch(
-            "SELECT doi FROM sources WHERE project_id=$1 AND doi IS NOT NULL", th["project_id"])}
-        stored, (passages, online_stats) = await asyncio.gather(
-            store.search_chunks(pool, q, source_ids, body.top_k * 3),
-            online_passages(search_text, q, embedder, tokenizer, exclude_dois=known,
-                            contact_email=cfg.contact_email, chunk_tokens=cfg.chunk_tokens,
-                            chunk_overlap=cfg.chunk_overlap))
-        all_hits = diversify(sorted(stored + [op.hit for op in passages], key=lambda h: h.similarity, reverse=True),
-                             body.top_k)
+    progress(thread_id, f"Searching this project's {len(source_ids)} saved sources..." if source_ids
+             else "This project has no saved sources yet.")
+
+    online_stats = None
+    saved_top = None
+    if online and body.scope == "api":
+        # "Online" sources: a fresh search every time; the answer uses only the APIs' top papers (uploads ignored).
+        results, picked, found, online_stats = await search_and_store(
+            pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text, reuse_known=True)
+        source_ids = [r.source_id for r in results if r.chunks]
+        stored = await store.search_chunks(pool, q, source_ids, body.top_k * 3) if source_ids else []
+    elif online and body.scope == "both":
+        # Search the project's saved sources while the fresh OpenAlex + Europe PMC search ingests its top papers.
+        # The UI polls the same progress list, so either branch can report its results while the other is still working.
+        saved_ids = list(source_ids)
+
+        async def search_saved_sources():
+            hits = await store.search_chunks(pool, q, saved_ids, body.top_k * 3) if saved_ids else []
+            progress(thread_id, f"Uploaded and saved sources are ready ({len(hits)} relevant passages).")
+            return hits
+
+        progress(thread_id, "Searching uploaded and saved sources while researching online...")
+        saved_task = asyncio.create_task(search_saved_sources())
+        online_task = asyncio.create_task(search_and_store(
+            pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text, reuse_known=True))
+        stored, online_result = await asyncio.gather(saved_task, online_task)
+        results, picked, found, online_stats = online_result
+        saved_top = max((h.similarity for h in stored if h.intact()), default=None)
+        online_ids = [r.source_id for r in results if r.chunks]
+        added_ids = [sid for sid in online_ids if sid not in saved_ids]
+        if added_ids:
+            progress(thread_id, "Online papers are ready; retrieving passages to combine with the uploaded sources...")
+            stored.extend(await store.search_chunks(pool, q, added_ids, body.top_k * 3))
+        source_ids = list(dict.fromkeys([*saved_ids, *online_ids]))
+        online_stats.update({"saved_before": len(saved_ids), "saved_top": saved_top})
+        await audit(pool, th["project_id"], user, "source.discover", "project", th["project_id"],
+                    question=body.question[:200], found=len(added_ids))
     else:
-        all_hits = diversify(await store.search_chunks(pool, q, source_ids, body.top_k * 3), body.top_k)
-    by_online = {op.hit.chunk_id: op for op in passages}
+        stored = await store.search_chunks(pool, q, source_ids, body.top_k * 3)
+        saved_top = max((h.similarity for h in stored if h.intact()), default=None)
+    best_similarity = max((h.similarity for h in stored if h.intact()), default=None)
+    covered = best_similarity is not None and best_similarity >= cfg.similarity_threshold
+    if covered and saved_top is not None:
+        progress(thread_id, f"Found relevant passages in the saved sources (best match {saved_top:.2f}).")
+    all_hits = diversify(stored, body.top_k)
+
+    await pool.execute(
+        "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2)", thread_id, body.question)
     # Integrity filter: a chunk whose text no longer matches its seal is never shown to a model.
     t_retrieved = time.monotonic()
     hits = [h for h in all_hits if h.intact()]
     dropped = len(all_hits) - len(hits)
     top = max((h.similarity for h in hits), default=None)
     gate = {"threshold": cfg.similarity_threshold, "top_similarity": top, "passed": False,
-            "corrupt_chunks_dropped": dropped, "online": online_stats, "topic_context": context}
+            "corrupt_chunks_dropped": dropped, "online": online_stats, "topic_context": context,
+            "evidence_from": "online_search" if online_stats else "saved_sources", "saved_sources": len(source_ids)}
 
     if top is None:
         result = DualResult("insufficient_evidence",
@@ -376,24 +515,24 @@ async def ask(
     elif top < cfg.similarity_threshold:
         # Refuse without calling any model.
         result = DualResult("insufficient_evidence", "below_similarity_threshold")
+        progress(thread_id, "No passage is close enough to the question, so no model was asked.")
     else:
         gate["passed"] = True
-        meta = await store.fetch_chunks(pool, [h.chunk_id for h in hits if h.chunk_id not in by_online])
+        meta = await store.fetch_chunks(pool, [h.chunk_id for h in hits])
         chunks = []
         for h in hits:
-            if h.chunk_id in by_online:
-                label = by_online[h.chunk_id].label
-            else:
-                m = meta[h.chunk_id]
-                label = m["title"] or m["filename"] or "untitled"
-                if m["doi"]:
-                    label += f", doi:{m['doi']}"
+            m = meta[h.chunk_id]
+            label = m["title"] or m["filename"] or "untitled"
+            if m["doi"]:
+                label += f", doi:{m['doi']}"
             chunks.append(ContextChunk(h.chunk_id, h.text, label, h.page_start, h.page_end, h.sha256))
         chunks, trimmed = fit_to_budget(chunks, cfg.llm_context_token_budget)
         gate["passages_trimmed_for_budget"] = trimmed
         gate["passages_sent"] = len(chunks)
         gate["papers_read"] = len({c.label for c in chunks})     # distinct papers the models actually read
         await check_budget(pool, th["project_id"])
+        progress(thread_id, f"Models A and B are reading {len(chunks)} passages from {gate['papers_read']} papers "
+                            "and answering independently...")
         meter = Meter(llms)
         a, b = meter.llms
         vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)
@@ -409,10 +548,9 @@ async def ask(
 
     t_models = time.monotonic()
     if gate["passed"]:
+        progress(thread_id, "Checked every quote against the source text. Saving the answer...")
+    if gate["passed"]:
         await meter.record(pool, th["project_id"], user, "ask")
-        if by_online:   # store the online papers this answer cites (and only those) before citing them
-            saved = await persist_cited(pool, th["project_id"], passages, _chunk_ids(result))
-            gate["online_papers_saved"] = len(saved)
     content = render_content(result)
     async with pool.acquire() as conn, conn.transaction():
         mid = await conn.fetchval(
@@ -496,6 +634,44 @@ async def list_papers(thread_id: UUID, body: PapersIn, user: UUID = Depends(requ
     await audit(pool, th["project_id"], user, "papers.search", "message", mid,
                 question=body.question[:200], found=len(found.papers))
     return payload
+
+
+class NewPapersIn(BaseModel):
+    question: str = Field(min_length=3, max_length=4000)
+
+
+@router.post("/threads/{thread_id}/new-papers")
+async def new_papers(
+    thread_id: UUID,
+    body: NewPapersIn,
+    user: UUID = Depends(require_user),
+    pool=Depends(get_pool),
+    embedder=Depends(get_embedder),
+    tokenizer=Depends(get_tokenizer),
+    s3=Depends(get_s3),
+):
+    """After an answer from the project's saved sources: find the top new papers for the same question and store them
+    in the project (full text + embeddings) for later questions. The answer is not changed."""
+    th = await thread_for_user(pool, thread_id, user, "researcher")
+    if th["mode"] == "closed_repository":
+        raise HTTPException(409, "closed repository projects do not search online")
+    cfg = get_settings()
+    progress(thread_id, reset=True)
+    context = topic_context(
+        body.question,
+        await pool.fetchval("SELECT name FROM projects WHERE id=$1", th["project_id"]),
+        [r["content"] for r in await pool.fetch("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
+                                                   ORDER BY created_at DESC OFFSET 1 LIMIT 5""", thread_id)])
+    search_text = f"{context} {body.question}" if context else body.question
+    results, picked, found, stats = await search_and_store(
+        pool, s3, embedder, tokenizer, cfg, th["project_id"], thread_id, search_text)
+    by_doi = {p.doi: p for p in picked}
+    papers = [{**_paper_row(by_doi.get(r.doi) or next(p for p in picked if p.title == r.title)),
+               "source_id": str(r.source_id), "fulltext": r.fulltext}
+              for r in results if r.chunks]
+    await audit(pool, th["project_id"], user, "source.discover", "project", th["project_id"],
+                question=body.question[:200], found=len(papers))
+    return jsonable_encoder({"papers": papers, "stats": stats, "errors": found.errors})
 
 
 @router.post("/threads/{thread_id}/messages/{message_id}/flag")
