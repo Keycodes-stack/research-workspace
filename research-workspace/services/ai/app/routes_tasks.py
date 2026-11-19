@@ -473,7 +473,7 @@ async def ask(
     first_question = not await pool.fetchval(
         "SELECT EXISTS (SELECT 1 FROM messages WHERE thread_id=$1 AND role='user')", thread_id)
     if th["mode"] == "closed_repository":
-        plan = EvidencePlan(source_ids, False, False, False)
+        plan = EvidencePlan(source_ids, False, False)
     else:
         online_ok = body.online and body.scope != "uploads"
         plan = plan_evidence(body.scope, body.evidence, first_question, upload_ids, paper_ids, online_ok)

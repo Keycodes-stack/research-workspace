@@ -391,8 +391,8 @@ def test_uploads_and_online_combines_uploads_and_papers_then_answers_followups_f
     # first question: uploads + a fresh search, one combined answer from both
     r = _ask(api, th, scope="both")
     assert len(calls) == 1 and r["gate"]["evidence_from"] == "online_search" and r["gate"]["saved_sources"] == 11
-    prompt = api.llms[0].calls[-1][1]
-    assert "refrigerated storage" in prompt and "in study" in prompt     # upload text and online paper text
+    # Model A's answer prompt (its other call is the cross-check) holds upload text and online paper text
+    assert any("refrigerated storage" in prompt and "in study" in prompt for _, prompt in api.llms[0].calls)
 
     # follow-up: uploads + stored papers answer it, no search
     r = _ask(api, th, scope="both")
