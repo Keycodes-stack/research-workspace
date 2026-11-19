@@ -575,10 +575,14 @@
     const v = r.verification, total = v.verified + v.purged, g = r.gate || {};
     const tm = r.timings || {}, on = g.online || {};
     if (tm.total_s != null) {
-      const steps = [...searchSteps(on.found != null ? on : null, esc),
+      const steps = [
+        g.topic_context && `Your question refers back to a topic, so it was searched together with <i>${esc(g.topic_context)}</i>`,
+        ...searchSteps(on.found != null ? on : null, esc),
         on.found != null && `Ranked <b>${on.papers_ranked ?? 0}</b> paper abstracts against the question in memory (${on.embed_s ?? '?'} s${on.newly_embedded != null && on.newly_embedded < on.embedded ? `, ${on.embedded - on.newly_embedded} reused from earlier questions` : ''})`,
-        `Picked <b>${tm.passages_used}</b> best passages (max 2 per paper), ${g.passages_sent ?? 0} fit the AI's token budget` +
-          (g.passages_trimmed_for_budget ? ` (${g.passages_trimmed_for_budget} dropped)` : ''),
+        g.passed === false
+          ? `Picked the <b>${tm.passages_used}</b> closest passages (max 2 per paper)`
+          : `Picked <b>${tm.passages_used}</b> best passages (max 2 per paper), ${g.passages_sent ?? 0} fit the AI's token budget` +
+            (g.passages_trimmed_for_budget ? ` (${g.passages_trimmed_for_budget} dropped)` : ''),
         g.passed === false ? `Stopped: best match ${(g.top_similarity ?? 0).toFixed(2)} is below the ${(g.threshold ?? 0).toFixed(2)} needed, so no model was asked`
           : `Models A and B read <b>${g.papers_read ?? 0}</b> papers and answered independently (${tm.models_s} s)`,
         g.passed !== false && `Checked every quote against the source text: <b>${v.verified}</b> verified, ${v.purged} removed`,

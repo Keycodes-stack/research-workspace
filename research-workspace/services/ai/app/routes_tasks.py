@@ -24,7 +24,8 @@ from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
 from .orchestration.schema import ContextChunk
 from .orchestration.prompts import fit_to_budget
 from .verification.verifier import VerifyConfig
-from .retrieval.pipeline import search_papers
+from .retrieval.pipeline import search_papers, search_query
+import re
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["tasks"])
@@ -205,6 +206,22 @@ async def get_thread(
     return {"id": str(thread_id), "task_id": str(row["task_id"]), "project_id": str(row["project_id"])}
 
 
+# "How to cure this syndrome?" names no topic: the search would look for any syndrome. Such questions borrow the
+# topic from the project name, or from the chat's previous question when the project name says nothing.
+_REFERS = re.compile(r"\b(this|that|these|those|it|its|they|them|their|such|the same)\b", re.I)
+_GENERIC_NAMES = {"new project", "untitled", "my project", "project", "test"}
+
+
+def topic_context(question: str, project_name: str | None, previous_question: str | None) -> str:
+    """Topic to add to a question that refers back to something or is too short to search on its own ('' if none)."""
+    if not _REFERS.search(question) and len(search_query(question).split()) >= 3:
+        return ""
+    name = (project_name or "").strip()
+    if name and name.lower() not in _GENERIC_NAMES:
+        return name
+    return (previous_question or "").strip()[:200]
+
+
 MAX_PASSAGES_PER_SOURCE = 2   # one long PDF must not crowd every other paper out of the models' context
 
 
@@ -308,7 +325,16 @@ async def ask(
         "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2)", thread_id, body.question)
 
     cfg = get_settings()
-    q = await asyncio.to_thread(embedder.embed_query, body.question)
+    context = topic_context(
+        body.question,
+        await pool.fetchval("SELECT name FROM projects WHERE id=$1", th["project_id"]),
+        await pool.fetchval("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
+                               ORDER BY created_at DESC OFFSET 1 LIMIT 1""", thread_id))
+    # The search and ranking get the topic first ("down syndrome cure"); the models get it as a note. The stored
+    # question stays as the user wrote it.
+    search_text = f"{context} {body.question}" if context else body.question
+    question = f"{body.question} (topic: {context})" if context else body.question
+    q = await asyncio.to_thread(embedder.embed_query, search_text)
     online = body.online and th["mode"] != "closed_repository" and body.scope != "uploads"
     passages, online_stats = [], None
     if online:
@@ -316,7 +342,7 @@ async def ask(
             "SELECT doi FROM sources WHERE project_id=$1 AND doi IS NOT NULL", th["project_id"])}
         stored, (passages, online_stats) = await asyncio.gather(
             store.search_chunks(pool, q, source_ids, body.top_k * 3),
-            online_passages(body.question, q, embedder, tokenizer, exclude_dois=known,
+            online_passages(search_text, q, embedder, tokenizer, exclude_dois=known,
                             contact_email=cfg.contact_email, chunk_tokens=cfg.chunk_tokens,
                             chunk_overlap=cfg.chunk_overlap))
         all_hits = diversify(sorted(stored + [op.hit for op in passages], key=lambda h: h.similarity, reverse=True),
@@ -330,7 +356,7 @@ async def ask(
     dropped = len(all_hits) - len(hits)
     top = max((h.similarity for h in hits), default=None)
     gate = {"threshold": cfg.similarity_threshold, "top_similarity": top, "passed": False,
-            "corrupt_chunks_dropped": dropped, "online": online_stats}
+            "corrupt_chunks_dropped": dropped, "online": online_stats, "topic_context": context}
 
     if top is None:
         result = DualResult("insufficient_evidence",
@@ -360,7 +386,7 @@ async def ask(
         a, b = meter.llms
         vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)
         try:
-            result = await run_dual(body.question, chunks, a, b, judge=a, verify=vcfg)  # the stronger model matches claims; it never decides who is right
+            result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg)  # the stronger model matches claims; it never decides who is right
         except CrossCheckFailed as e:
             await meter.record(pool, th["project_id"], user, "ask")
             log.warning("ask cross-check unavailable: %s", e)

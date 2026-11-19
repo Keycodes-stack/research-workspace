@@ -61,3 +61,16 @@ def test_followup_reuses_cached_vectors(monkeypatch):
     assert calls == [3] and s1["newly_embedded"] == 3 and s2["newly_embedded"] == 0
     assert [round(o.hit.similarity, 6) for o in first] == [round(o.hit.similarity, 6) for o in second]
     online_evidence._vectors.clear()
+
+
+def test_vague_questions_borrow_the_topic():
+    from app.retrieval.pipeline import search_query
+    from app.routes_tasks import topic_context
+    assert topic_context("how to cure this syndrome?", "down syndrome", None) == "down syndrome"
+    assert search_query("down syndrome how to cure this syndrome?") == "down syndrome cure"
+    assert topic_context("Is it inherited?", "Down syndrome", None) == "Down syndrome"
+    # a generic project name says nothing: use the chat's previous question instead
+    assert topic_context("and the side effects?", "New Project", "What is Down syndrome?") == "What is Down syndrome?"
+    # self-contained questions are left alone
+    assert topic_context("What are the key findings on mRNA vaccine stability?", "down syndrome", None) == ""
+    assert topic_context("Does heat break DNA strands?", "DNA and RNA", None) == ""
