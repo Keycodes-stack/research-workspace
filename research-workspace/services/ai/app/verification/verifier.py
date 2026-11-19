@@ -22,9 +22,9 @@ _NEGATORS = frozenset({"not", "no", "never", "without", "neither", "nor", "canno
 
 @dataclass
 class VerifyConfig:
-    fuzzy_threshold: float = 0.72   # lowered from 0.9 — online-discovered abstracts have OCR/whitespace diffs
+    fuzzy_threshold: float = 0.9
     min_quote_tokens: int = 3
-    min_support: float = 0.6        # lowered from 0.7 — allows partial abstract coverage
+    min_support: float = 0.7
     strict_numbers: bool = True
     guards: bool = True            # negation / direction / unit / quantifier checks
 

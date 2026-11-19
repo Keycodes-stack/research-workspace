@@ -5,5 +5,7 @@ import path from "node:path";
 export default defineConfig({
   plugins: [react()],
   resolve: { alias: { "@": path.resolve(__dirname) } },
-  test: { environment: "jsdom", setupFiles: ["./tests/setup.ts"], globals: true },
+  // lib/api.ts refuses to load without NEXT_PUBLIC_API_URL; tests get a local default (CI sets it only for build).
+  test: { environment: "jsdom", setupFiles: ["./tests/setup.ts"], globals: true,
+          env: { NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080" } },
 });
