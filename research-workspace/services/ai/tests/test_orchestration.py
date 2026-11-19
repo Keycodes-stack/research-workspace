@@ -389,3 +389,14 @@ def test_llm_caps_output_tokens_so_requests_fit_provider_limits():
 
     asyncio.run(go())
     assert seen[0]["max_tokens"] == 2000
+
+
+def test_gemini_provider_mistral_a_gemini_b():
+    with pytest.raises(LLMError, match="GEMINI_API_KEY"):
+        build_llms(Settings(_env_file=None, mistral_api_key="m", model_b_provider="gemini"))
+    a, b = build_llms(Settings(_env_file=None, mistral_api_key="m", gemini_api_key="g",
+                               model_a_provider="mistral", model_a_name="mistral-medium-latest",
+                               model_b_provider="gemini"))
+    assert a.name == "model_a:mistral" and a.model == "mistral-medium-latest"
+    assert b.name == "model_b:gemini" and b.model == "gemini-flash-lite-latest" and b.api_key == "g"
+    assert b.url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"

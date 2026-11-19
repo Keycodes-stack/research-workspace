@@ -24,7 +24,7 @@ from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
 from .orchestration.schema import ContextChunk
 from .orchestration.prompts import fit_to_budget
 from .verification.verifier import VerifyConfig
-from .retrieval.pipeline import search_papers, search_query
+from .retrieval.pipeline import REQUEST_WORDS, _WORD, search_papers, search_query
 import re
 
 log = logging.getLogger(__name__)
@@ -212,14 +212,18 @@ _REFERS = re.compile(r"\b(this|that|these|those|it|its|they|them|their|such|the 
 _GENERIC_NAMES = {"new project", "untitled", "my project", "project", "test"}
 
 
-def topic_context(question: str, project_name: str | None, previous_question: str | None) -> str:
-    """Topic to add to a question that refers back to something or is too short to search on its own ('' if none)."""
+def topic_context(question: str, project_name: str | None, previous_questions: list[str] | None = None) -> str:
+    """Topic to add to a question that refers back to something or is too short to search on its own ('' if none).
+
+    In a conversation "it"/"this" means what was just discussed, so the most recent earlier question that names a
+    topic itself wins; the project name is the fallback for a chat's first question."""
     if not _REFERS.search(question) and len(search_query(question).split()) >= 3:
         return ""
+    for prev in previous_questions or []:                    # newest first; skip filler like "and why?"
+        if prev and not _REFERS.search(prev) and any(w.lower() not in REQUEST_WORDS for w in _WORD.findall(prev)):
+            return prev.strip()[:200]
     name = (project_name or "").strip()
-    if name and name.lower() not in _GENERIC_NAMES:
-        return name
-    return (previous_question or "").strip()[:200]
+    return name if name and name.lower() not in _GENERIC_NAMES else ""
 
 
 MAX_PASSAGES_PER_SOURCE = 2   # one long PDF must not crowd every other paper out of the models' context
@@ -254,7 +258,15 @@ def render_content(r: DualResult) -> str:
         return ("INSUFFICIENT_SOURCE_EVIDENCE: none of the selected sources is similar enough "
                 "to the question to answer it.")
     if r.kind == "insufficient_evidence":
-        return "INSUFFICIENT_SOURCE_EVIDENCE: the selected sources do not contain enough information to answer."
+        # Say why: the models' own reason (e.g. "the sources discuss management of Down syndrome but give no cure")
+        # tells the reader what the papers do cover, instead of a bare refusal.
+        why = [n.strip() for n in ((r.model_a or {}).get("notes"), (r.model_b or {}).get("notes")) if n and n.strip()]
+        text = "INSUFFICIENT_SOURCE_EVIDENCE: the selected sources do not contain enough information to answer."
+        if why:
+            text += " Why: " + why[0].rstrip(".") + "."
+            if len(why) > 1 and why[1].lower() != why[0].lower():
+                text += " Second model: " + why[1].rstrip(".") + "."
+        return text + " Try asking about what these papers do cover, or rephrase the question."
     if r.kind == "disagreement":
         topics = [c["topic"] for c in (r.disagreement or {}).get("conflicts", [])]
         head = "The two models did not agree, so no single answer is given."
@@ -328,8 +340,8 @@ async def ask(
     context = topic_context(
         body.question,
         await pool.fetchval("SELECT name FROM projects WHERE id=$1", th["project_id"]),
-        await pool.fetchval("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
-                               ORDER BY created_at DESC OFFSET 1 LIMIT 1""", thread_id))
+        [r["content"] for r in await pool.fetch("""SELECT content FROM messages WHERE thread_id=$1 AND role='user'
+                                                   ORDER BY created_at DESC OFFSET 1 LIMIT 5""", thread_id)])
     # The search and ranking get the topic first ("down syndrome cure"); the models get it as a note. The stored
     # question stays as the user wrote it.
     search_text = f"{context} {body.question}" if context else body.question

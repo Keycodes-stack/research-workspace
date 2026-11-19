@@ -578,7 +578,7 @@
       const steps = [
         g.topic_context && `Your question refers back to a topic, so it was searched together with <i>${esc(g.topic_context)}</i>`,
         ...searchSteps(on.found != null ? on : null, esc),
-        on.found != null && `Ranked <b>${on.papers_ranked ?? 0}</b> paper abstracts against the question in memory (${on.embed_s ?? '?'} s${on.newly_embedded != null && on.newly_embedded < on.embedded ? `, ${on.embedded - on.newly_embedded} reused from earlier questions` : ''})`,
+        on.found != null && `Ranked <b>${on.papers_ranked ?? 0}</b> paper abstracts against the question in memory (${on.embed_s ?? '?'} s${on.newly_embedded != null && on.newly_embedded < on.embedded ? `, ${on.embedded - on.newly_embedded} passages reused from earlier questions` : ''})`,
         g.passed === false
           ? `Picked the <b>${tm.passages_used}</b> closest passages (max 2 per paper)`
           : `Picked <b>${tm.passages_used}</b> best passages (max 2 per paper), ${g.passages_sent ?? 0} fit the AI's token budget` +

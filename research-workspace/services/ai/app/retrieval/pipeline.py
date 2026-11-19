@@ -26,7 +26,7 @@ research papers paper studies study articles article publications publication li
 titles title years year source sources links link including include includes related regarding
 key main findings finding summarize summarise summary overview tell explain known
 """.split())
-_WORD = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9+\-/]*[A-Za-z0-9])?")
+_WORD = re.compile(r"[^\W_](?:[\w+\-/]*[^\W_])?")   # any script's letters/digits, not just A-Z
 
 
 def search_query(question: str) -> str:
@@ -172,6 +172,8 @@ async def discover(
 OPENALEX_PAGE = 200                      # OpenAlex's maximum page size
 EUROPEPMC_BUDGET_S = 12.0                # Europe PMC can take 30-45 s; never let it hold up an answer
 EUROPEPMC_PAGE = 25                      # its response time grows with page size: 25 -> 4-7 s, 100 -> 20-30 s
+MIN_RESULTS = 25                         # fewer papers than this: retry with the most specific words
+MAX_TERMS = 6
 LIST_WEIGHTS = {"relevance": 0.6, "authority": 0.25, "recency": 0.15}
 CACHE_TTL_S = 15 * 60                    # a paper list and the follow-up questions on it reuse one search
 _cache: dict[str, tuple[float, DiscoveryResult]] = {}
@@ -211,6 +213,7 @@ async def search_papers(
     limit: int = 400,
     with_abstracts: bool = False,
     client: httpx.AsyncClient | None = None,
+    _relaxed: bool = False,
 ) -> DiscoveryResult:
     """Up to `limit` papers for a question in one round of parallel API calls (~5-12 s).
 
@@ -265,6 +268,17 @@ async def search_papers(
              "openalex_failed": len(results) - 1 - sum(not isinstance(r, BaseException) for r in results[:-1]),
              "europe_pmc_failed": isinstance(results[-1], BaseException)}
     result = DiscoveryResult(papers=papers, dropped=[], stats=stats, errors=errors)
+    # Every search word must appear in a paper, so a long question or a pasted paragraph can match almost nothing.
+    # Then search again with its most specific words only (longest first, kept in their original order).
+    words = terms.split()
+    if len(papers) < MIN_RESULTS and len(words) > MAX_TERMS and not _relaxed:
+        keep = sorted(sorted(range(len(words)), key=lambda i: -len(words[i]))[:MAX_TERMS])
+        relaxed = await search_papers(" ".join(words[i] for i in keep), contact_email=contact_email, limit=limit,
+                                      with_abstracts=with_abstracts, client=None if own_client else client, _relaxed=True)
+        if len(relaxed.papers) > len(papers):
+            relaxed.stats["relaxed_from"] = terms
+            result = relaxed
+            papers = relaxed.papers
     if own_client and papers and (terms not in _cache or len(papers) >= len(_cache[terms][1].papers)):
         _cache[terms] = (time.monotonic(), result)
     return result

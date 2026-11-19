@@ -146,7 +146,10 @@ def _check(claim: Claim, index: int, chunks: dict[UUID, ContextChunk], cfg: Veri
 
     context = context_of(segs, [c.text for c in cited])
     cs = content_stems(claim.text)
-    ev = content_stems(f"{claim.quote} {context}")
+    # The cited paper's title names what it studies ("Physical therapy in Down syndrome: ..."), so the claim's subject
+    # may come from it; the finding itself must still be in the quote's own sentence. Numbers are checked the same way.
+    titles = " ".join(c.label for c in cited)
+    ev = content_stems(f"{claim.quote} {context} {titles}")
     if cs and len(cs & ev) / len(cs) < cfg.min_support:
         return out(False, "weak_support", *best)
 

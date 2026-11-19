@@ -21,11 +21,12 @@ class Settings(BaseSettings):
 
     mistral_api_key: str = ""
     groq_api_key: str = ""
+    gemini_api_key: str = ""
 
     contact_email: str = ""
 
     # --- LLM models: swap providers or models by editing .env only (see .env.example). ---
-    # Providers: mistral | groq | ollama. An empty *_NAME uses the provider's default model.
+    # Providers: mistral | groq | gemini | ollama. An empty *_NAME uses the provider's default model.
     model_a_name: str = ""
     model_b_name: str = ""
     # NOTE: mistral/groq are cloud APIs; chunk text (including confidential Mode B
@@ -34,6 +35,7 @@ class Settings(BaseSettings):
     model_b_provider: str = "groq"
     mistral_base_url: str = "https://api.mistral.ai/v1"
     groq_base_url: str = "https://api.groq.com/openai/v1"
+    gemini_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"   # Gemini's OpenAI-compatible API
     ollama_base_url: str = "http://localhost:11434/v1"
     llm_timeout_s: float = 120.0
     # Max source-text tokens sent to a model per question (0 = unlimited). Keeps requests under provider

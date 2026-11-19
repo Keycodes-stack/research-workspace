@@ -346,3 +346,34 @@ def test_search_cache_serves_the_followup_without_calling_apis(monkeypatch):
     again = run(search_papers("Find papers on mRNA vaccine stability", limit=50, with_abstracts=True))
     assert len(calls) == n and again.stats["cached"] and len(again.papers) == len(first.papers) == 3
     pipeline._cache.clear()
+
+
+def test_search_words_keep_accented_and_non_latin_letters():
+    terms = search_query("¿Cómo afecta la temperatura a la degradación del ARNm?").split()
+    assert "degradación" in terms and "temperatura" in terms and "ARNm" in terms
+    assert search_query("How does COVID-19 mRNA-1273 degrade?") == "COVID-19 mRNA-1273 degrade"
+
+
+def test_long_question_falls_back_to_its_most_specific_words():
+    from app.retrieval import pipeline
+    pipeline._cache.clear()
+    seen = []
+
+    def handler(request):
+        if request.url.host == "api.openalex.org":
+            q = request.url.params["search"]
+            seen.append(q)
+            return httpx.Response(200, json=_oa_page(2 if len(q.split()) > pipeline.MAX_TERMS else 60, 0))
+        return httpx.Response(200, json={"resultList": {"result": []}})
+
+    pasted = ("Lipid nanoparticle formulations containing ionizable lipids degrade during refrigerated storage "
+              "because hydrolysis of ester bonds accelerates when residual moisture remains after lyophilization")
+
+    async def go():
+        async with make_client(handler) as c:
+            return await search_papers(pasted, limit=50, client=c)
+
+    res = run(go())
+    assert len(res.papers) == 50 and res.stats["relaxed_from"] == search_query(pasted)
+    assert len(seen[-1].split()) == pipeline.MAX_TERMS      # the retry used only the most specific words
+    pipeline._cache.clear()

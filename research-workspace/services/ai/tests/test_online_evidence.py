@@ -66,11 +66,29 @@ def test_followup_reuses_cached_vectors(monkeypatch):
 def test_vague_questions_borrow_the_topic():
     from app.retrieval.pipeline import search_query
     from app.routes_tasks import topic_context
-    assert topic_context("how to cure this syndrome?", "down syndrome", None) == "down syndrome"
+    # first question in a chat: the project name is the topic
+    assert topic_context("how to cure this syndrome?", "down syndrome", []) == "down syndrome"
     assert search_query("down syndrome how to cure this syndrome?") == "down syndrome cure"
-    assert topic_context("Is it inherited?", "Down syndrome", None) == "Down syndrome"
-    # a generic project name says nothing: use the chat's previous question instead
-    assert topic_context("and the side effects?", "New Project", "What is Down syndrome?") == "What is Down syndrome?"
+    # follow-ups: what was just discussed beats the project title
+    assert topic_context("Is it inherited?", "DNA and RNA", ["What is Down syndrome?"]) == "What is Down syndrome?"
+    # an earlier vague follow-up is skipped in favour of the last question that names a topic
+    assert topic_context("and the side effects?", "New Project", ["and why?", "How is mRNA vaccine stored?"])         == "How is mRNA vaccine stored?"
+    # a generic project name and no usable history: no topic rather than a wrong one
+    assert topic_context("is it safe?", "New Project", []) == ""
     # self-contained questions are left alone
-    assert topic_context("What are the key findings on mRNA vaccine stability?", "down syndrome", None) == ""
-    assert topic_context("Does heat break DNA strands?", "DNA and RNA", None) == ""
+    assert topic_context("What are the key findings on mRNA vaccine stability?", "down syndrome", ["x y z"]) == ""
+    assert topic_context("Does heat break DNA strands?", "DNA and RNA", []) == ""
+
+
+
+def test_refusal_says_why():
+    from app.orchestration.engine import DualResult
+    from app.routes_tasks import render_content
+    r = DualResult("insufficient_evidence", "both_models_insufficient")
+    r.model_a = {"notes": "The sources discuss management of Down syndrome but give no method to cure it."}
+    r.model_b = {"notes": ""}
+    text = render_content(r)
+    assert "Why: The sources discuss management of Down syndrome but give no method to cure it." in text
+    assert "Second model" not in text and "rephrase" in text
+    assert render_content(DualResult("insufficient_evidence", "no_source_chunks")).startswith(
+        "INSUFFICIENT_SOURCE_EVIDENCE: the selected sources do not contain enough information to answer.")

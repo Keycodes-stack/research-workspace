@@ -110,6 +110,7 @@ class OpenAICompatLLM:
 PROVIDERS = {
     "mistral": ("mistral_base_url", "mistral_api_key", "MISTRAL_API_KEY", ("mistral-small-latest", "ministral-8b-latest")),
     "groq": ("groq_base_url", "groq_api_key", "GROQ_API_KEY", ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")),
+    "gemini": ("gemini_base_url", "gemini_api_key", "GEMINI_API_KEY", ("gemini-flash-latest", "gemini-flash-lite-latest")),
     "ollama": ("ollama_base_url", None, "", ("mistral-small:24b", "llama3.1:8b")),
 }
 
