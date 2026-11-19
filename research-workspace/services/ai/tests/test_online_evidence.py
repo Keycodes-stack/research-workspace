@@ -68,7 +68,9 @@ def test_evidence_plan_for_every_scope_and_turn():
     U, P = ["u1"], ["p1", "p2"]                          # project uploads, papers stored by earlier searches
     # My uploads: uploads only, never online, first question or follow-up
     for first in (True, False):
-        assert plan("uploads", "auto", first, U, P, online_ok=False) == EvidencePlan(U, False, False)
+        for evidence in ("auto", "online"):                 # an online request is ignored for My uploads
+            for ok in (True, False):
+                assert plan("uploads", evidence, first, U, P, online_ok=ok) == EvidencePlan(U, False, False)
     # Online: first question searches (uploads never used); follow-ups use stored papers first
     assert plan("api", "auto", True, U, P, True) == EvidencePlan([], True, False)
     assert plan("api", "auto", False, U, P, True) == EvidencePlan(P, False, True)

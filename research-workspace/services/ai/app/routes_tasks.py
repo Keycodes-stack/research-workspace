@@ -538,8 +538,9 @@ async def ask(
                 "top_similarity": best, "threshold": cfg.similarity_threshold, "note": note}
     all_hits = diversify(stored, body.top_k)
 
-    await pool.execute(
-        "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2)", thread_id, body.question)
+    question_id = await pool.fetchval(
+        "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2) RETURNING id",
+        thread_id, body.question)
     # Integrity filter: a chunk whose text no longer matches its seal is never shown to a model.
     t_retrieved = time.monotonic()
     hits = [h for h in all_hits if h.intact()]
@@ -594,6 +595,18 @@ async def ask(
             })
 
     t_models = time.monotonic()
+    answered = any(c.verified for cs in result.checks.values() for c in cs)
+    if plan.must_cover and gate["passed"] and (result.kind == "insufficient_evidence" or not answered):
+        # On topic but no answer in them (e.g. "storage temperature" asked of papers that never give one):
+        # search online, as when nothing was close. The question is withdrawn so the online answer stores it once.
+        await meter.record(pool, th["project_id"], user, "ask")
+        await pool.execute("DELETE FROM messages WHERE id=$1", question_id)
+        note = (f"The project's {len(search_ids)} saved sources do not answer this. "
+                "Searching OpenAlex and Europe PMC for new papers...")
+        progress(thread_id, note)
+        return {"kind": "not_in_saved_sources", "thread_id": str(thread_id), "saved_sources": len(search_ids),
+                "top_similarity": top, "threshold": cfg.similarity_threshold, "note": note,
+                "reason": "saved_sources_did_not_answer"}
     if gate["passed"]:
         progress(thread_id, "Checked every quote against the source text. Saving the answer...")
     if gate["passed"]:

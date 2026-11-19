@@ -39,7 +39,9 @@ flowchart TD
     HASP -->|no| FRESH1
     HASP -->|yes| SAVEDP["Search the project's stored papers<br/>(uploads not used)"]
     SAVEDP --> COV1{"Best match<br/>≥ 0.65?"}
-    COV1 -->|yes| ANS1["Answer from stored papers<br/>(no search)"]
+    COV1 -->|yes| ANS1{"Models find a verified<br/>answer in them?"}
+    ANS1 -->|yes| DONE1["Answer from stored papers<br/>(no search)"]
+    ANS1 -->|no| TELL1
     COV1 -->|no| TELL1["Tell user: not in saved sources"] --> FRESH1
 
     S -->|Uploads + online| BF{"First question<br/>in this chat?"}
@@ -48,7 +50,9 @@ flowchart TD
     HASS -->|no| BOTH
     HASS -->|yes| SAVEDB["Search uploads + stored papers"]
     SAVEDB --> COV2{"Best match<br/>≥ 0.65?"}
-    COV2 -->|yes| ANS2["Answer from saved sources<br/>(no search)"]
+    COV2 -->|yes| ANS2{"Models find a verified<br/>answer in them?"}
+    ANS2 -->|yes| DONE2["Answer from saved sources<br/>(no search)"]
+    ANS2 -->|no| TELL2
     COV2 -->|no| TELL2["Tell user: not in saved sources"] --> BOTH
 ```
 

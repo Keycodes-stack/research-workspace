@@ -475,3 +475,39 @@ def test_nothing_to_read_cases(api, monkeypatch):
     monkeypatch.setattr(rt, "build_session_sources", broken)
     r = _ask(api, new_chat(), scope="both")
     assert r["gate"]["passed"] and r["gate"]["online"]["errors"] == ["online:RuntimeError"]
+
+
+def test_saved_sources_on_topic_but_without_an_answer_lead_to_an_online_search(api, db_url, monkeypatch):
+    calls = _fake_online(monkeypatch)
+    p = mk_project(api, mode="open_discovery")
+    th = _open_chat(api, p)()
+    api.llms = models()
+    _ask(api, th, scope="api")                                  # first question: stores papers
+    assert len(calls) == 1
+    before = _user_msgs(db_url, th)
+
+    # follow-up: the stored papers are on topic, but both models find no answer in them
+    no_answer = answer_json("n/a", QUOTE, status="insufficient_source_evidence")
+    api.llms = (ScriptedLLM("A", no_answer, judge=AGREED), ScriptedLLM("B", no_answer, judge=AGREED))
+    r = _ask(api, th, scope="api")
+    assert r["kind"] == "not_in_saved_sources" and r["reason"] == "saved_sources_did_not_answer"
+    assert len(calls) == 1 and _user_msgs(db_url, th) == before     # nothing searched yet, question not stored
+
+    # the client asks again online: searched, and the question is stored once
+    api.llms = models()
+    r = _ask(api, th, scope="api", evidence="online")
+    assert len(calls) == 2 and r["gate"]["evidence_from"] == "online_search" and _user_msgs(db_url, th) == before + 1
+
+
+def test_uploads_mode_never_searches_even_without_an_answer_or_when_asked_online(api, monkeypatch):
+    calls = _fake_online(monkeypatch)
+    p = mk_project(api, mode="open_discovery")
+    upload(api, p, LIQUID, "liquid.pdf")
+    th = _open_chat(api, p)()
+    no_answer = answer_json("n/a", QUOTE, status="insufficient_source_evidence")
+    api.llms = (ScriptedLLM("A", no_answer, judge=AGREED), ScriptedLLM("B", no_answer, judge=AGREED))
+    for _ in range(2):                                      # first question and follow-up
+        r = _ask(api, th, scope="uploads")
+        assert r["kind"] == "insufficient_evidence" and r["gate"]["evidence_from"] == "saved_sources"
+    r = _ask(api, th, scope="uploads", evidence="online")   # a client asking online with My uploads
+    assert r["gate"]["evidence_from"] == "saved_sources" and calls == []

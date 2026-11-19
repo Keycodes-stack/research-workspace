@@ -11,7 +11,7 @@ Local tests: AI service 142 passed (77 database tests need CI), verifier suites 
 | **Online** | Fresh OpenAlex + Europe PMC search. The APIs' top 10 papers are stored in the project and the answer uses only them. Uploads are never used. | The project's stored papers (from any chat) first. If they don't answer: tell the user, then search online. |
 | **Uploads + online** | Uploads are searched **while** the fresh online search runs, giving **one combined answer**. | Uploads + the project's stored papers first. If they don't answer: tell the user, then search online again, combined with the uploads. |
 
-"Don't answer" means the best match is below the similarity threshold (0.65). If nothing is stored yet, the online search runs straight away.
+"Don't answer" means either the best match is below the similarity threshold (0.65), **or** the saved sources are on topic but the models find no answer in them (no verified claim). In both cases the user is told and the online search runs. If nothing is stored yet, the online search runs straight away.
 
 ## Shared behaviour
 - **Top 10 papers:** online searches take the top 10 papers in the APIs' own relevance order, with no re-ranking by citations or year. Papers the project already has are reused, not stored twice.
