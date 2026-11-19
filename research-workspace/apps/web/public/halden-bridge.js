@@ -3,7 +3,10 @@
   'use strict';
 
   const DEFAULT_API_BASE = 'http://localhost:8080';
-  const stored = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+  // The parent page keeps an in-memory token when the browser cannot save it (disk full, private mode).
+  const parentToken = () => { try { return window.parent !== window ? window.parent.__kcToken || null : null; } catch { return null; } };
+  const stored = (k) => { let v = null; try { v = localStorage.getItem(k); } catch { /* storage blocked */ }
+    return v ?? (k === 'kc_token' ? parentToken() : null); };
   const remember = (k, v) => { try { localStorage.setItem(k, v); } catch { /* storage blocked */ } };
 
   const state = {

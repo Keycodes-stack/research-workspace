@@ -12,11 +12,17 @@ export const API_URL = "/api/backend";
 export const HALDEN_SRC = `/halden.html?api=${encodeURIComponent(API_URL)}`;
 const TOKEN_KEY = "kc_token";
 
+// In-memory copy: when the browser cannot save (disk full, private mode, storage blocked) the user stays signed
+// in for this visit instead of being bounced back to the sign-in form. The Halden frame reads it as parent.__kcToken.
+let memoryToken: string | null = null;
+
 export function getToken(): string | null {
-  try { return window.localStorage.getItem(TOKEN_KEY); } catch { return null; }
+  try { return window.localStorage.getItem(TOKEN_KEY) ?? memoryToken; } catch { return memoryToken; }
 }
 export function setToken(t: string | null): void {
-  try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* storage blocked */ }
+  memoryToken = t;
+  try { (window as unknown as { __kcToken?: string | null }).__kcToken = t; } catch { /* no window */ }
+  try { t ? window.localStorage.setItem(TOKEN_KEY, t) : window.localStorage.removeItem(TOKEN_KEY); } catch { /* storage full or blocked */ }
 }
 
 /** Dev/launcher sign-in: a `#kc_token=...` URL fragment is stored, then removed from the address bar. */
