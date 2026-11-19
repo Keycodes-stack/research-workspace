@@ -7,6 +7,7 @@ import logging
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -23,7 +24,9 @@ def _body(request: Request, status: int, detail, code: str, message: str) -> JSO
         code = detail["error"]                      # e.g. cross_check_unavailable
         message = detail.get("note") or message
     err = {"code": code, "message": message, "where": f"{request.method} {request.url.path}", "request_id": rid}
-    return JSONResponse({"detail": detail, "error": err}, status_code=status, headers={"x-request-id": rid})
+    # jsonable_encoder: validation errors and details can hold UUIDs, exceptions or other non-JSON values
+    return JSONResponse(jsonable_encoder({"detail": detail, "error": err}), status_code=status,
+                        headers={"x-request-id": rid})
 
 
 def install(app: FastAPI) -> None:
