@@ -171,6 +171,7 @@ async def discover(
 
 OPENALEX_PAGE = 200                      # OpenAlex's maximum page size
 EUROPEPMC_BUDGET_S = 12.0                # Europe PMC can take 30-45 s; never let it hold up an answer
+EUROPEPMC_PAGE = 25                      # its response time grows with page size: 25 -> 4-7 s, 100 -> 20-30 s
 LIST_WEIGHTS = {"relevance": 0.6, "authority": 0.25, "recency": 0.15}
 CACHE_TTL_S = 15 * 60                    # a paper list and the follow-up questions on it reuse one search
 _cache: dict[str, tuple[float, DiscoveryResult]] = {}
@@ -228,7 +229,7 @@ async def search_papers(
     try:
         calls = [openalex.search(client, terms, per_page=per_page, page=i + 1, mailto=contact_email,
                                  require_abstract=with_abstracts, max_wait=5.0) for i in range(pages)]
-        calls.append(asyncio.wait_for(europepmc.search(client, terms, page_size=min(100, limit)), EUROPEPMC_BUDGET_S))
+        calls.append(asyncio.wait_for(europepmc.search(client, terms, page_size=min(EUROPEPMC_PAGE, limit)), EUROPEPMC_BUDGET_S))
         timed = await asyncio.gather(*(_timed(c) for c in calls))
     finally:
         if own_client:
