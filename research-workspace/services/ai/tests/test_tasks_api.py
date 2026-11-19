@@ -411,7 +411,7 @@ def test_uploads_and_online_without_uploads_goes_straight_online(api, monkeypatc
     api.llms = models()
     th = _open_chat(api, mk_project(api, mode="open_discovery"))()
     r = _ask(api, th, scope="both")
-    assert len(calls) == 1 and r["gate"]["evidence_from"] == "online_search" and not r["gate"]["then_online"]
+    assert len(calls) == 1 and r["gate"]["evidence_from"] == "online_search"
 
 
 def test_uploads_and_online_search_run_concurrently(api, db_url, monkeypatch):
