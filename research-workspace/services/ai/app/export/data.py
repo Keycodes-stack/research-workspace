@@ -267,7 +267,7 @@ async def collect_report(pool, thread_id: UUID, user: UUID, opts: ExportOptions,
                 continue
             final = r["final"]
             final = json.loads(final) if isinstance(final, str) else final
-            if not final:
+            if not final or final.get("kind") == "papers":   # paper lists carry no verified claims
                 skipped += 1
                 continue
             pairs.append((last_q, r, final))

@@ -21,6 +21,7 @@ async def get_json(
     *,
     retries: int = 3,
     backoff: float = 1.0,
+    max_wait: float = 60.0,
 ) -> dict | None:
     """GET JSON with retry on 429/5xx and transport errors. 404 returns None."""
     for attempt in range(retries):
@@ -38,6 +39,8 @@ async def get_json(
             retry_after = r.headers.get("Retry-After")
             if retry_after and retry_after.isdigit():
                 wait = max(wait, float(retry_after))
+            if wait > max_wait:      # rate limited for longer than the caller can wait: fail now, not in a minute
+                r.raise_for_status()
             await asyncio.sleep(wait)
             continue
         if r.status_code == 404:

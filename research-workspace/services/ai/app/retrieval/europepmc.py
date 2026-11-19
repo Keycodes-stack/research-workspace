@@ -1,4 +1,4 @@
-"""Tier 3: Europe PMC. Preprint search (SRC:PPR) and DOI -> PDF lookup."""
+"""Tier 3: Europe PMC. Article + preprint search and DOI -> PDF lookup."""
 import httpx
 
 from .http import get_json
@@ -42,14 +42,14 @@ def parse_result(r: dict) -> Paper | None:
     )
 
 
-async def _search(client: httpx.AsyncClient, query: str, page_size: int) -> list[Paper]:
+async def _search(client: httpx.AsyncClient, query: str, page_size: int, max_wait: float = 60.0) -> list[Paper]:
     params = {
         "query": query,
         "format": "json",
         "resultType": "core",
         "pageSize": page_size,
     }
-    data = await get_json(client, BASE, params)
+    data = await get_json(client, BASE, params, max_wait=max_wait)
     if not data:
         return []
     results = (data.get("resultList") or {}).get("result") or []
@@ -57,11 +57,9 @@ async def _search(client: httpx.AsyncClient, query: str, page_size: int) -> list
     return [p for p in papers if p]
 
 
-async def search_preprints(
-    client: httpx.AsyncClient, query: str, *, page_size: int = 15
-) -> list[Paper]:
-    """Search bioRxiv, medRxiv, Research Square, ChemRxiv etc. (SRC:PPR)."""
-    return await _search(client, f"({query}) AND SRC:PPR", page_size)
+async def search(client: httpx.AsyncClient, query: str, *, page_size: int = 50) -> list[Paper]:
+    """Search all of Europe PMC: journal articles plus preprints (bioRxiv, medRxiv, Research Square ...)."""
+    return await _search(client, query, page_size, max_wait=5.0)
 
 
 async def find_pdf(client: httpx.AsyncClient, doi: str) -> str | None:

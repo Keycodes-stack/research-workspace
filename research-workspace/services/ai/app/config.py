@@ -38,7 +38,10 @@ class Settings(BaseSettings):
     llm_timeout_s: float = 120.0
     # Max source-text tokens sent to a model per question (0 = unlimited). Keeps requests under provider
     # per-minute token caps (e.g. Groq free tier: 8,000); the least relevant passages are dropped first.
-    llm_context_token_budget: int = 4500
+    # Sized so source text (~4,200 real tokens) + prompts (~650) + llm_max_output_tokens stays under 8,000.
+    llm_context_token_budget: int = 4000
+    # Output tokens reserved per model call (0 = provider default, which may exceed small per-minute caps).
+    llm_max_output_tokens: int = 2048
 
     # Shared secret between the Go gateway and this service. Requests without it
     # are rejected, so user identity headers can only come from the gateway.

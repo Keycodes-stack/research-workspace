@@ -53,22 +53,27 @@ async def search(
     client: httpx.AsyncClient,
     query: str,
     *,
-    per_page: int = 25,
+    per_page: int = 80,
+    page: int = 1,
     from_year: int | None = None,
     mailto: str = "",
+    require_abstract: bool = True,
+    max_wait: float = 60.0,
 ) -> list[Paper]:
-    filters = ["has_abstract:true"]
+    filters = ["has_abstract:true"] if require_abstract else []
     if from_year:
         filters.append(f"from_publication_date:{from_year}-01-01")
     params = {
         "search": query,
         "per-page": per_page,
+        "page": page,
         "select": SELECT,
-        "filter": ",".join(filters),
     }
+    if filters:
+        params["filter"] = ",".join(filters)
     if mailto:
         params["mailto"] = mailto
-    data = await get_json(client, BASE, params)
+    data = await get_json(client, BASE, params, max_wait=max_wait)
     if not data:
         return []
     papers = (parse_work(w) for w in data.get("results", []))

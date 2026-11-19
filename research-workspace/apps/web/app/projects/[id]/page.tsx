@@ -35,12 +35,16 @@ function Body({ id }: { id: string }) {
     await sources.reload();
   }
 
-  async function discover(e: React.FormEvent) {
+  async function discover(e: React.FormEvent, force = false) {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const r = await api.discover(id, question.trim());
-      setMsg({ kind: r.errors.length ? "error" : "ok", text: `Found and indexed ${r.sources.length} paper(s).${r.errors.length ? " " + r.errors.join(" · ") : ""}` });
+      const r = await api.discover(id, question.trim(), 20, force);
+      if (r.skipped) {
+        setMsg({ kind: "ok", text: `Already have good coverage — ${r.existing_sources ?? 0} papers indexed. Use "Find more papers" to search again.` });
+      } else {
+        setMsg({ kind: r.errors.length ? "error" : "ok", text: `Found and indexed ${r.sources.length} paper(s).${r.errors.length ? " " + r.errors.join(" · ") : ""}` });
+      }
       await sources.reload();
     } catch (err) { setMsg({ kind: "error", text: err instanceof Error ? err.message : "Search failed" }); }
     finally { setBusy(false); }
@@ -88,7 +92,11 @@ function Body({ id }: { id: string }) {
           <form className="stack" onSubmit={discover}>
             <label className="stack"><span>Research question</span>
               <textarea value={question} onChange={(e) => setQuestion(e.target.value)} required minLength={3} /></label>
-            <div><button type="submit" disabled={busy || question.trim().length < 3}>{busy ? "Searching…" : "Find and index papers"}</button></div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="submit" disabled={busy || question.trim().length < 3}>{busy ? "Searching…" : "Find and index papers"}</button>
+              <button type="button" disabled={busy || question.trim().length < 3}
+                onClick={(e) => void discover(e as unknown as React.FormEvent, true)}>Find more papers</button>
+            </div>
           </form>
         )}
         {sources.error && <div className="notice error" role="alert">{sources.error}</div>}

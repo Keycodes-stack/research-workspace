@@ -1,6 +1,7 @@
 """Ingestion: PDF/abstract -> chunks -> embeddings -> Postgres (one transaction)."""
 import asyncio
 import hashlib
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from uuid import UUID
@@ -15,6 +16,8 @@ from .download import PdfDownloadError, download_pdf
 from .embeddings import Embedder
 from .extraction import Line, NoExtractableText, PdfError, clean, extract_lines
 from .tokenizer import Tokenizer
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -123,22 +126,35 @@ async def build_session_sources(
                 )
                 return SourceResult(row["id"], p.doi, p.title, row["fulltext"], row["n"], "reused")
 
+            # One paper must never sink the whole batch: any failure (download, parser, S3, embedder, DB)
+            # is logged and the paper falls back to its abstract, or is marked failed.
             note = ""
             if p.pdf_url:
                 try:
                     data = await download_pdf(client, p.pdf_url, max_pdf_bytes)
-                    if store_pdf:
-                        key = f"projects/{project_id}/sources/{sid}.pdf"
-                        await asyncio.to_thread(store_pdf, key, data)
-                        await pool.execute("UPDATE sources SET storage_key=$2 WHERE id=$1", sid, key)
                     n = await ingest_pdf(pool, sid, data, cfg)
+                except Exception as e:
+                    log.warning("pdf ingest failed for doi=%s: %s: %s", p.doi, e.__class__.__name__, e)
+                    note = f"pdf failed ({e.__class__.__name__}: {e}); "
+                else:
+                    if store_pdf:
+                        try:
+                            key = f"projects/{project_id}/sources/{sid}.pdf"
+                            await asyncio.to_thread(store_pdf, key, data)
+                            await pool.execute("UPDATE sources SET storage_key=$2 WHERE id=$1", sid, key)
+                        except Exception as e:  # the text is already indexed; archiving is best-effort
+                            log.warning("pdf archive failed for doi=%s: %s: %s", p.doi, e.__class__.__name__, e)
                     emit("ingested", {"doi": p.doi, "fulltext": "full_text", "chunks": n})
                     return SourceResult(sid, p.doi, p.title, "full_text", n)
-                except (PdfDownloadError, PdfError, httpx.HTTPError) as e:
-                    note = f"pdf failed ({e.__class__.__name__}: {e}); "
 
             if p.abstract:
-                n = await ingest_abstract(pool, sid, p.abstract, cfg)
+                try:
+                    n = await ingest_abstract(pool, sid, p.abstract, cfg)
+                except Exception as e:
+                    log.warning("abstract ingest failed for doi=%s: %s: %s", p.doi, e.__class__.__name__, e)
+                    await pool.execute("UPDATE sources SET fulltext='failed' WHERE id=$1", sid)
+                    return SourceResult(sid, p.doi, p.title, "failed", 0,
+                                        note + f"abstract failed ({e.__class__.__name__}: {e})")
                 emit("ingested", {"doi": p.doi, "fulltext": "abstract_only", "chunks": n})
                 return SourceResult(sid, p.doi, p.title, "abstract_only", n, note + "abstract fallback")
 

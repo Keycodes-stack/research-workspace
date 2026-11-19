@@ -1,4 +1,4 @@
-<!doctype html><html lang="en"><head><meta charset=utf8><meta name="robots" content="noindex,nofollow"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
+<!doctype html><html lang="en"><head><link rel="icon" href="/icon.svg" type="image/svg+xml"><meta charset=utf8><meta name="robots" content="noindex,nofollow"><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style></head><body>
 <title>Halden R&D Intelligence</title>
 <meta name="color-scheme" content="light">
 <meta name="claude:viewport-fit-sides" content="cover">
@@ -825,6 +825,12 @@ body::before{display:none!important}
 <div class="modal" id="modal"></div>
 <div id="tip"></div>
 <div id="toasts"></div>
+<style>
+.skel{height:14px;border-radius:8px;margin:6px 0;background:linear-gradient(90deg,var(--line2) 0%,rgba(128,128,128,.14) 50%,var(--line2) 100%);background-size:200% 100%;animation:skel 1.2s ease-in-out infinite}
+@keyframes skel{0%{background-position:100% 0}100%{background-position:-100% 0}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
+</style>
+<script src="halden-errors.js?v=1"></script>
 <script src="notif-store.js"></script>
 <script>
 (function(){
@@ -1192,14 +1198,19 @@ const radPos=id=>{const it=RL.find(x=>x.r.id===id);if(!it)return null;const rd=R
 
 /* ===== sources ===== */
 const REPOS=[['Google Scholars','Active','8 Nov 2026',34,'2 Mar 2026'],['IEEE','Active','7 Nov 2026',27,'2 Mar 2026'],['Washington Post','Inactive','4 Oct 2026',6,'9 Jun 2026'],['Microsoft OneDrive','Active','9 Nov 2026',15,'1 Jun 2026'],['Microsoft Academic','Inactive','18 Aug 2026',9,'2 Mar 2026'],['BASE (Bielefeld Academic Search Engine)','Active','29 Oct 2026',12,'6 May 2026'],['Lens.org','Active','6 Nov 2026',21,'11 May 2026'],['New York Times','Inactive','21 Sep 2026',4,'9 Jun 2026'],['Financial Times','Active','30 Oct 2026',8,'9 Jun 2026'],['ScienceDirect','Active','8 Nov 2026',31,'14 Mar 2026'],['SpringerLink','Active','5 Nov 2026',18,'14 Mar 2026'],['ACM Digital Library','Active','1 Nov 2026',11,'6 May 2026'],['Wiley Online Library','Active','3 Nov 2026',7,'20 Apr 2026'],['Taylor & Francis Online','Inactive','12 Sep 2026',5,'20 Apr 2026']].map((r,i)=>({id:'rp'+i,n:r[0],st:r[1],used:r[2],rec:r[3],add:r[4]}));window.__REPOS=REPOS;
-const METHODS=[['Technical Feasibility Assessment','Technical options, constraints, risks and practicality',4],['Literature Review','Structured assessment of existing publications and evidence',6],['Comparative Technology Assessment','Compare solutions against agreed criteria and evidence',6],['Experimental Research','Hypotheses, controlled tests, results and validation',5],['Simulation & Modeling','Models, assumptions, validation and uncertainty',5],['Technology & Patent Landscape','Map published technologies, patents and emerging developments',5],['Expert-Led Research','Structured interviews, expert contributions and reconciliation',5]];
+const METHODS=[['Technical Feasibility Assessment','Technical options, constraints, risks and practicality',4],['Literature Review','Structured assessment of existing publications and evidence',6],['Comparative Technology Assessment','Compare solutions against agreed criteria and evidence',6],['Experimental Research','Hypotheses, controlled tests, results and validation',5],['Simulation & Modeling','Models, assumptions, validation and uncertainty',5],['Technology & Patent Landscape','Map published technologies, patents and emerging developments',5],['Expert-Led Research','Structured interviews, expert contributions and reconciliation',5],['Custom / Mixed-Methods','Combine methods and define a tailored protocol',4]];
 
 const STG=['Scoping','Evidence gathering','Analysis','Drafting','Review','Approved'];
 const stIdx=t=>t.stage==='Decided'?5:t.status==='review'||t.status==='vp'?4:t.stage==='Business'?3:t.stage==='Validation'?2:t.status==='running'?1:0;
 const pStat=t=>t.stage==='Decided'?'Completed':t.status==='review'||t.status==='vp'?'In review':t.status==='parked'?'On hold':t.prog<10?'Planning':'In progress';
 const plainT=h=>String(h).replace(/\{(\w)\|([^|}]*)\|(c\d+)\}/g,'$2').replace(/<br>/g,'\n').replace(/<[^>]+>/g,'').replace(/\[\d+\]/g,'').replace(/\s+([.,])/g,'$1').trim();
 const claimsOf=t=>{const a=getAns(t),out=[];String(a.html).replace(/\{(\w)\|([^|}]*)\|(c\d+)\}/g,(m,k,x,id)=>{out.push({k,x,id,st:k==='v'?'Verified':k==='d'?'Disputed':'Needs verification'})});return out};
-const PJM=['Technical Feasibility Assessment','Literature Review','Comparative Technology Assessment','Experimental Research','Simulation & Modeling','Technology & Patent Landscape','Expert-Led Research','Custom / Mixed-Methods'];
+const PJM=METHODS.map(m=>m[0]);
+const defaultMethodIndex=()=>{let v='';try{v=localStorage.getItem('halden_default_method')||''}catch(_){}const i=METHODS.findIndex(m=>m[0]===v);return i<0?0:i};
+const defaultMethod=()=>METHODS[defaultMethodIndex()][0];
+/** The methods table: Methodologies page (clickable, shows the default) and the Library tab (read-only). */
+function methodsTable(clickable){const cur=defaultMethodIndex();return `<div class="tw"><table class="t" style="min-width:560px"><thead><tr><th>Methodology</th><th>Used for</th><th>Stages</th>${clickable?'<th></th>':''}</tr></thead><tbody>${METHODS.map((m,i)=>`<tr${clickable?` data-act="methodPick" data-i="${i}" data-m="${esc(m[0])}" style="cursor:pointer"`:''}><td><b>${esc(m[0])}</b></td><td class="muted">${esc(m[1])}</td><td class="tnum">${m[2]}</td>${clickable?`<td>${i===cur?'<span class="pill accent">Default</span>':''}</td>`:''}</tr>`).join('')}</tbody></table></div>`}
+function methodsHTML(){const i=S.methodSel??defaultMethodIndex(),m=METHODS[i],isDef=i===defaultMethodIndex();return `<div class="page"><div class="ph"><div><div class="eyebrow">Organization</div><h1>Methodologies</h1><p>Organization-defined research approaches. Select one to see what it covers. The default is the approach new research starts with.</p></div></div>${methodsTable(true)}<div class="card sec stack" style="margin-top:16px"><div class="eyebrow">Selected</div><h2 style="margin:0">${esc(m[0])}</h2><p class="muted" style="margin:0">${esc(m[1])}</p><div class="faint">${m[2]} stages</div><div>${isDef?'<span class="pill accent">Default for new research</span>':`<button class="btn pri" data-act="methodDefault" data-i="${i}" data-m="${esc(m[0])}">Use for new research</button>`}</div></div></div>`}
 const pjSteps=['Define the question','Assess alternatives','Validate assumptions','Review findings'];
 const pjMeth=t=>({Materials:'Literature Review',Thermal:'Comparative Technology Assessment'}[t.sector]||'Technical Feasibility Assessment');
 function pjRail(){
@@ -1282,7 +1293,6 @@ function projectsHTML(){
  S.pj=S.pj||{v:'overview'};const pj=S.pj;
  const main=pj.v==='r'?pjResearch(pj):pj.v==='team'?pjTeam():pjOverview();
  return `<div class="pjwrap">${pjRail()}<div class="pjmain">${main}</div></div>${nrModal()}`}
-function methodsHTML(){return `<div class="page"><div class="ph"><div><div class="eyebrow">Organization</div><h1>Methodologies</h1><p>Organization-defined research approaches and review requirements. Apply one or several to a whole research or to a single question, section or dataset.</p></div></div><div class="tw"><table class="t"><thead><tr><th>Methodology</th><th>Used for</th><th>Stages</th></tr></thead><tbody>${[...METHODS,['Custom / Mixed-Methods','Combine methods and define a tailored protocol',4]].map(m=>`<tr><td><b>${m[0]}</b></td><td class="muted">${m[1]}</td><td class="tnum">${m[2]}</td></tr>`).join('')}</tbody></table></div></div>`}
 function teamHTML(){return `<div class="page"><div class="ph"><div><div class="eyebrow">Organization</div><h1>Team &amp; access</h1><p>Research roles and permissions.</p></div></div><div class="tw"><table class="t"><thead><tr><th>Role</th><th>Responsibility</th></tr></thead><tbody>${[['Research lead','Responsible for scope, methodology and submissions.'],['Researcher / Contributor','Writes, attaches evidence and participates in discussion.'],['Research partner','External collaborator with explicit access to assigned research.'],['Reviewer','Evaluates submitted material and requests changes or approves.'],['Approver','Accepts a specific research or report version.']].map(r=>`<tr><td><b>${r[0]}</b></td><td class="muted">${r[1]}</td></tr>`).join('')}</tbody></table></div></div>`}
 function sourcesHTML(){
  const q=(S.sq||'').toLowerCase(),tab=S.lib;
@@ -1295,7 +1305,7 @@ function sourcesHTML(){
   <div style="margin-bottom:12px"><input class="in" id="sq" placeholder="Search repositories" value="${esc(S.sq||'')}" style="max-width:320px"></div>
   <div class="tw"><table class="t" style="min-width:640px"><thead><tr><th>Repository name</th><th>Status</th><th>Last used</th><th>Records</th><th>Date added</th></tr></thead><tbody id="srows">${rows.map(r=>{const st=reps[r.id]||r.st;return `<tr class="row" data-act="repoTog" data-id="${r.id}" data-tip="Click to switch ${st==='Active'?'off':'on'}"><td><b>${esc(r.n)}</b></td><td><span class="dotst ${st==='Active'?'on':''}"></span>${st}</td><td class="faint">${r.used}</td><td class="tnum">${r.rec}</td><td class="faint">${r.add}</td></tr>`}).join('')}</tbody></table></div>`;
  else if(tab==='approved'){const ap=T.filter(x=>x.stage==='Decided');body=`<div class="tw"><table class="t" style="min-width:560px"><thead><tr><th>Research</th><th>Owner</th><th>Accuracy</th><th>Outcome</th></tr></thead><tbody id="srows">${ap.map(x=>`<tr class="row" data-act="openTask" data-id="${x.id}"><td class="ti"><b>${esc(x.title)}</b>${sector(x.sector)}</td><td>${P[x.owner].n}</td><td class="tnum">${x.acc}%</td><td>${x.status==='parked'?'Parked':'Advanced'}</td></tr>`).join('')||'<tr><td colspan="4" class="muted" style="padding:28px;text-align:center">Nothing approved yet.</td></tr>'}</tbody></table></div>`}
- else if(tab==='methods')body=`<div class="tw"><table class="t" style="min-width:560px"><thead><tr><th>Methodology</th><th>Used for</th><th>Stages</th></tr></thead><tbody id="srows">${METHODS.map(m=>`<tr><td><b>${m[0]}</b></td><td class="muted">${m[1]}</td><td class="tnum">${m[2]}</td></tr>`).join('')}</tbody></table></div>`;
+ else if(tab==='methods')body=methodsTable(false);
  else body=`<div class="tw"><table class="t" style="min-width:640px"><thead><tr><th>Clip</th><th>Research</th><th>Source</th><th>Added</th></tr></thead><tbody id="srows">${S.clips.map(c=>`<tr class="row" data-act="clipInfo" data-id="${c.id}"><td class="ti"><b>${esc((c.text||c.title).slice(0,90))}</b><span>${(c.tags||[]).map(x=>'#'+esc(x)).join(' ')}</span></td><td>${esc((c.taskTitle||'').slice(0,40))}</td><td>${esc(c.site||'')}</td><td class="faint">${esc(c.when||'')}</td></tr>`).join('')}</tbody></table></div>`;
  return `<div class="page"><div class="ph"><div><h1>Knowledge Library</h1><p>The repositories your research draws on. Switch a repository off to keep it out of answers.</p></div><div class="grow"></div>${tab==='repos'?`<button class="btn pri" data-act="addSrc">${ic('plus',15)} ${S.addOpen?'Close':'Add source'}</button>`:''}</div>
  <div class="tabs">${tabs}</div>${body}</div>`}
@@ -1310,7 +1320,7 @@ function clipperHTML(){
  <p>Lyophilization provides long-term stability for lipid nanoparticle-formulated mRNA vaccines at refrigerated temperatures (4 °C) and room temperature (25 °C) without losing potency or in vivo translation efficiency. The protective sucrose-trehalose lyoprotectant cake matrix prevents structural collapse during thermal excursions.</p>
  <p>Second-generation nanostructured lipid carriers (NLC) achieve higher drug loading, enhanced release, and increased shelf-life compared with conventional solid lipid nanoparticles. Microfluidic formulation processes ensure uniform particle size and over 90% encapsulation efficiency.</p></div></div></div>`}
 
-window.__V={SCOPES,srcLabel,busy,S,GL,GN,getAns,flagged,akey,ansByKey,claimMeta,rich,citesIn,bar,line,ring,stagePill,statusPill,ragDot,sector,prog,filt,navHTML,topHTML,homeHTML,threadHTML,extras,attChips,panelHTML,railHTML,pvHTML,pvBody,listHTML,boardHTML,roadmapHTML,radarHTML,radarSVG,radarSide,radVis,radPos,sourcesHTML,projectsHTML,methodsHTML,teamHTML,clipperHTML,cardHTML,SUG,APPS};
+window.__V={TITLES,METHODS,defaultMethod,defaultMethodIndex,SCOPES,srcLabel,busy,S,GL,GN,getAns,flagged,akey,ansByKey,claimMeta,rich,citesIn,bar,line,ring,stagePill,statusPill,ragDot,sector,prog,filt,navHTML,topHTML,homeHTML,threadHTML,extras,attChips,panelHTML,railHTML,pvHTML,pvBody,listHTML,boardHTML,roadmapHTML,radarHTML,radarSVG,radarSide,radVis,radPos,sourcesHTML,projectsHTML,methodsHTML,teamHTML,clipperHTML,cardHTML,SUG,APPS};
 })();
 (function(){
 'use strict';
@@ -1823,7 +1833,7 @@ function liveModelPanel(p,o,a){
  const pass=[...new Set((p.mc||[]).flatMap(c=>c.ref))],g=a.gate||{};
  const nV=(p.mc||[]).filter(c=>c.ok).length,nX=(p.mc||[]).length-nV;
  const sim=g.top==null?'None':g.top.toFixed(2)+(g.need==null?'':' / '+g.need.toFixed(2)+' needed');
- const tiles=[['Verdict',p.v],['Confidence',p.cf+'%'],['Claims verified',nV],['Claims removed',nX],['Best source match',sim]];
+ const tiles=[['Verdict',p.v],['Confidence',p.cf+'%'],['Claims verified',nV],['Claims removed',nX],['Best source match',sim],['Passages used',a.timings?a.timings.passages_used:'—'],['Run time',a.timings?a.timings.total_s+' s':'—']];
  const steps=['Searched your sources and kept the passages closest to the question'+(g.top==null?'.':' (best match '+g.top.toFixed(2)+', the bar is '+(g.need==null?'':g.need.toFixed(2))+').'),
   esc(p.m)+' read those passages on its own and answered with a quote for every claim.',
   'Each quote was checked against the stored source text: '+nV+' verified, '+nX+' removed.',
@@ -1844,7 +1854,7 @@ function modelPanel(i){
  const ck=Object.keys(a.cl),pass=[...new Set(p.ci)];
  const stance=c=>{const g=W.gradeOf(key,c);return p.vc==='warn'&&g!=='v'?['Disagrees','warn']:g==='v'?['Agrees','ok']:['Unsure','']};
  const html=`<div class="sh"><div class="grow"><b style="font-size:16px">${esc(p.m)}</b><div class="faint" style="font-size:12px">${esc(p.r)} · full research for this task</div></div><button class="iconbtn" data-act="closeSide" aria-label="Close">${ic('x',18)}</button></div>
- <div class="sb"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">${[['Verdict',p.v],['Confidence',p.cf+'%'],['Sources read',pass.length+4+h%6],['Passages used',pass.length*3+h%5],['Run time',(2+h%4)+' min '+(10+h%40)+' s']].map(x=>`<div class="tile"><div class="eyebrow">${x[0]}</div><div style="font-size:18px;font-weight:700;margin-top:2px">${x[1]}</div></div>`).join('')}</div>
+ <div class="sb"><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px">${[['Verdict',p.v],['Confidence',p.cf+'%'],['Sources read','—'],['Passages used','—'],['Run time','—']].map(x=>`<div class="tile"><div class="eyebrow">${x[0]}</div><div style="font-size:18px;font-weight:700;margin-top:2px">${x[1]}</div></div>`).join('')}</div>
  <div><div class="eyebrow" style="margin-bottom:8px">How it worked</div><div class="stack" style="gap:8px">${STEPS.map((x,k)=>`<div style="display:flex;gap:10px"><span class="rn" style="font-size:12px">${k+1}</span><span style="font-size:13.5px">${x}</span></div>`).join('')}</div></div>
  <div><div class="eyebrow" style="margin-bottom:8px">Findings</div><ul class="plain">${p.pts.map(x=>`<li>${x}</li>`).join('')}</ul></div>
  <div><div class="eyebrow" style="margin-bottom:8px">Claim by claim</div><div class="tw" style="box-shadow:none"><table class="t" style="min-width:0"><thead><tr><th>Claim</th><th>${esc(p.m.split(' ')[0])}</th><th>${esc(o.m.split(' ')[0])}</th></tr></thead><tbody>${ck.map(c=>{const s1=stance(c);const g=W.gradeOf(key,c);const s2=o.vc==='warn'&&g!=='v'?['Disagrees','warn']:g==='v'?['Agrees','ok']:['Unsure',''];return `<tr><td>${esc(cs[c])}</td><td><span class="pill ${s1[1]}">${s1[0]}</span></td><td><span class="pill ${s2[1]}">${s2[0]}</span></td></tr>`}).join('')}</tbody></table></div></div>
@@ -1884,8 +1894,50 @@ const dk=()=>{const r=document.documentElement;return r.dataset.theme==='dark'||
 function renderNav(){$('#nav').innerHTML=V.navHTML()}
 window.__renderTop=()=>renderTop();
 function renderTop(){$('#top').innerHTML=V.topHTML()}
+/** Screens that show live data. While their first load is running they draw a skeleton instead of demo content. */
+const SKEL_ROUTES=['home','radar','list','board','roadmap','sources','projects','executive'];
+/** Placeholder layouts that mirror each live screen: the same headers, labels, columns and rows, with grey bars for data. */
+function skeletonPage(r){
+ const TT=window.__V.TITLES,title=TT[r]||'Loading';
+ const bar=(w,h,x='')=>`<div class="skel" style="width:${w};height:${h||14}px;${x}"></div>`;
+ const pill=(w)=>bar(w,30,'border-radius:999px');
+ const head=(sub)=>`<div class="ph"><div><h1>${esc(title)}</h1>${sub?`<p>${esc(sub)}</p>`:`<p>${bar('260px',14)}</p>`}</div><div class="grow"></div>${bar('110px',36,'border-radius:10px')}${bar('124px',36,'border-radius:10px')}</div>`;
+ const chips=`<div class="toolbar">${bar('260px',36,'border-radius:10px')}<div class="chips">${[64,78,98,100,110,96].map(pill).join('')}</div></div>`;
+ const cells=(cols)=>cols.map((w)=>`<td>${bar(w,14)}</td>`).join('');
+ const table=(heads,rows,cols)=>`<div class="tw"><table class="t"><thead><tr>${heads.map(h=>`<th>${h===null?bar('70%',12):esc(h)}</th>`).join('')}</tr></thead><tbody>${Array.from({length:rows},()=>`<tr>${cells(cols)}</tr>`).join('')}</tbody></table></div>`;
+ const card=(lines)=>`<div class="card sec stack" style="gap:10px">${Array.from({length:lines},(_,i)=>bar((70+((i*23)%28))+'%',14)).join('')}</div>`;
+ const page=(inner)=>`<div class="page" role="status" aria-label="Loading ${esc(title)}">${inner}</div>`;
+
+ switch(r){
+  case 'home':
+   return page(`<p class="faint" style="margin:0">Welcome to Keycodes R&amp;D Workspace</p><h1 style="margin:4px 0 18px">What Are You Researching Today?</h1>`+
+    `<div class="card" style="padding:18px;margin-bottom:18px">${bar('100%',96,'border-radius:12px')}<div style="display:flex;gap:8px;margin-top:12px">${bar('200px',30,'border-radius:999px')}${bar('160px',30,'border-radius:999px')}</div></div>`+
+    `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px">${[0,1,2].map(()=>card(7)).join('')}</div>`);
+  case 'radar':
+   return page(`<div class="toolbar">${bar('320px',36,'border-radius:10px')}${bar('90px',14)}${bar('110px',36,'border-radius:10px')}</div>`+
+    `<div style="display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;margin-top:12px"><div class="card" style="min-height:520px;display:flex;align-items:center;justify-content:center">${bar('460px',460,'border-radius:50%;max-width:90%;max-height:90%')}</div>`+
+    `<div class="card sec stack" style="gap:12px">${bar('90px',12)}${chips}${bar('90px',12)}${chips}</div></div>`);
+  case 'board':
+   return page(head('Move each research through discovery, validation and business case.')+chips+
+    `<div class="board">${['Discovery','Validation','Business Case','Decided'].map((stage,i)=>`<div class="bcol"><div style="display:flex;justify-content:space-between;padding:4px 2px 10px"><b>${esc(stage)}</b>${bar('40px',12)}</div>${[0,1].slice(0,i===0?1:2).map(()=>`<div class="card sec stack" style="gap:8px">${bar('50%',12)}${bar('90%',16)}${bar('70%',12)}${bar('100%',8,'border-radius:6px')}</div>`).join('')}</div>`).join('')}</div>`);
+  case 'list':
+   return page(head(null)+chips+table(['RESEARCH','STATUS','OWNER','ACCURACY','FLAGS','DUE','RISK'],6,['46%','60%','50%','30%','20%','30%','30%']));
+  case 'sources':
+   return page(head(null)+`<div class="tabs">${['Repositories','Approved research','Methodologies','Clips'].map((t,i)=>`<button class="tab${i===0?' on':''}" disabled>${esc(t)}</button>`).join('')}</div>`+
+    `<div class="toolbar">${bar('320px',36,'border-radius:10px')}</div>`+table([null,null,null,null],7,['60%','40%','30%','30%']));
+  case 'projects':
+   return `<div class="pjwrap"><aside class="pjrail"><div class="pjh">Projects <span class="faint">${bar('18px',12)}</span></div>${[0,1,2,3,4,5].map(()=>`<div style="padding:8px 4px">${bar('80%',14)}</div>`).join('')}</aside>`+
+    `<div class="pjmain" role="status" aria-label="Loading projects"><div class="eyebrow">Project</div><h1 class="pjt">${bar('300px',34)}</h1>${bar('180px',14)}`+
+    `<div class="pjstat" style="margin-top:18px">${[0,1,2,3].map(()=>`<div><b>${bar('40px',24)}</b><span>${bar('70px',12)}</span></div>`).join('')}</div></div></div>`;
+  default:
+   return page(head(null)+card(6));
+ }
+}
 function renderMain(){
  const r=S.route,m=$('#main');m.scrollTop=0;
+ const skel=!!(window.__KC_READY&&SKEL_ROUTES.includes(r)&&!window.__KC_READY(r));
+ m.toggleAttribute('aria-busy',skel);
+ if(skel){m.innerHTML=skeletonPage(r);return}
  if(r==='home')m.innerHTML=V.homeHTML();
  else if(r.startsWith('thread-')){const th=S.threads.find(t=>'thread-'+t.id===r);if(!th){go('home');return}
   if(th.needsLoad){
@@ -1946,7 +1998,7 @@ function pickPdfs(){
  const f=document.createElement('input');f.type='file';f.accept='.pdf,application/pdf';f.multiple=true;
  f.onchange=()=>[...f.files].forEach(async file=>{
   const a={name:file.name,status:'uploading',t0:Date.now()};S.attachments.push(a);refreshChips();
-  try{a.id=(await kc.upload(file)).source_id;a.status='ready'}catch(e){a.status='error';toast(esc(file.name+': '+e.message))}
+  try{a.id=(await kc.upload(file)).source_id;a.status='ready'}catch(e){HaldenErrors.report('Upload failed: '+file.name,e);a.status='error';toast(esc(file.name+': '+e.message))}
   refreshChips()});
  f.click()}
 function sendQ(q){
@@ -1961,7 +2013,7 @@ function sendQ(q){
  const th=openTurn(q,id);
  const adopt=()=>{if(th.srv&&th.id!==th.srv){const old='thread-'+th.id;th.id=th.srv;if(S.route===old){S.route='thread-'+th.id;try{history.replaceState(null,'','#'+S.route);sessionStorage.setItem('keycodes_route',S.route)}catch(_){}}}};
  kc.ask(q,ids,S.scope,th).then(r=>{ANS[id]=kc.toAnswer(r,q);th.fresh=true},e=>{
-  const msg=esc(e.message);ANS[id]={...ANS[id],html:'No answer: '+msg,panel:waiting('Not run',msg)};toast(msg)})
+  HaldenErrors.report('Ask failed',e);const msg=esc(e.message);ANS[id]={...ANS[id],html:'No answer: '+msg,panel:waiting('Not run',msg)};toast(msg)})
  .finally(()=>{adopt();renderNav();if(S.route==='thread-'+th.id&&th.key===id){renderMain();const sc=$('#tscroll');if(sc)sc.scrollTop=sc.scrollHeight}})}
 /* A question asked while a chat is open continues that chat (earlier turns stay visible); otherwise it starts a new chat. */
 function openTurn(q,key){
@@ -2179,7 +2231,7 @@ const A={
  morePapers:()=>{const q=((document.getElementById('q')||document.getElementById('q2')||{}).value||'').trim(),kc=window.__KC_BRIDGE;
   if(!kc){toast('The live backend is not loaded');return}if(q.length<3){toast('Type your question first, then find more papers');return}
   toast('Searching OpenAlex, Unpaywall and Europe PMC...');
-  kc.findMorePapers(q).then(r=>toast('Found '+r.sources.length+' paper'+(r.sources.length===1?'':'s')+' ('+r.sources.filter(x=>x.fulltext==='full_text').length+' with full text). They are used for answers and kept as links, not added to your library.','ok')).catch(err=>toast(err.message))},
+  kc.findMorePapers(q).then(r=>toast('Found '+r.sources.length+' paper'+(r.sources.length===1?'':'s')+' ('+r.sources.filter(x=>x.fulltext==='full_text').length+' with full text). They are used for answers and kept as links, not added to your library.','ok')).catch(err=>{HaldenErrors.report('Find more papers failed',err);toast(err.message)})},
  modelsel:(e,el)=>pop(el,`<div style="min-width:300px;max-width:340px"><h5>How answers are checked</h5><div style="padding:2px 10px 4px"><b style="font-weight:600">Model A</b> · lead research scientist<div class="faint" style="font-size:12px">Drafts the answer from the sources, with a citation for every claim.</div></div><div style="padding:2px 10px 6px"><b style="font-weight:600">Model B</b> · speed auditor<div class="faint" style="font-size:12px">Independently checks Model A. Claims they disagree on are flagged, not hidden.</div></div><div class="faint" style="padding:6px 10px 8px;font-size:12px;border-top:1px solid var(--line)">Citations are verified against the original text before you see them.</div></div>`),
  cite:(e)=>{closePop();closeModal();sideCite(e.n)},
  claim:e=>{closePop();sideClaim(e.k)},
@@ -2223,16 +2275,18 @@ const A={
  printRep:()=>window.print(),
  addSrcGo:()=>{S.addOpen=1;S.lib='repos';go('sources')},
  openCase:e=>{A.openTask(e);S.tab='case';refreshDrawer()},
- nrOpen:()=>{S.pj=S.pj||{v:'overview'};S.pj.nr={step:1,method:'Technical Feasibility Assessment',out:'Technical research report'};renderMain()},
+ nrOpen:()=>{S.pj=S.pj||{v:'overview'};S.pj.nr={step:1,method:window.__V.defaultMethod(),out:'Technical research report'};renderMain()},
  nrClose:()=>{S.pj.nr=null;renderMain()},
  nrBack:()=>{nrRead();S.pj.nr.step--;renderMain()},
  nrNext:()=>{const n=S.pj.nr;nrRead();if(n.step===1&&!n.title){toast('Enter a research title');return}if(n.step<5){n.step++;renderMain();return}
   const make=()=>{const id='n'+Date.now();(S.extra.nr=S.extra.nr||[]).push({id,title:n.title,q:n.q,bg:n.bg,out:n.out,method:n.method,lead:n.lead||P.amina.n,scope:n.scope||'both',links:n.links||''});if(n.scope)S.scope=n.scope;S.pj={v:'r',id,sub:'overview'};renderMain();toast('Research started','ok')};
   const kc=window.__KC_BRIDGE;if(!kc){make();return}
   const brief=['Question: '+(n.q||'-'),'Background: '+(n.bg||'-'),'Expected output: '+(n.out||'-'),'Method: '+(n.method||'-'),'Sources: '+(n.scope||'both'),(n.links||'').trim()&&'Links:\n'+n.links.trim()].filter(Boolean).join('\n');
-  kc.createResearch(n.title,brief).then(make).catch(err=>toast(err.message))},
+  kc.createResearch(n.title,brief).then(make).catch(err=>{HaldenErrors.report('Request failed',err);toast(err.message)})},
   postUpd:()=>{const i=$('#updtxt'),v=(i&&i.value||'').trim();if(!v){toast('Write an update first');return}(S.extra.upd=S.extra.upd||[]).push(['Bill Carter',v,'Just now']);renderMain();toast('Update posted','ok')},
  libTab:e=>{S.lib=e.t;S.sq='';renderMain()},
+ methodPick:e=>{S.methodSel=+e.i;renderMain()},
+ methodDefault:e=>{try{localStorage.setItem('halden_default_method',e.m)}catch(_){}S.methodSel=+e.i;toast(esc(e.m)+' is now the default for new research','ok');renderMain()},
  repoTog:e=>{const m=S.extra.repoSt=S.extra.repoSt||{};const cur=m[e.id]||(['rp2','rp4','rp7','rp13'].includes(e.id)?'Inactive':'Active');m[e.id]=cur==='Active'?'Inactive':'Active';renderMain()},
  lens:e=>{S.lens=e.l;refreshDrawerBody()},
  usage:(e,el)=>{toast('Added “'+e.u+'” as a candidate application','ok')},
@@ -2241,13 +2295,13 @@ const A={
  moveTo:e=>{closePop();moveTask(e.id,e.s)},
  notifyMe:e=>toast('We will notify you when '+byId(e.id).code+' finishes','ok'),
  submitVP:e=>{const kc=window.__KC_BRIDGE,t=byId(e.id),done=who=>{setStatus(e.id,'vp');toast('Submitted to '+who+' for approval','ok');refreshDrawer();refreshBody()};
-  if(kc&&t&&t.kc)kc.requestApproval(t.id).then(r=>done(r.names)).catch(err=>toast(err.message));else done('Dr. Priya Nair')},
+  if(kc&&t&&t.kc)kc.requestApproval(t.id).then(r=>done(r.names)).catch(err=>{HaldenErrors.report('Request failed',err);toast(err.message)});else done('Dr. Priya Nair')},
  nudge:e=>toast('Reminder sent to Dr. Priya Nair','ok'),
- approve:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE;if(kc&&t&&t.kc){kc.decideApproval(t.id,'approved','').then(()=>A.approve2(e)).catch(err=>toast(err.message));return}A.approve2(e)},
+ approve:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE;if(kc&&t&&t.kc){kc.decideApproval(t.id,'approved','').then(()=>A.approve2(e)).catch(err=>{HaldenErrors.report('Request failed',err);toast(err.message)});return}A.approve2(e)},
  approve2:e=>{const t=byId(e.id);setStatus(e.id,'done',{stage:'Decided',prog:100});(S.comments[t.id]=S.comments[t.id]||[]).push(['priya','Approved. Proceed to the pilot.','now']);toast(t.code+' approved. '+P[t.owner].n+' has been notified','ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
  changes:e=>{const t=byId(e.id);modal(W.mwrap('Request changes',`<div class="stack"><div class="muted">${esc(t.title)}</div><div class="field"><label>What should ${P[t.owner].n.split(' ')[0]} change?</label><textarea class="in" id="fb" rows="4" placeholder="Be specific. This feeds back into the next run."></textarea></div><div class="chips">${['Source a primary dataset','Re-run with a stricter threshold','Add a sensitivity range'].map(x=>`<button class="fchip" data-act="fbChip" data-v="${x}">${x}</button>`).join('')}</div></div>`,`<button class="btn ghost" data-act="closeModal">Cancel</button><button class="btn pri" data-act="sendFb" data-id="${t.id}">Send feedback</button>`))},
  fbChip:e=>{const f=$('#fb');f.value=(f.value?f.value+' ':'')+e.v+'.';f.focus()},
- sendFb:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE,v=($('#fb').value||'').trim()||'Please revisit the flagged claims.';if(kc&&t&&t.kc){kc.decideApproval(t.id,'changes_requested',v).then(()=>A.sendFb2(e,v)).catch(err=>toast(err.message));return}A.sendFb2(e,v)},
+ sendFb:e=>{const t=byId(e.id),kc=window.__KC_BRIDGE,v=($('#fb').value||'').trim()||'Please revisit the flagged claims.';if(kc&&t&&t.kc){kc.decideApproval(t.id,'changes_requested',v).then(()=>A.sendFb2(e,v)).catch(err=>{HaldenErrors.report('Request failed',err);toast(err.message)});return}A.sendFb2(e,v)},
  sendFb2:(e,v)=>{const t=byId(e.id);setStatus(e.id,'review');(S.comments[t.id]=S.comments[t.id]||[]).push(['priya',v,'now']);closeModal();toast('Feedback sent to '+P[t.owner].n,'ok');if(S.route==='executive')renderMain();if(S.openId)refreshDrawer();renderNav()},
  unblock:e=>{setStatus(e.id,'review');byId(e.id).rag='g';toast('Blocker marked as resolved','ok');refreshDrawer();refreshBody()},
  reopen:e=>{const t=byId(e.id);t.stage='Validation';setStatus(e.id,'review');toast(t.code+' reopened in Validation','ok');refreshDrawer();refreshBody()},
@@ -3257,5 +3311,6 @@ document.addEventListener('focusin',e=>{
 document.addEventListener('focusout',hide);
 })();
 </script>
-<script src="halden-bridge.js?v=scope33"></script>
+<script src="vendor/redux-toolkit.min.js"></script>
+<script src="halden-bridge.js?v=scope44"></script>
 </body></html>

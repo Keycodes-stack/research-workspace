@@ -1,6 +1,7 @@
 """Projects, tasks (with the researcher approval lock), threads and the ask endpoint."""
 import asyncio
 import logging
+import time
 import json
 from typing import Literal
 from uuid import UUID
@@ -16,12 +17,14 @@ from .auth import require_user
 from .config import get_settings
 from .governance import Meter, audit, check_budget
 from .clients import get_pool
-from .deps import get_embedder, get_llms
+from .deps import get_embedder, get_llms, get_tokenizer
+from .online_evidence import online_passages, persist_cited
 from .ingest import store
 from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
 from .orchestration.schema import ContextChunk
 from .orchestration.prompts import fit_to_budget
 from .verification.verifier import VerifyConfig
+from .retrieval.pipeline import search_papers
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["tasks"])
@@ -202,6 +205,22 @@ async def get_thread(
     return {"id": str(thread_id), "task_id": str(row["task_id"]), "project_id": str(row["project_id"])}
 
 
+MAX_PASSAGES_PER_SOURCE = 2   # one long PDF must not crowd every other paper out of the models' context
+
+
+def diversify(hits: list, top_k: int, per_source: int = MAX_PASSAGES_PER_SOURCE) -> list:
+    """Best-first hits, at most `per_source` from any one source, so the answer draws on more papers."""
+    seen: dict = {}
+    out = []
+    for h in hits:
+        if seen.get(h.source_id, 0) < per_source:
+            seen[h.source_id] = seen.get(h.source_id, 0) + 1
+            out.append(h)
+            if len(out) == top_k:
+                break
+    return out
+
+
 class AskIn(BaseModel):
     question: str = Field(min_length=3, max_length=4000)
     top_k: int = Field(default=5, ge=1, le=20)
@@ -209,6 +228,8 @@ class AskIn(BaseModel):
     scope: Literal["uploads", "api", "both"] = "both"
     # open discovery only: search just these sources (e.g. the PDFs attached to this question)
     source_ids: list[UUID] | None = None
+    # open discovery only: also search the literature online; found papers are kept only if the answer cites them
+    online: bool = False
 
 
 def render_content(r: DualResult) -> str:
@@ -234,6 +255,9 @@ def _cross_check_note(detail: str) -> str:
     if "http 429" in d or "rate limit" in d:
         return ("The AI models are busy right now (the provider's usage limit was reached). "
                 "No answer is shown because it could not be cross-checked. Wait about a minute and ask again.")
+    if "http 413" in d or "request too large" in d:
+        return ("The question pulled in more source text than the AI provider accepts in one request. "
+                "Ask a narrower question, or ask again in a minute.")
     if "http 401" in d or "http 403" in d:
         return ("The AI provider rejected the access key, so the models could not be reached. "
                 "Ask an administrator to check the API key.")
@@ -252,8 +276,10 @@ async def ask(
     user: UUID = Depends(require_user),
     pool=Depends(get_pool),
     embedder=Depends(get_embedder),
+    tokenizer=Depends(get_tokenizer),
     llms=Depends(get_llms),
 ):
+    t0 = time.monotonic()
     th = await thread_for_user(pool, thread_id, user, "researcher")
     sources = await task_sources(pool, th["task_id"])
 
@@ -283,13 +309,28 @@ async def ask(
 
     cfg = get_settings()
     q = await asyncio.to_thread(embedder.embed_query, body.question)
-    all_hits = await store.search_chunks(pool, q, source_ids, body.top_k)
+    online = body.online and th["mode"] != "closed_repository" and body.scope != "uploads"
+    passages, online_stats = [], None
+    if online:
+        known = {r["doi"] for r in await pool.fetch(
+            "SELECT doi FROM sources WHERE project_id=$1 AND doi IS NOT NULL", th["project_id"])}
+        stored, (passages, online_stats) = await asyncio.gather(
+            store.search_chunks(pool, q, source_ids, body.top_k * 3),
+            online_passages(body.question, q, embedder, tokenizer, exclude_dois=known,
+                            contact_email=cfg.contact_email, chunk_tokens=cfg.chunk_tokens,
+                            chunk_overlap=cfg.chunk_overlap))
+        all_hits = diversify(sorted(stored + [op.hit for op in passages], key=lambda h: h.similarity, reverse=True),
+                             body.top_k)
+    else:
+        all_hits = diversify(await store.search_chunks(pool, q, source_ids, body.top_k * 3), body.top_k)
+    by_online = {op.hit.chunk_id: op for op in passages}
     # Integrity filter: a chunk whose text no longer matches its seal is never shown to a model.
+    t_retrieved = time.monotonic()
     hits = [h for h in all_hits if h.intact()]
     dropped = len(all_hits) - len(hits)
     top = max((h.similarity for h in hits), default=None)
     gate = {"threshold": cfg.similarity_threshold, "top_similarity": top, "passed": False,
-            "corrupt_chunks_dropped": dropped}
+            "corrupt_chunks_dropped": dropped, "online": online_stats}
 
     if top is None:
         result = DualResult("insufficient_evidence",
@@ -299,16 +340,21 @@ async def ask(
         result = DualResult("insufficient_evidence", "below_similarity_threshold")
     else:
         gate["passed"] = True
-        meta = await store.fetch_chunks(pool, [h.chunk_id for h in hits])
+        meta = await store.fetch_chunks(pool, [h.chunk_id for h in hits if h.chunk_id not in by_online])
         chunks = []
         for h in hits:
-            m = meta[h.chunk_id]
-            label = m["title"] or m["filename"] or "untitled"
-            if m["doi"]:
-                label += f", doi:{m['doi']}"
+            if h.chunk_id in by_online:
+                label = by_online[h.chunk_id].label
+            else:
+                m = meta[h.chunk_id]
+                label = m["title"] or m["filename"] or "untitled"
+                if m["doi"]:
+                    label += f", doi:{m['doi']}"
             chunks.append(ContextChunk(h.chunk_id, h.text, label, h.page_start, h.page_end, h.sha256))
         chunks, trimmed = fit_to_budget(chunks, cfg.llm_context_token_budget)
         gate["passages_trimmed_for_budget"] = trimmed
+        gate["passages_sent"] = len(chunks)
+        gate["papers_read"] = len({c.label for c in chunks})     # distinct papers the models actually read
         await check_budget(pool, th["project_id"])
         meter = Meter(llms)
         a, b = meter.llms
@@ -323,8 +369,12 @@ async def ask(
                 "note": _cross_check_note(str(e)),
             })
 
+    t_models = time.monotonic()
     if gate["passed"]:
         await meter.record(pool, th["project_id"], user, "ask")
+        if by_online:   # store the online papers this answer cites (and only those) before citing them
+            saved = await persist_cited(pool, th["project_id"], passages, _chunk_ids(result))
+            gate["online_papers_saved"] = len(saved)
     content = render_content(result)
     async with pool.acquire() as conn, conn.transaction():
         mid = await conn.fetchval(
@@ -361,6 +411,10 @@ async def ask(
         "gate": gate,
         "models": _model_breakdown(result),
         "chunks": await _chunk_meta(pool, result),
+        # Measured, so the UI shows real numbers: passages read and seconds spent per step.
+        "timings": {"retrieve_s": round(t_retrieved - t0, 1), "models_s": round(t_models - t_retrieved, 1),
+                    "total_s": round(time.monotonic() - t0, 1), "passages_used": len(hits),
+                    "online_papers_searched": (online_stats or {}).get("found", 0)},
     })
     await audit(pool, th["project_id"], user, "ask", "message", mid, kind=result.kind, reason=result.reason,
                 verified=n_ok, purged=n_bad)
@@ -368,6 +422,41 @@ async def ask(
     await pool.execute(
         "UPDATE messages SET model_b_raw = model_b_raw || jsonb_build_object('final', $2::jsonb) WHERE id=$1",
         mid, json.dumps(payload))
+    return payload
+
+
+class PapersIn(BaseModel):
+    question: str = Field(min_length=3, max_length=4000)
+    limit: int = Field(default=400, ge=1, le=1000)
+
+
+def _paper_row(p) -> dict:
+    return {"title": p.title, "year": p.year, "venue": p.venue, "authors": p.authors[:3],
+            "cited_by_count": p.cited_by_count, "doi": p.doi, "origin": p.origin,
+            "url": f"https://doi.org/{p.doi}" if p.doi else p.source_url, "pdf_url": p.pdf_url,
+            "score": p.score}
+
+
+@router.post("/threads/{thread_id}/papers")
+async def list_papers(thread_id: UUID, body: PapersIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """'Find papers on X': return every relevant paper the literature APIs know (title, year, links).
+    No model call and nothing is indexed, so it is fast; papers are stored only when an answer cites them."""
+    th = await thread_for_user(pool, thread_id, user, "researcher")
+    found = await search_papers(body.question, contact_email=get_settings().contact_email, limit=body.limit)
+    content = f"Found {len(found.papers)} papers for: {found.stats['query']}"
+    async with pool.acquire() as conn, conn.transaction():
+        await conn.execute("INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2)",
+                           thread_id, body.question)
+        mid = await conn.fetchval(
+            "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'assistant', $2) RETURNING id",
+            thread_id, content)
+    payload = jsonable_encoder({"message_id": mid, "kind": "papers", "content": content,
+                                "papers": [_paper_row(p) for p in found.papers],
+                                "stats": found.stats, "errors": found.errors})
+    await pool.execute("UPDATE messages SET model_b_raw = jsonb_build_object('final', $2::jsonb) WHERE id=$1",
+                       mid, json.dumps(payload))
+    await audit(pool, th["project_id"], user, "papers.search", "message", mid,
+                question=body.question[:200], found=len(found.papers))
     return payload
 
 

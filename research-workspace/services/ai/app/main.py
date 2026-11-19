@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from .clients import close_all, get_pool, get_redis, get_s3
 from .config import get_settings
+from . import errors
 from .deps import get_embedder
 from .routes_admin import router as admin_router
 from .routes_approvals import router as approvals_router
@@ -31,6 +32,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Keycodes Research Workspace - AI Layer", lifespan=lifespan)
+errors.install(app)
 
 # No CORS here: this service is private. The gateway is the only public entry and sets CORS itself
 # (two Access-Control-Allow-Origin headers make browsers reject the response).

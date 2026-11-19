@@ -8,6 +8,7 @@
     "start": "next start -p 3000",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "build:halden-vendor": "node scripts/build-halden-vendor.mjs",
     "build:notif": "esbuild lib/notifications/browser.ts --bundle --minify --format=iife --target=es2020 --outfile=public/notif-store.js",
     "predev": "npm run build:notif",
     "prebuild": "npm run build:notif"

@@ -32,6 +32,7 @@ class OpenAICompatLLM:
         retries: int = 5,
         backoff: float = 2.5,
         client: httpx.AsyncClient | None = None,
+        max_tokens: int | None = None,
     ):
         self.name = name
         self.url = base_url.rstrip("/") + "/chat/completions"
@@ -41,6 +42,7 @@ class OpenAICompatLLM:
         self.retries = retries
         self.backoff = backoff
         self._client = client
+        self.max_tokens = max_tokens
 
     def _wait(self, r: httpx.Response, attempt: int) -> float:
         """Backoff, but never shorter than the provider's Retry-After (capped at 60 s).
@@ -69,6 +71,10 @@ class OpenAICompatLLM:
             # Reasoning models can spend the whole output budget thinking and return an empty reply
             # (Groq: json_validate_failed). Low effort keeps the reply and uses fewer tokens per minute.
             payload["reasoning_effort"] = "low"
+        if self.max_tokens:
+            # Providers count prompt + reserved output against per-minute caps (Groq free tier: 8,000);
+            # without an explicit cap the default reservation alone can push a request over the limit (HTTP 413).
+            payload["max_tokens"] = self.max_tokens
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
 
         for attempt in range(self.retries):
@@ -120,7 +126,7 @@ def build_llm(s: Settings, slot: str) -> OpenAICompatLLM:
     name = getattr(s, f"model_{slot.lower()}_name") or defaults[slot == "B"]
     return OpenAICompatLLM(
         name=f"model_{slot.lower()}:{provider}", base_url=getattr(s, url_attr), model=name,
-        api_key=key, timeout=s.llm_timeout_s,
+        api_key=key, timeout=s.llm_timeout_s, max_tokens=s.llm_max_output_tokens or None,
     )
 
 

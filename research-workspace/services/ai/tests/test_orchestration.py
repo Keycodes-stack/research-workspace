@@ -373,3 +373,19 @@ def test_same_source_or_unrelated_claims_are_not_a_source_conflict():
     assert source_conflicts([x, same_src], {C1: "Silva", C2: "Silva"}) == []          # same paper
     other_topic = Claim("Patients reported 40% improvement in sleep quality", [C2], ["C2"], "q")
     assert source_conflicts([x, other_topic], {C1: "Silva", C2: "Weber"}) == []        # different topic
+
+
+def test_llm_caps_output_tokens_so_requests_fit_provider_limits():
+    seen = []
+
+    def handler(r):
+        seen.append(json.loads(r.content))
+        return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+
+    async def go():
+        async with _client(handler) as c:
+            llm = OpenAICompatLLM(name="t", base_url="https://api.test", model="m", client=c, max_tokens=2000)
+            await llm.complete("s", "u")
+
+    asyncio.run(go())
+    assert seen[0]["max_tokens"] == 2000

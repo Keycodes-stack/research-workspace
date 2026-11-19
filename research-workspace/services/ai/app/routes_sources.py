@@ -18,7 +18,7 @@ from .retrieval.http import make_client
 from .retrieval.models import DiscoveryQuery
 from .retrieval.pipeline import discover
 
-MIN_SOURCES_TO_SKIP = 3
+MIN_SOURCES_TO_SKIP = 10
 
 # Every route here is scoped to a project the caller is a member of (404 otherwise); writing needs 'researcher'.
 router = APIRouter(
@@ -130,7 +130,8 @@ class DiscoverIngestRequest(BaseModel):
     required_terms: list[str] = []
     exclude_terms: list[str] = []
     from_year: int | None = None
-    top_n: int = Field(default=8, ge=1, le=25)
+    top_n: int = Field(default=20, ge=1, le=100)
+    candidate_pool: int = Field(default=120, ge=10, le=300)
     # False (default): skip the (slow) paper search when the project's discovered papers already answer
     # the question well. True: always search for more papers ("find more papers").
     force: bool = False
@@ -164,7 +165,7 @@ async def discover_and_ingest(
                         "discovery": {}, "dropped": [], "errors": []}
     found = await discover(
         DiscoveryQuery(req.question, req.required_terms, req.exclude_terms, req.from_year),
-        contact_email=s.contact_email, top_n=req.top_n,
+        contact_email=s.contact_email, top_n=req.top_n, candidate_pool=req.candidate_pool,
     )
     async with make_client(s.contact_email) as client:
         results = await build_session_sources(

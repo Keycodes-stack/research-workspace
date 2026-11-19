@@ -8,15 +8,32 @@ import { useLoad } from "@/components/useLoad";
 import { ApiError, api } from "@/lib/api";
 import type { AskResult, Message } from "@/lib/types";
 
+const THINKING_STAGES = [
+  "Retrieving relevant passages…",
+  "Model A is analyzing…",
+  "Model B is cross-checking…",
+  "Verifying citations…",
+];
+
 function Body({ id }: { id: string }) {
   const history = useLoad(() => api.messages(id), [id]);
   const threadInfo = useLoad(() => api.thread(id), [id]);
   const [local, setLocal] = useState<{ q: string; result?: AskResult; error?: string }[]>([]);
   const [question, setQuestion] = useState("");
   const [busy, setBusy] = useState(false);
+  const [thinkingStage, setThinkingStage] = useState(0);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => { endRef.current?.scrollIntoView?.({ behavior: "smooth" }); }, [history.data, local]);
+
+  // Progressive thinking stage: cycle through messages while busy
+  useEffect(() => {
+    if (!busy) { setThinkingStage(0); return; }
+    const id = setInterval(() => {
+      setThinkingStage((s) => (s + 1) % THINKING_STAGES.length);
+    }, 3000);
+    return () => clearInterval(id);
+  }, [busy]);
 
   async function ask(e: React.FormEvent) {
     e.preventDefault();
@@ -75,7 +92,11 @@ function Body({ id }: { id: string }) {
             <div className="q">{x.q}</div>
             {x.result && <AnswerView result={x.result} />}
             {x.error && <div className="notice error" role="alert">{x.error}</div>}
-            {!x.result && !x.error && <div className="answer muted" role="status">Both models are answering and their findings are being verified against the sources…</div>}
+            {!x.result && !x.error && (
+              <div className="answer muted thinking" role="status">
+                {THINKING_STAGES[thinkingStage]}
+              </div>
+            )}
           </div>
         ))}
         <div ref={endRef} />

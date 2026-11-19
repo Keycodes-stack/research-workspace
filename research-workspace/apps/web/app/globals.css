@@ -157,3 +157,42 @@ mark { background: var(--mark); color: inherit; padding: 0 1px; border-radius: 2
 .nbell-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
 .nbell-list li { padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
 .nbell-list li.unread { border-left: 3px solid var(--accent); }
+
+/* ── Skeleton / shimmer loading ───────────────────────────────────────── */
+@keyframes shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--line) 25%, var(--bg) 50%, var(--line) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 6px;
+}
+.skeleton-text { display: flex; flex-direction: column; gap: 8px; }
+.skeleton-card { display: flex; flex-direction: column; gap: 10px; }
+
+/* Skeleton nav: title bar */
+.skeleton-nav { display: flex; flex-direction: column; gap: 12px; }
+.skeleton-nav-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.skeleton-tabs { display: flex; gap: 8px; border-bottom: 2px solid var(--line); padding-bottom: 10px; overflow: hidden; }
+
+/* ── Thinking / progress pulse animation ──────────────────────────────── */
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+.thinking::after {
+  content: '';
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: blink 1s infinite;
+  vertical-align: middle;
+}
+.thinking {
+  transition: opacity 0.3s ease;
+}

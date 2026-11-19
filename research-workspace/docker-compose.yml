@@ -42,11 +42,10 @@ services:
     build: ./services/ai
     env_file: .env
     environment:  # container-network addresses override the host-style values in .env
-      DATABASE_URL: postgresql://${POSTGRES_USER:-rw}:${POSTGRES_PASSWORD:-rw_dev_password}@postgres:5432/${POSTGRES_DB:-research_workspace}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-rw}:${POSTGRES_PASSWORD:-rw_dev_password}@postgres:5432/${POSTGRES_DB:-research_workspace}}
       REDIS_URL: redis://redis:6379/0
       S3_ENDPOINT_URL: http://minio:9000
     depends_on:
-      postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
       minio: {condition: service_started}
     volumes:
@@ -72,7 +71,13 @@ services:
     restart: unless-stopped
 
   web:
-    build: ./apps/web
+    build:
+      context: ./apps/web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8080
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+      INTERNAL_API_URL: http://gateway:8080
     depends_on:
       - gateway
     ports:

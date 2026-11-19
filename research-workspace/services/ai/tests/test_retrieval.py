@@ -225,3 +225,124 @@ def test_one_tier_failing_does_not_kill_discovery():
     res = run(go())
     assert res.papers                                   # OpenAlex still delivered
     assert any(e.startswith("europe_pmc") for e in res.errors)
+
+
+# ---- search query from a chat request ------------------------------------
+
+from app.retrieval.pipeline import search_query
+
+
+def test_search_query_strips_request_wording():
+    q = ("Find as many research papers as possible on mRNA vaccine stability, including thermal degradation, "
+         "storage conditions, LNP instability, and RNA integrity. Return the maximum number of unique papers "
+         "with titles, publication years, and source links.")
+    assert search_query(q) == ("mRNA vaccine stability thermal degradation storage conditions "
+                               "LNP instability RNA integrity")
+
+
+def test_search_query_keeps_plain_topics_and_never_returns_empty():
+    assert search_query("How does high temperature affect DNA stability?") == "high temperature affect DNA stability"
+    assert search_query("find papers") == "find papers"
+
+
+def test_discover_sends_keywords_and_searches_all_of_europepmc():
+    seen = {}
+
+    def handler(request):
+        if request.url.host == "api.openalex.org":
+            seen["openalex"] = request.url.params["search"]
+        if request.url.host == "www.ebi.ac.uk" and "DOI:" not in request.url.params["query"]:
+            seen["europepmc"] = request.url.params["query"]
+        return pipeline_handler(request)
+
+    async def go():
+        async with make_client(handler) as c:
+            await discover(DiscoveryQuery(question="Find papers on mRNA vaccine stability"),
+                           contact_email="t@example.com", client=c)
+
+    run(go())
+    assert seen["openalex"] == "mRNA vaccine stability"
+    assert seen["europepmc"] == "mRNA vaccine stability"      # journals + preprints, not SRC:PPR only
+
+
+# ---- fast paper search (lists, and online passages for /ask) -------------
+
+from app.retrieval.pipeline import search_papers
+
+
+def _oa_page(n, start, pdf_every=0):
+    return {"results": [work(f"10.9/{start + i}", f"Paper {start + i}", 2024, 10,
+                             pdf=(f"https://oa.test/{start + i}.pdf" if pdf_every and i % pdf_every == 0 else None))
+                        for i in range(n)]}
+
+
+def test_search_papers_pages_openalex_and_keeps_relevance_order():
+    pages = []
+
+    def handler(request):
+        if request.url.host == "api.openalex.org":
+            p = int(request.url.params["page"])
+            pages.append(p)
+            assert request.url.params["per-page"] == "200"
+            return httpx.Response(200, json=_oa_page(200 if p == 1 else 50, (p - 1) * 200, pdf_every=2))
+        return httpx.Response(200, json={"resultList": {"result": []}})
+
+    async def go():
+        async with make_client(handler) as c:
+            return await search_papers("Find papers on mRNA vaccine stability", limit=400, client=c)
+
+    res = run(go())
+    assert sorted(pages) == [1, 2]
+    assert len(res.papers) == 250 and res.papers[0].title == "Paper 0"       # most relevant first
+    assert res.stats["found"] == 250 and res.stats["with_pdf"] == 125
+    assert res.stats["query"] == "mRNA vaccine stability"
+
+
+def test_search_papers_does_not_wait_for_a_slow_europepmc():
+    def handler(request):
+        if request.url.host == "www.ebi.ac.uk":
+            raise httpx.ReadTimeout("slow")
+        return httpx.Response(200, json=_oa_page(3, 0))
+
+    async def go():
+        async with make_client(handler) as c:
+            return await search_papers("mRNA", limit=50, client=c)
+
+    res = run(go())
+    assert len(res.papers) == 3 and any(e.startswith("europe_pmc") for e in res.errors)
+
+
+def test_long_rate_limit_fails_fast_instead_of_waiting():
+    calls = []
+
+    def handler(request):
+        calls.append(1)
+        return httpx.Response(429, headers={"Retry-After": "32"})
+
+    async def go():
+        async with make_client(handler) as c:
+            return await search_papers("mRNA", limit=50, client=c)
+
+    import time
+    t = time.time()
+    res = run(go())
+    assert time.time() - t < 3 and len(calls) == 2          # one OpenAlex call + one Europe PMC call, no retries
+    assert any(e.startswith("openalex") for e in res.errors)
+
+
+def test_search_cache_serves_the_followup_without_calling_apis(monkeypatch):
+    from app.retrieval import pipeline
+    pipeline._cache.clear()
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.host)
+        return httpx.Response(200, json=_oa_page(3, 0)) if request.url.host == "api.openalex.org" \
+            else httpx.Response(200, json={"resultList": {"result": []}})
+
+    monkeypatch.setattr(pipeline, "make_client", lambda email="": make_client(handler))
+    first = run(search_papers("mRNA vaccine stability", limit=50))
+    n = len(calls)
+    again = run(search_papers("Find papers on mRNA vaccine stability", limit=50, with_abstracts=True))
+    assert len(calls) == n and again.stats["cached"] and len(again.papers) == len(first.papers) == 3
+    pipeline._cache.clear()

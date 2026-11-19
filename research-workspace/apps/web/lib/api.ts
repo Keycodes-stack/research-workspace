@@ -2,8 +2,13 @@ import type {
   AskResult, AuditEntry, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage,
 } from "./types";
 
-export const API_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080").replace(/\/$/, "");
-/** The static Halden page can't read env vars, so it gets the gateway address in its URL (read by halden-bridge.js). */
+if (!process.env.NEXT_PUBLIC_API_URL) {
+  throw new Error("NEXT_PUBLIC_API_URL is not set. Add it to .env.local before running the app.");
+}
+// All browser→API traffic goes through the Next.js proxy (/api/backend/*  →  NEXT_PUBLIC_API_URL).
+// This avoids CORS entirely: the proxy runs server-side, so the browser only ever talks to its own origin.
+export const API_URL = "/api/backend";
+/** The static Halden page can't read env vars, so it gets the proxy path in its URL (read by halden-bridge.js). */
 export const HALDEN_SRC = `/halden.html?api=${encodeURIComponent(API_URL)}`;
 const TOKEN_KEY = "kc_token";
 
@@ -59,6 +64,19 @@ function describe(detail: unknown, status: number): string {
   return `Request failed (${status})`;
 }
 
+/** Every failed call is logged once, in one format, with the layer that failed (see public/halden-errors.js). */
+function fail(method: string, path: string, status: number, body: unknown): ApiError {
+  const detail = body && typeof body === "object" && "detail" in (body as object) ? (body as { detail: unknown }).detail : body;
+  const err = new ApiError(status, detail, status === 0 ? "Cannot reach the server. Check that the gateway is running." : describe(body, status));
+  const e = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
+  const info = e && typeof e === "object" ? (e as Record<string, unknown>) : {};
+  const layer = status === 0 ? "network" : typeof e === "object" ? "ai" : typeof e === "string" ? "gateway" : status >= 500 ? "proxy" : "ai";
+  console.error(`✖ ${method} ${path}: ${err.message}`, {
+    status, code: info.code ?? err.code ?? `http_${status}`, layer, failedAt: info.where, requestId: info.request_id,
+  });
+  return err;
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers = new Headers(init.headers);
@@ -68,15 +86,12 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     res = await fetch(`${API_URL}${path}`, { ...init, headers });
   } catch {
-    throw new ApiError(0, null, "Cannot reach the server. Check that the gateway is running.");
+    throw fail(init.method ?? "GET", path, 0, null);
   }
   const text = await res.text();
   let body: unknown = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = text; }
-  if (!res.ok) {
-    const detail = body && typeof body === "object" && "detail" in (body as object) ? (body as { detail: unknown }).detail : body;
-    throw new ApiError(res.status, detail, describe(body, res.status));
-  }
+  if (!res.ok) throw fail(init.method ?? "GET", path, res.status, body);
   return body as T;
 }
 
@@ -89,13 +104,12 @@ async function callBlob(path: string, body: unknown): Promise<{ blob: Blob; file
   if (token) headers.set("Authorization", `Bearer ${token}`);
   let res: Response;
   try { res = await fetch(`${API_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body) }); }
-  catch { throw new ApiError(0, null, "Cannot reach the server. Check that the gateway is running."); }
+  catch { throw fail("POST", path, 0, null); }
   if (!res.ok) {
     const text = await res.text();
     let parsed: unknown = text;
     try { parsed = JSON.parse(text); } catch { /* not json */ }
-    const detail = parsed && typeof parsed === "object" && "detail" in (parsed as object) ? (parsed as { detail: unknown }).detail : parsed;
-    throw new ApiError(res.status, detail, describe(parsed, res.status));
+    throw fail("POST", path, res.status, parsed);
   }
   const cd = res.headers.get("Content-Disposition") ?? "";
   const m = /filename="([^"]+)"/.exec(cd);
@@ -113,9 +127,9 @@ export const api = {
     f.append("file", file);
     return call<{ source_id: string; chunks?: number }>(`/projects/${pid}/sources/upload`, { method: "POST", body: f });
   },
-  discover: (pid: string, question: string, topN = 8) =>
-    call<{ sources: { title?: string; status?: string }[]; dropped: unknown[]; errors: string[] }>(
-      `/projects/${pid}/discover-and-ingest`, json({ question, top_n: topN })),
+  discover: (pid: string, question: string, topN = 20, force = false) =>
+    call<{ sources: { title?: string; status?: string }[]; dropped: unknown[]; errors: string[]; skipped?: boolean; existing_sources?: number; reason?: string }>(
+      `/projects/${pid}/discover-and-ingest`, json({ question, top_n: topN, force })),
   tasks: (pid: string) => call<{ tasks: TaskRow[] }>(`/projects/${pid}/tasks`).then((r) => r.tasks),
   createTask: (pid: string, title: string, brief?: string) =>
     call<{ id: string }>(`/projects/${pid}/tasks`, json({ title, brief: brief || null })),

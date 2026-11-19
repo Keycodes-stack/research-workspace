@@ -32,6 +32,8 @@ class Paper:
     origin: Origin = "openalex"
     fulltext: FullText = "abstract_only"
     score: float = 0.0
+    # 1.0 = the search API's top hit, falling towards 0 down its result list
+    relevance: float = 0.0
     score_breakdown: dict = field(default_factory=dict)
 
 

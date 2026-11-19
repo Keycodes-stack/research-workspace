@@ -44,21 +44,24 @@
     if (!state.token) signedOut();
     const headers = { 'Authorization': `Bearer ${state.token}`, ...(opts.headers || {}) };
     if (opts.body && !(opts.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const method = opts.method || 'GET';
+    const t0 = performance.now();
     let res;
     try {
       res = await fetch(`${state.apiBase}${path}`, { ...opts, headers });
-    } catch {
-      throw new Error('Cannot reach the server. Check that the gateway is running.');
+    } catch (cause) {
+      throw HaldenErrors.network({ method, path, ms: Math.round(performance.now() - t0), cause });
     }
     const text = await res.text();
     let body = null;
     try { body = text ? JSON.parse(text) : null; } catch { body = text; }
     if (res.status === 401) signedOut();
     if (!res.ok) {
-      const err = new Error(errorText(body, res.status));
-      err.status = res.status;
+      const err = HaldenErrors.fromResponse({ method, path, status: res.status, body, ms: Math.round(performance.now() - t0) });
+      if (err.layer === 'ai') err.message = errorText(body, res.status);   // the wording users already see
       throw err;
     }
+    if (opts.method && opts.method !== 'GET') invalidateAll();
     return body;
   }
 
@@ -68,7 +71,7 @@
     // A project id remembered in this browser can outlive the project (database reset, other machine).
     // Check it once per page load; if it is gone, fall back to a project that exists.
     if (state.projectId && state.projectChecked) return state.projectId;
-    const { projects = [] } = await apiFetch('/projects');
+    const projects = await store.dispatch(api.endpoints.projects.initiate()).unwrap();
     state.projects = projects;
     state.projectChecked = true;
     if (state.projectId && projects.some((p) => p.id === state.projectId)) return state.projectId;
@@ -127,18 +130,95 @@
     `;
     const syncBtn = document.getElementById('kc-sync-btn');
     if (syncBtn) {
-      syncBtn.onclick = () => syncFromBackend();
+      syncBtn.onclick = () => { invalidateAll(); syncFromBackend(); };
     }
   }
 
-  // ---- Data loading ----
-  // Sources always load (the library, ask scope and counts use them). Signals, concepts and audit load only
-  // for the screens that show them, and only when that screen opens. Requests for one screen run in parallel.
-  // There is no cache: each screen's data is fetched when the screen opens. `pending` only stops the same
-  // request being sent twice while it is still in flight.
-  const pending = {};    // `${projectId}:${kind}` -> request in flight
+  // ---- Data loading: Redux Toolkit Query (public/vendor/redux-toolkit.min.js, loaded before this file) ----
+  // One in-memory store per page. A screen's data comes from the cache when it is fresh, is refetched in the
+  // background when it is older than CACHE_SECONDS, and is refetched after any write. Nothing is saved to disk.
+  const CACHE_SECONDS = 60;
+  const scoped = (b, path, pick) => b.query({
+    query: (pid) => ({ path: path(pid) }),
+    transformResponse: (r) => pick(r),
+    providesTags: (res, err, pid) => [{ type: 'Project', id: pid }],
+  });
+  const api = window.RTK.createApi({
+    reducerPath: 'kc',
+    baseQuery: async ({ path }) => {
+      try { return { data: await apiFetch(path) }; }
+      catch (e) { HaldenErrors.report(`Load ${path}`, e); return { error: { status: e.status || 0, message: e.message } }; }
+    },
+    tagTypes: ['Project'],
+    refetchOnMountOrArgChange: CACHE_SECONDS,
+    keepUnusedDataFor: 600,
+    endpoints: (b) => ({
+      projects: b.query({ query: () => ({ path: '/projects' }), transformResponse: (r) => r.projects || [], providesTags: ['Project'] }),
+      sources: scoped(b, (pid) => `/projects/${pid}/sources`, (r) => r.sources || r),
+      signals: scoped(b, (pid) => `/projects/${pid}/signals`, (r) => r.signals || r),
+      concepts: scoped(b, (pid) => `/projects/${pid}/concepts`, (r) => r.concepts || r),
+      audit: scoped(b, (pid) => `/projects/${pid}/audit`, (r) => r.entries || []),
+    }),
+  });
+  const store = window.RTK.configureStore({
+    reducer: { [api.reducerPath]: api.reducer },
+    middleware: (g) => g().concat(api.middleware),
+  });
+  const query = (kind, pid) => api.endpoints[kind].select(pid)(store.getState());
+  /** Every write (POST, PUT, DELETE) marks project data stale, so open screens refetch it. */
+  const invalidateAll = () => store.dispatch(api.util.invalidateTags(['Project']));
+  const redraw = () => { const r = window.__renderAll || window.renderAll; if (typeof r === 'function') r(); };
 
-  // Which screen shows which data. Concepts feed most screens (task counts, board, chats, projects).
+  const subs = {};       // kind -> { pid, unsubscribe } for the data the open screen needs
+  const applied = {};    // kind -> the data object last written to the screen's globals
+  const KIND_APPLY = { sources: applySources, signals: applySignals, concepts: applyConcepts, audit: applyAudit };
+
+  function subscribe(kind) {
+    const pid = state.projectId;
+    if (!pid || (subs[kind] && subs[kind].pid === pid)) return;
+    unsubscribe(kind);
+    const req = store.dispatch(api.endpoints[kind].initiate(pid));
+    subs[kind] = { pid, unsubscribe: req.unsubscribe };
+  }
+  function unsubscribe(kind) { if (subs[kind]) { subs[kind].unsubscribe(); delete subs[kind]; } }
+
+  /** True once a kind has a result (data or error) for the active project. Cached results count at once. */
+  const isSettled = (kind) => {
+    if (!state.projectId || !subs[kind]) return false;
+    const s = query(kind, state.projectId);
+    return s.isSuccess || s.isError;
+  };
+
+  /** Write any newly cached data to the screen globals. Returns true if something changed. */
+  function applyCached() {
+    let changed = false;
+    for (const kind of Object.keys(subs)) {
+      const s = query(kind, subs[kind].pid);
+      if (s.isSuccess && applied[kind] !== s.data) { applied[kind] = s.data; KIND_APPLY[kind](s.data); changed = true; }
+    }
+    return changed;
+  }
+
+  let settledSig = '';
+  store.subscribe(() => {
+    const changed = applyCached();
+    const sig = Object.keys(subs).filter(isSettled).join(',') + '@' + state.projectId;
+    if (changed || sig !== settledSig) { settledSig = sig; redraw(); }
+  });
+
+  /** The open screen subscribes to what it shows; data it no longer needs is released after keepUnusedDataFor. */
+  function setActiveRoute(route) {
+    if (!window.__D || !state.projectId) return;
+    const want = ['sources', ...routeNeeds(route)];
+    Object.keys(subs).filter((k) => !want.includes(k)).forEach(unsubscribe);
+    want.forEach(subscribe);
+    applyCached();
+    redraw();
+  }
+  window.__kcRoute = (route) => setActiveRoute(route);
+  /** halden.html draws a skeleton until every kind a screen needs has settled (or the sync gave up). */
+  window.__KC_READY = (route) => state.syncFailed || ['sources', ...routeNeeds(route)].every(isSettled);
+
   const ROUTE_NEEDS = {
     home: ['concepts', 'audit'],
     radar: ['concepts', 'signals'],
@@ -250,78 +330,42 @@
     }
   }
 
-  const KINDS = {
-    sources:  { fetch: (pid) => apiFetch(`/projects/${pid}/sources`).then((r) => r.sources || r), apply: applySources },
-    signals:  { fetch: (pid) => apiFetch(`/projects/${pid}/signals`).then((r) => r.signals || r), apply: applySignals },
-    concepts: { fetch: (pid) => apiFetch(`/projects/${pid}/concepts`).then((r) => r.concepts || r), apply: applyConcepts },
-    audit:    { fetch: (pid) => apiFetch(`/projects/${pid}/audit`).then((r) => r.entries || []), apply: applyAudit },
-  };
-
-  /** Fetch one kind of data for the active project. Resolves true only if a fetch was actually sent and applied. */
-  function load(kind) {
-    const pid = state.projectId;
-    const key = `${pid}:${kind}`;
-    if (pending[key]) return pending[key].then(() => false);
-    const p = (async () => {
-      try {
-        const data = await KINDS[kind].fetch(pid);
-        if (state.projectId !== pid) return false;          // the user moved to another project meanwhile
-        KINDS[kind].apply(data);
-        return true;
-      } catch (e) {
-        console.warn(`${kind} fetch failed:`, e);
-        return false;
-      } finally {
-        delete pending[key];
-      }
-    })();
-    pending[key] = p;
-    return p;
-  }
-
   async function syncFromBackend() {
     if (!window.__D) return;
+    state.syncFailed = false;
     try {
       state.loading = true;
       mountStatusBar();
 
-      // 1. Project (must come first: every other request needs its id)
+      // 1. Project (every other request needs its id)
       await ensureProject();
 
-      // 2. Sources, the projects list, the chat list and the data for the screen in view: all in parallel.
+      // 2. The open screen and the library: cached data shows at once, stale data refreshes in the background.
+      setActiveRoute(currentRoute());
+
+      // 3. Projects list and chats, in parallel.
       const needChats = state.chatsFor !== state.projectId;
       if (needChats) state.chatsFor = state.projectId;
       await Promise.all([
-        load('sources'),
-        ...routeNeeds(currentRoute()).map((k) => load(k)),
-        refreshProjects().catch((e) => console.warn('Projects fetch failed:', e)),
-        needChats ? loadChatList().catch((e) => console.warn('Chat list failed:', e)) : null,
+        refreshProjects().catch((e) => HaldenErrors.report('Projects fetch failed', e)),
+        needChats ? loadChatList().catch((e) => HaldenErrors.report('Chat list failed', e)) : null,
       ]);
 
       state.connected = true;
       mountStatusBar();
-
-      if (!state.migrated) { state.migrated = true; await migrateLocalProjects().catch((e) => console.warn('Project migration failed:', e)); }
+      if (!state.migrated) { state.migrated = true; await migrateLocalProjects().catch((e) => HaldenErrors.report('Project migration failed', e)); }
       if (window.__V && window.__V.S) window.__V.S.live = true;
-
-      // The page exposes its renderer as __renderAll; calling a name it does not define left stale data on screen.
-      const rerender = window.__renderAll || window.renderAll;
-      if (typeof rerender === 'function') rerender();
+      redraw();
     } catch (err) {
-      console.error('Sync failed:', err);
+      HaldenErrors.report('Sync with backend failed', err);
       state.connected = false;
+      state.syncFailed = true;   // stop drawing skeletons; the screens show what they have
       mountStatusBar();
+      redraw();
     } finally {
       state.loading = false;
     }
   }
-
-  /** halden.html calls this when a screen opens: fetch only what that screen shows, then redraw if anything arrived. */
-  window.__kcRoute = async (route) => {
-    if (!window.__D || !state.projectId) return;   // the first sync will load the screen it opens on
-    const results = await Promise.all(routeNeeds(route).map((k) => load(k)));
-    if (results.some(Boolean) && currentRoute() === route && window.__renderAll) window.__renderAll();
-  };
 
   // ---- Chat: real RAG answers (halden.html sendQ and Attach call these) ----
 
@@ -348,23 +392,64 @@
       scope: 'uploads' = only the user's uploaded PDFs (sourceIds narrows to attached ones),
              'api'     = only papers found via OpenAlex / Unpaywall / Europe PMC (kept in the research cache),
              'both'    = uploads plus discovered papers.
-      For 'api' and 'both' the question is first used to look for papers online. */
-  async function ask(question, sourceIds, scope = 'both', th = { title: question.slice(0, 80) }) {
-    const pid = await ensureProject();
-    if (scope !== 'uploads') {
-      try {
-        await apiFetch(`/projects/${pid}/discover-and-ingest`, post({ question }));
-      } catch (e) {
-        if (scope === 'api') throw e;          // nothing else to answer from
-        console.warn('Paper discovery failed, answering from uploads:', e);
-      }
-    }
-    const threadId = await ensureChat(th);
-    const body = { question, scope };
+      Explicit paper searches wait for discovery; ordinary questions use background discovery. */
+  const isPaperDiscoveryRequest = (question) =>
+    /\b(?:find|search|discover|compile|gather|collect|identify|list|look\s+for)\b/i.test(question) &&
+    /\b(?:papers?|studies|articles|publications|literature)\b/i.test(question);
+
+  /** "Find papers on X, including Y. Return titles..." -> "X, including Y": the topic, for the findings question. */
+  const topicOf = (q) => {
+    const first = String(q).split(/(?<=[.?!])\s+/)[0].replace(/[.?!]+$/, '');
+    const m = first.match(/\b(?:on|about|regarding|related to|for)\s+(.+)$/i);
+    return (m ? m[1] : first).trim();
+  };
+
+  async function runAsk(threadId, question, scope, sourceIds, t0) {
+    // The server searches online in the same request and ranks abstracts in memory with the project's own
+    // passages. Only papers the answer cites are stored.
+    const body = { question, scope, online: scope !== 'uploads', top_k: 10 };
     if (scope === 'uploads' && sourceIds && sourceIds.length) body.source_ids = sourceIds;
     const result = await apiFetch(`/threads/${threadId}/ask`, post(body));
+    const tm = result.timings || {}, g = result.gate || {}, on = g.online || {};
+    console.groupCollapsed(`💬 Ask: ${result.kind} in ${((performance.now() - t0) / 1000).toFixed(1)}s — the AI read ${g.papers_read ?? 0} papers`);
+    console.table({
+      'Papers found online': on.found ?? 0,
+      'Papers ranked against the question (embedded)': on.papers_ranked ?? 0,
+      'Passages retrieved (max 2 per paper)': tm.passages_used ?? 0,
+      'Passages sent to the AI (token budget)': g.passages_sent ?? 0,
+      'Passages dropped by the token budget': g.passages_trimmed_for_budget ?? 0,
+      'Papers the AI read': g.papers_read ?? 0,
+      'Online papers saved (cited)': g.online_papers_saved ?? 0,
+      'Seconds: retrieval / models / total': `${tm.retrieve_s} / ${tm.models_s} / ${tm.total_s}`,
+    });
+    console.groupEnd();
+    if ((on.errors || []).length) console.warn('Online sources that did not answer:', on.errors);
     result.thread_id = threadId;
     return result;
+  }
+
+  async function ask(question, sourceIds, scope = 'both', th = { title: question.slice(0, 80) }) {
+    await ensureProject();
+    const threadId = await ensureChat(th);
+    const t0 = performance.now();
+    if (scope === 'uploads' || !isPaperDiscoveryRequest(question)) return runAsk(threadId, question, scope, sourceIds, t0);
+
+    // "Find papers on X": 1) list every paper the APIs return (no model, nothing indexed), then
+    // 2) cross-checked key findings from the most relevant abstracts. The list is kept even if step 2 fails.
+    const list = await apiFetch(`/threads/${threadId}/papers`, post({ question, limit: 400 }));
+    const st = list.stats || {};
+    console.info(`📚 Paper search: ${st.found} papers in ${((performance.now() - t0) / 1000).toFixed(1)}s`,
+      { query: st.query, openalex: st.openalex, europe_pmc: st.europe_pmc, with_pdf: st.with_pdf });
+    if ((list.errors || []).length) console.warn('Paper search sources that did not answer:', list.errors);
+    list.thread_id = threadId;
+    try {
+      const ai = await runAsk(threadId, `What are the key findings on ${topicOf(question)}?`, scope, null, performance.now());
+      ai.__papers = list;
+      return ai;
+    } catch (e) {
+      HaldenErrors.report('Key findings for the paper list failed', e);
+      return list;
+    }
   }
 
   /** A source title a person can read: strip the trailing DOI and the file extension, and never show an id or hash. */
@@ -376,7 +461,55 @@
 
   /** Map the backend AskResult onto halden.html's answer shape, so its existing thread view,
       citation and claim panels render real, verified results unchanged. */
+  /** Collapsed "what happened" line (like a reasoning summary): one headline, the stages inside. */
+  function statusBlock(summary, steps, inner = '') {
+    return `<details class="kc-status" style="border:1px solid var(--line,#e3e3e3);border-radius:10px;padding:8px 12px;margin-bottom:14px">` +
+      `<summary style="cursor:pointer;font-size:13.5px;font-weight:600">${summary}</summary>` +
+      `<ol style="margin:8px 0 0 18px;padding:0;font-size:13px;line-height:1.75">${steps.filter(Boolean).map((x) => `<li>${x}</li>`).join('')}</ol>${inner}</details>`;
+  }
+
+  /** Search stages shared by paper lists and answers, from the server's measured stats. */
+  function searchSteps(st, esc) {
+    if (!st || st.found == null) return [];
+    if (st.cached) return [`Reused this topic's search from the last 15 minutes: <b>${st.found}</b> papers for <i>${esc(st.query || '')}</i> (no new API calls)`];
+    const secs = (s) => (s == null ? '' : ` (${s} s)`);          // older saved results have no per-source timing
+    const src = (name, n, s, failed) => failed
+      ? `Searched ${name}: <b>no answer</b> (busy or rate limited, skipped${secs(s)})`
+      : `Searched ${name}: <b>${n}</b> papers${secs(s)}`;
+    return [
+      `Turned the question into search terms: <i>${esc(st.query || '')}</i>`,
+      src('OpenAlex', st.openalex, st.openalex_s, st.openalex_failed),
+      src('Europe PMC', st.europe_pmc, st.europe_pmc_s, st.europe_pmc_failed),
+      `Removed duplicates and ranked by relevance, citations and recency: <b>${st.found}</b> unique papers (${st.with_pdf || 0} with a free PDF)`,
+    ];
+  }
+
+  /** A literature search result: every paper found, with year, venue, citations and links. No claims to verify. */
+  function toPaperList(r, question, withFindings = false) {
+    const { esc } = window.__D;
+    const link = (u, text) => (/^https?:\/\//i.test(u || '') ? `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${text}</a>` : '');
+    const papers = r.papers || [], st = r.stats || {};
+    const rows = papers.map((p, i) => {
+      const meta = [p.year, p.venue && esc(p.venue), p.cited_by_count ? `${p.cited_by_count} citations` : '']
+        .filter(Boolean).join(' · ');
+      const links = [link(p.url, p.doi ? `doi:${esc(p.doi)}` : 'Source'), link(p.pdf_url, 'Free PDF')].filter(Boolean).join(' · ');
+      return `<b>${i + 1}. ${esc(p.title)}</b><br><span style="font-size:13px">${meta}${meta && links ? ' · ' : ''}${links}</span>`;
+    });
+    const list = `<details style="margin-top:10px"><summary style="cursor:pointer;font-size:13px">View all ${papers.length} papers</summary>` +
+      `<div style="margin-top:10px">${rows.join('<br><br>')}</div></details>`;
+    const head = statusBlock(`Searched 2 sources · ${papers.length} papers found · ${st.seconds ?? '?'} s`, searchSteps(st, esc), list) +
+      `Found <b>${papers.length}</b> papers on <i>${esc(st.query || question)}</i>. Open the status above to browse them${withFindings ? '.' : ', or ask a question to get a cited, cross-checked answer.'}`;
+    const note = 'Paper lists come straight from OpenAlex and Europe PMC. No model call is needed, so nothing is verified here; ask a question to get a cited, cross-checked answer.';
+    const card = (m, role) => ({ m, r: role, v: 'Not needed', vc: '', cf: 0, pts: [note], ci: [] });
+    return {
+      title: question, acc: 0, html: head, cl: {}, dis: note, fups: [], next: '', cm: [],
+      panel: [card('Model A', 'Lead research scientist'), card('Model B', 'Speed auditor')], live: true,
+      stats: { verified: 0, total: 0 }, mid: r.message_id, tid: r.thread_id, gate: {}, papers,
+    };
+  }
+
   function toAnswer(r, question) {
+    if (r.kind === 'papers') return toPaperList(r, question);
     const { SRC, esc } = window.__D;
     const clean = (t) => esc(String(t || '')).replace(/[|{}]/g, ' ');
     const summary = String(r.content || '').replace(/^INSUFFICIENT_SOURCE_EVIDENCE:\s*(.)/, (_, c) => c.toUpperCase());
@@ -437,6 +570,20 @@
     }
 
     const v = r.verification, total = v.verified + v.purged, g = r.gate || {};
+    const tm = r.timings || {}, on = g.online || {};
+    if (tm.total_s != null) {
+      const steps = [...searchSteps(on.found != null ? on : null, esc),
+        on.found != null && `Ranked <b>${on.papers_ranked ?? 0}</b> paper abstracts against the question in memory (${on.embed_s ?? '?'} s${on.newly_embedded != null && on.newly_embedded < on.embedded ? `, ${on.embedded - on.newly_embedded} reused from earlier questions` : ''})`,
+        `Picked <b>${tm.passages_used}</b> best passages (max 2 per paper), ${g.passages_sent ?? 0} fit the AI's token budget` +
+          (g.passages_trimmed_for_budget ? ` (${g.passages_trimmed_for_budget} dropped)` : ''),
+        g.passed === false ? `Stopped: best match ${(g.top_similarity ?? 0).toFixed(2)} is below the ${(g.threshold ?? 0).toFixed(2)} needed, so no model was asked`
+          : `Models A and B read <b>${g.papers_read ?? 0}</b> papers and answered independently (${tm.models_s} s)`,
+        g.passed !== false && `Checked every quote against the source text: <b>${v.verified}</b> verified, ${v.purged} removed`,
+        g.online_papers_saved ? `Saved the <b>${g.online_papers_saved}</b> cited online papers to this project` : '',
+      ];
+      const head = on.found != null ? `Researched ${on.found} papers · AI read ${g.papers_read ?? 0}` : `AI read ${g.papers_read ?? 0} sources`;
+      r.__status = statusBlock(`${head} · ${v.verified} claims verified · ${tm.total_s} s`, steps);
+    }
     const acc = total ? Math.round((100 * v.verified) / total) : 0;
     const verdict = { consensus: ['Agrees', 'ok'], disagreement: ['Disagrees', 'warn'] }[r.kind] || ['No answer in sources', 'warn'];
     const pts = [
@@ -468,9 +615,11 @@
     };
     const panel = [card('Model A', 'Lead research scientist', 'model_a'), card('Model B', 'Speed auditor', 'model_b')];
     return {
-      title: question, acc, html, cl, dis, fups: [], next: '', cm: [], panel, live: true,
+      title: question, acc, cl, dis,
+      html: (r.__papers ? toPaperList(r.__papers, question, true).html + '<br><br><b>Key findings from the most relevant papers</b><br>' : '') +
+        (r.__status || '') + html, fups: [], next: '', cm: [], panel, live: true,
       stats: { verified: v.verified, total }, mid: r.message_id, tid: r.thread_id,
-      gate: { top: g.top_similarity, need: g.threshold },
+      gate: { top: g.top_similarity, need: g.threshold }, timings: r.timings,
     };
   }
 
@@ -523,6 +672,8 @@
 
   // Auto initialize when window is ready
   window.addEventListener('DOMContentLoaded', () => {
+    // Screens show skeletons instead of demo data until their live data arrives.
+    if (window.__renderAll) window.__renderAll();
     mountStatusBar();
     setTimeout(syncFromBackend, 400);
   });
@@ -540,7 +691,7 @@
   }
 
   async function refreshProjects() {
-    const { projects = [] } = await apiFetch('/projects');
+    const projects = await store.dispatch(api.endpoints.projects.initiate(undefined, { forceRefetch: true })).unwrap();
     state.projects = projects;
     return projects;
   }
