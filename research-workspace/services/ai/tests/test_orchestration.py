@@ -499,3 +499,19 @@ def test_gemini_provider_mistral_a_gemini_b():
     assert a.name == "model_a:mistral" and a.model == "mistral-medium-latest"
     assert b.name == "model_b:gemini" and b.model == "gemini-flash-lite-latest" and b.api_key == "g"
     assert b.url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+
+
+def test_compat_provider_needs_its_address_key_and_model_name():
+    def s(**kw):
+        base = dict(model_a_provider="gemini", gemini_api_key="g", model_b_provider="compat",
+                    compat_base_url="https://api.example.test/v1", compat_api_key="k", model_b_name="mistralai/mistral-small-2603")
+        return Settings(_env_file=None, **{**base, **kw})
+    a, b = build_llms(s())
+    assert (b.name, b.model, b.url) == ("model_b:compat", "mistralai/mistral-small-2603",
+                                        "https://api.example.test/v1/chat/completions")
+    with pytest.raises(LLMError, match="COMPAT_API_KEY is not set"):
+        build_llms(s(compat_api_key=""))
+    with pytest.raises(LLMError, match="COMPAT_BASE_URL is not set"):
+        build_llms(s(compat_base_url=""))
+    with pytest.raises(LLMError, match="MODEL_B_NAME is not set"):
+        build_llms(s(model_b_name=""))

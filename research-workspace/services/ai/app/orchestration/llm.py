@@ -127,6 +127,8 @@ PROVIDERS = {
     "groq": ("groq_base_url", "groq_api_key", "GROQ_API_KEY", ("llama-3.3-70b-versatile", "llama-3.1-8b-instant")),
     "gemini": ("gemini_base_url", "gemini_api_key", "GEMINI_API_KEY", ("gemini-flash-latest", "gemini-flash-lite-latest")),
     "ollama": ("ollama_base_url", None, "", ("mistral-small:24b", "llama3.1:8b")),
+    # any OpenAI-compatible service, set entirely in .env (COMPAT_BASE_URL, COMPAT_API_KEY, MODEL_<slot>_NAME)
+    "compat": ("compat_base_url", "compat_api_key", "COMPAT_API_KEY", ("", "")),
 }
 
 
@@ -140,6 +142,10 @@ def build_llm(s: Settings, slot: str) -> OpenAICompatLLM:
     if key_attr and not key:
         raise LLMError(f"{key_var} is not set")
     name = getattr(s, f"model_{slot.lower()}_name") or defaults[slot == "B"]
+    if not getattr(s, url_attr):
+        raise LLMError(f"{url_attr.upper()} is not set")
+    if not name:
+        raise LLMError(f"MODEL_{slot}_NAME is not set ({provider} has no default model)")
     return OpenAICompatLLM(
         name=f"model_{slot.lower()}:{provider}", base_url=getattr(s, url_attr), model=name,
         api_key=key, timeout=s.llm_timeout_s, max_tokens=s.llm_max_output_tokens or None,

@@ -22,11 +22,16 @@ class Settings(BaseSettings):
     mistral_api_key: str = ""
     groq_api_key: str = ""
     gemini_api_key: str = ""
+    # Any other OpenAI-compatible service (an aggregator such as xKiro or OpenRouter, Together, DeepSeek ...):
+    # provider "compat" with its API address, its key, and MODEL_<slot>_NAME as that service names the model.
+    compat_base_url: str = ""
+    compat_api_key: str = ""
 
     contact_email: str = ""
 
     # --- LLM models: swap providers or models by editing .env only (see .env.example). ---
-    # Providers: mistral | groq | gemini | ollama. An empty *_NAME uses the provider's default model.
+    # Providers: mistral | groq | gemini | ollama | compat. An empty *_NAME uses the provider's default model
+    # (compat has none: its model name must be set).
     model_a_name: str = ""
     model_b_name: str = ""
     # NOTE: mistral/groq are cloud APIs; chunk text (including confidential Mode B
