@@ -515,3 +515,69 @@ def test_compat_provider_needs_its_address_key_and_model_name():
         build_llms(s(compat_base_url=""))
     with pytest.raises(LLMError, match="MODEL_B_NAME is not set"):
         build_llms(s(model_b_name=""))
+
+
+def test_backup_model_takes_over_when_the_main_provider_fails():
+    from app.governance import Meter
+    from app.orchestration.llm import FallbackLLM
+    main = Fake("model_a:gemini", lambda s, u, n: LLMError("model_a:gemini: HTTP 503 high demand"))
+    backup = Fake("model_a:compat", lambda s, u, n: ans(claim("x")))
+    slot = FallbackLLM(main, backup)
+    metered = Meter([slot]).llms[0]
+    assert metered.name == "model_a:gemini"                      # before any failure: the main model
+    assert asyncio.run(metered.complete("s", "u")) == ans(claim("x"))
+    asyncio.run(metered.complete("s", "u2"))
+    assert len(main.calls) == 1 and len(backup.calls) == 2      # the failed provider is not tried again this question
+    assert metered.name == "model_a:compat"                      # records show the model that actually answered
+
+
+def test_both_main_and_backup_failing_names_both():
+    from app.orchestration.llm import FallbackLLM
+    from app.routes_tasks import _cross_check_note
+    main = Fake("model_a:gemini", lambda s, u, n: LLMError("model_a:gemini: HTTP 503 high demand"))
+    backup = Fake("model_a:compat", lambda s, u, n: LLMError("model_a:compat: HTTP 429 no quota"))
+    with pytest.raises(LLMError) as e:
+        asyncio.run(FallbackLLM(main, backup).complete("s", "u"))
+    assert "HTTP 503" in str(e.value) and "backup model_a:compat: HTTP 429" in str(e.value)
+    assert _cross_check_note(str(e.value)).startswith("Model A (Gemini) and its backup are out of tokens")
+
+
+def test_a_whole_question_still_answers_when_a_main_model_is_overloaded():
+    from app.orchestration.llm import FallbackLLM
+    busy = Fake("model_a:gemini", lambda s, u, n: LLMError("model_a:gemini: HTTP 503 high demand"))
+    backup = Fake("model_a:compat", lambda s, u, n: verdict("agreed") if is_judge(s) else ans(claim("Stable at 4 C")))
+    b = Fake("model_b:compat", lambda s, u, n: ans(claim("Injection stable at 4 C")))
+    a = FallbackLLM(busy, backup)
+    r = asyncio.run(run_dual("How stable is the injection?", CHUNKS, a, b, judge=a))
+    assert r.kind == "consensus" and r.model_a["model"] == "model_a:compat"
+
+
+def test_backup_settings():
+    from app.orchestration.llm import FallbackLLM
+    def s(**kw):
+        base = dict(model_a_provider="gemini", gemini_api_key="g", model_b_provider="compat", compat_base_url="https://x.test/v1",
+                    compat_api_key="k", model_b_name="mistralai/mistral-small-2603")
+        return Settings(_env_file=None, **{**base, **kw})
+    a, b = build_llms(s())
+    assert a.retries == 5 and not isinstance(a, FallbackLLM)                       # no backup: unchanged
+    a, _ = build_llms(s(model_a_fallback_provider="compat", model_a_fallback_name="cohere/command-a-plus"))
+    assert isinstance(a, FallbackLLM) and a.main.retries == 2 and a.backup.model == "cohere/command-a-plus"
+    with pytest.raises(LLMError, match="MODEL_A_FALLBACK_NAME is not set"):
+        build_llms(s(model_a_fallback_provider="compat"))
+    with pytest.raises(LLMError, match="unknown MODEL_B_FALLBACK_PROVIDER"):
+        build_llms(s(model_b_fallback_provider="nope"))
+
+
+def test_an_unusable_reply_also_hands_the_question_to_the_backup():
+    from app.orchestration.llm import FallbackLLM
+    chatty = Fake("model_b:compat", lambda s, u, n: "Sure! Here is my answer in prose.")      # never valid JSON
+    backup = Fake("model_b:gemini", lambda s, u, n: ans(claim("Injection stable at 4 C")))
+    a = Fake("model_a:compat", lambda s, u, n: verdict("agreed") if is_judge(s) else ans(claim("Stable at 4 C")))
+    b = FallbackLLM(chatty, backup)
+    r = asyncio.run(run_dual("How stable is the injection?", CHUNKS, a, b, judge=a))
+    assert r.kind == "consensus" and len(chatty.calls) == 2 and r.model_b["model"] == "model_b:gemini"
+
+    # a model without a backup still fails closed, and a backup that is also unusable is not retried forever
+    both_bad = FallbackLLM(Fake("m", lambda s, u, n: "prose"), Fake("bk", lambda s, u, n: "prose"))
+    with pytest.raises(CrossCheckFailed, match="bk: invalid output after retry"):
+        asyncio.run(run_dual("q?", CHUNKS, a, both_bad, judge=a))

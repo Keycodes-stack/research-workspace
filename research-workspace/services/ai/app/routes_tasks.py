@@ -433,6 +433,8 @@ def _cross_check_note(detail: str) -> str:
     d = detail.lower()
     m = _MODEL_IN_ERROR.search(d)
     who, is_ = (f"Model {m.group(1).upper()} ({m.group(2).capitalize()})", "is") if m else ("The AI models", "are")
+    if m and "; backup " in d:          # the slot's backup failed too
+        who, is_ = f"{who} and its backup", "are"
     no_answer = "No answer is shown because it could not be cross-checked."
     if "http 429" in d or "rate limit" in d:
         if "per-minute limit" not in d and any(k in d for k in _OUT_OF_QUOTA):

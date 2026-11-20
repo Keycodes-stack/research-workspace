@@ -1,12 +1,14 @@
 """LLM clients. Mistral, Groq and Ollama all expose an OpenAI-compatible
 /chat/completions API, so one client covers cloud and fully local deployments."""
 import asyncio
+import logging
 from typing import Protocol
 
 import httpx
 
 from ..config import Settings
 
+log = logging.getLogger(__name__)
 RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
@@ -132,24 +134,68 @@ PROVIDERS = {
 }
 
 
-def build_llm(s: Settings, slot: str) -> OpenAICompatLLM:
-    """Build model A or B purely from settings: MODEL_<slot>_PROVIDER and MODEL_<slot>_NAME."""
-    provider = getattr(s, f"model_{slot.lower()}_provider")
+class FallbackLLM:
+    """A model slot with a backup. When the main model's provider fails (overloaded, out of quota, unreachable, a
+    rejected key), the backup answers instead and keeps answering for the rest of this question, so a busy provider
+    never reaches the user. Only when both fail is the error raised, naming both."""
+
+    def __init__(self, main: LLM, backup: LLM):
+        self.main, self.backup, self.failed = main, backup, None
+
+    @property
+    def name(self) -> str:
+        return self.backup.name if self.failed else self.main.name
+
+    def use_backup(self, why: str) -> bool:
+        """Switch to the backup for the rest of this question; False when it is already in use."""
+        if self.failed is not None:
+            return False
+        self.failed = why
+        log.warning("%s failed (%s); using the backup %s", self.main.name, why[:160], self.backup.name)
+        return True
+
+    async def complete(self, system: str, user: str) -> str:
+        if self.failed is None:
+            try:
+                return await self.main.complete(system, user)
+            except LLMError as e:
+                self.use_backup(str(e))
+        try:
+            return await self.backup.complete(system, user)
+        except LLMError as e:
+            raise LLMError(f"{self.failed}; backup {e}") from e
+
+
+def _build(s: Settings, slot: str, provider: str, name: str, setting: str, retries: int) -> OpenAICompatLLM:
     if provider not in PROVIDERS:
-        raise LLMError(f"unknown MODEL_{slot}_PROVIDER {provider!r}; use one of {sorted(PROVIDERS)}")
+        raise LLMError(f"unknown {setting}_PROVIDER {provider!r}; use one of {sorted(PROVIDERS)}")
     url_attr, key_attr, key_var, defaults = PROVIDERS[provider]
     key = getattr(s, key_attr) if key_attr else ""
     if key_attr and not key:
         raise LLMError(f"{key_var} is not set")
-    name = getattr(s, f"model_{slot.lower()}_name") or defaults[slot == "B"]
+    name = name or defaults[slot == "B"]
     if not getattr(s, url_attr):
         raise LLMError(f"{url_attr.upper()} is not set")
     if not name:
-        raise LLMError(f"MODEL_{slot}_NAME is not set ({provider} has no default model)")
+        raise LLMError(f"{setting}_NAME is not set ({provider} has no default model)")
     return OpenAICompatLLM(
-        name=f"model_{slot.lower()}:{provider}", base_url=getattr(s, url_attr), model=name,
-        api_key=key, timeout=s.llm_timeout_s, max_tokens=s.llm_max_output_tokens or None,
+        name=f"model_{slot.lower()}:{provider}", base_url=getattr(s, url_attr), model=name, api_key=key,
+        timeout=s.llm_timeout_s, max_tokens=s.llm_max_output_tokens or None, retries=retries,
     )
+
+
+def build_llm(s: Settings, slot: str) -> LLM:
+    """Build model A or B purely from settings: MODEL_<slot>_PROVIDER and MODEL_<slot>_NAME, plus an optional backup
+    (MODEL_<slot>_FALLBACK_PROVIDER / _NAME). With a backup the main model retries once instead of waiting through
+    several retries, so the switch is quick."""
+    sl = slot.lower()
+    backup_provider = getattr(s, f"model_{sl}_fallback_provider")
+    main = _build(s, slot, getattr(s, f"model_{sl}_provider"), getattr(s, f"model_{sl}_name"),
+                  f"MODEL_{slot}", retries=2 if backup_provider else 5)
+    if not backup_provider:
+        return main
+    backup = _build(s, slot, backup_provider, getattr(s, f"model_{sl}_fallback_name"), f"MODEL_{slot}_FALLBACK", retries=5)
+    return FallbackLLM(main, backup)
 
 
 def build_llms(s: Settings) -> tuple[LLM, LLM]:

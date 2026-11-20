@@ -161,6 +161,14 @@ Done when `app-ai-1` shows **healthy**. Or run `powershell -ExecutionPolicy Bypa
 - **Models (your `.env`, not code):** Model A = Gemini (`gemini-flash-latest`), Model B = Mistral (`mistral-small-latest`). Groq's `gpt-oss-120b` refused partial answers even on a second look.
 - **Tests:** 149 AI tests pass (new: second look ×4, agreement ×4).
 
+## Models that keep working (uncommitted)
+
+- **Any OpenAI-compatible service** (`compat`, commit `ef065fe`): `COMPAT_BASE_URL`, `COMPAT_API_KEY`, `MODEL_<slot>_PROVIDER=compat`, `MODEL_<slot>_NAME` as the service names the model. Used for xKiro (`https://api.xkiro.com/v1`, e.g. `mistralai/mistral-small-2603`).
+- **Clearer errors** (commit `73f588b`): "Model A (Gemini) is overloaded right now…" for HTTP 502/503; every error names the model.
+- **Automatic backup per model**: `MODEL_<slot>_FALLBACK_PROVIDER` / `_NAME`. When the main model's provider is overloaded, out of quota, unreachable, rejects the key, or keeps replying with unusable output, the backup answers for the rest of that question, so the user still gets a cross-checked answer. The main model then retries once instead of waiting through several retries. Only when both fail is an error shown ("Model B (Gemini) and its backup are…"). Records show the model that actually answered.
+- **Checked live:** a broken Gemini model as Model B switched to Gemini Flash-Lite and the question was answered by both models (59 s). Cohere Command A+ is not a good backup: it replied in prose instead of JSON.
+- **Recommended setup:** Model A = xKiro Mistral Small, Model B = Gemini Flash with backup Gemini Flash-Lite (different company from Model A).
+
 ## Open items
 - **My uploads and stored papers:** should My uploads also use papers stored by online searches? Currently it doesn't.
 - **`codex.md` is outdated:** it describes the earlier design and says there's no CI workflow, which is wrong. This file replaces it.

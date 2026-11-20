@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # (compat has none: its model name must be set).
     model_a_name: str = ""
     model_b_name: str = ""
+    # Optional backup per slot, used automatically when the main model's provider is overloaded, out of quota or
+    # unreachable. Pick a different company from the other slot's model so the two checks stay independent.
+    model_a_fallback_provider: str = ""
+    model_a_fallback_name: str = ""
+    model_b_fallback_provider: str = ""
+    model_b_fallback_name: str = ""
     # NOTE: mistral/groq are cloud APIs; chunk text (including confidential Mode B
     # documents) is sent to them. Use "ollama" for fully local processing.
     model_a_provider: str = "mistral"

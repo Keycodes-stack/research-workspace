@@ -21,7 +21,15 @@ async def audit(pool, project_id: UUID | None, actor: UUID, action: str, target_
 
 class Metered:
     def __init__(self, llm, meter):
-        self._llm, self._meter, self.name = llm, meter, llm.name
+        self._llm, self._meter = llm, meter
+
+    @property
+    def name(self) -> str:          # a model with a backup reports the one that actually answered
+        return self._llm.name
+
+    def use_backup(self, why: str) -> bool:
+        switch = getattr(self._llm, "use_backup", None)
+        return bool(switch and switch(why))
 
     async def complete(self, system: str, user: str) -> str:
         self._meter.calls += 1

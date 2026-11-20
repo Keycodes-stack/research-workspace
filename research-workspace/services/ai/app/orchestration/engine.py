@@ -65,6 +65,10 @@ async def _call(llm: LLM, system: str, user: str, parse: Callable[[str], object]
             return parse(raw), raws
         except ParseError as e:
             if attempt == 1:
+                # A model with a backup hands the question to it (the backup gets its own two tries).
+                switch = getattr(llm, "use_backup", None)
+                if switch and switch(f"{llm.name}: invalid output after retry ({e})"):
+                    return await _call(llm, system, user, parse)
                 raise CrossCheckFailed(f"{llm.name}: invalid output after retry ({e})") from e
             prompt = (
                 f"{user}\n\nYour previous reply was rejected: {e}. "
