@@ -104,6 +104,24 @@ def test_search_returns_full_top_k_despite_source_filter(db_url):
     run_db(db_url, go)
 
 
+def test_search_per_source_returns_every_paper(db_url):
+    """/ask reads every paper found: a long, close paper must not push a short, distant one out."""
+    async def go(pool):
+        pid = await new_project(pool)
+        long_ = await new_source(pool, pid, "long")
+        short = await new_source(pool, pid, "short")
+        cfg = IngestConfig(EMB, RegexTokenizer(), chunk_tokens=8, chunk_overlap=0)
+        await ingest_abstract(pool, long_, " ".join(f"alpha{i}" for i in range(400)), cfg)
+        await ingest_abstract(pool, short, " ".join(f"beta{i}" for i in range(20)), cfg)
+        hits = await store.search_per_source(pool, EMB.embed_query("alpha1 alpha2"), [long_, short], 2)
+        by_source = {s: [h for h in hits if h.source_id == s] for s in (long_, short)}
+        assert len(by_source[long_]) == 2 and len(by_source[short]) == 2
+        assert [h.similarity for h in hits] == sorted((h.similarity for h in hits), reverse=True)
+        assert await store.search_per_source(pool, EMB.embed_query("x"), [], 2) == []
+
+    run_db(db_url, go)
+
+
 def test_double_ingest_scanned_pdf_and_abstract(db_url):
     async def go(pool):
         pid = await new_project(pool)

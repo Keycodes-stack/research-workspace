@@ -24,6 +24,20 @@ ORDER BY c.embedding <=> $1
 LIMIT $3
 """
 
+# The best `$3` passages of EVERY given source (an exact scan, so no paper is missed because other papers'
+# passages filled a global top-K). Used by /ask, where the models must read every paper that was found.
+SEARCH_PER_SOURCE = """
+SELECT id, source_id, chunk_index, text, sha256, page_start, page_end, line_start, line_end, similarity
+FROM (SELECT c.id, c.source_id, c.chunk_index, c.text, c.sha256,
+             c.page_start, c.page_end, c.line_start, c.line_end,
+             1 - (c.embedding <=> $1) AS similarity,
+             row_number() OVER (PARTITION BY c.source_id ORDER BY c.embedding <=> $1, c.chunk_index) AS rank
+      FROM chunks c
+      WHERE c.source_id = ANY($2::uuid[])) ranked
+WHERE rank <= $3
+ORDER BY similarity DESC
+"""
+
 
 class AlreadyIngested(Exception):
     pass
@@ -87,6 +101,22 @@ async def search_chunks(
             await conn.execute("SELECT set_config('hnsw.iterative_scan', 'strict_order', true)")
             await conn.execute("SELECT set_config('hnsw.ef_search', '100', true)")
             rows = await conn.fetch(SEARCH, query_embedding, source_ids, top_k)
+    return _hits(rows)
+
+
+async def search_per_source(
+    pool: asyncpg.Pool,
+    query_embedding: np.ndarray,
+    source_ids: list[UUID],
+    per_source: int,
+) -> list[Hit]:
+    """The `per_source` best passages of every given source, most similar first."""
+    if not source_ids:
+        return []
+    return _hits(await pool.fetch(SEARCH_PER_SOURCE, query_embedding, source_ids, per_source))
+
+
+def _hits(rows) -> list[Hit]:
     return [
         Hit(
             chunk_id=r["id"], source_id=r["source_id"], chunk_index=r["chunk_index"],

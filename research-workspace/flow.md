@@ -109,8 +109,8 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    V["Question → vector (BGE)"] --> RET["pgvector search in the chosen sources<br/>(top_k × 3 passages)"]
-    RET --> DIV["Keep the 10 closest passages,<br/>max 2 per paper"]
+    V["Question → vector (BGE)"] --> RET["pgvector search: the 2 best passages<br/>of every paper in the chosen sources"]
+    RET --> DIV["Reading order: every paper's best passage first,<br/>then second passages (the token budget cuts from the end)"]
     DIV --> SEAL{"Passage text still matches<br/>its sha256 seal?"}
     SEAL -->|no| DROP["Dropped"]
     SEAL -->|yes| GATE{"Best match ≥ 0.65?"}

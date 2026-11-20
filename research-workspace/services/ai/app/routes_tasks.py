@@ -348,22 +348,37 @@ async def search_and_store(pool, s3, embedder, tokenizer, cfg, project_id, threa
 MAX_PASSAGES_PER_SOURCE = 2   # one long PDF must not crowd every other paper out of the models' context
 
 
-def diversify(hits: list, top_k: int, per_source: int = MAX_PASSAGES_PER_SOURCE) -> list:
-    """Best-first hits, at most `per_source` from any one source, so the answer draws on more papers."""
+def reading_order(hits: list, per_source: int = MAX_PASSAGES_PER_SOURCE) -> list:
+    """Every paper's best passage first (most relevant paper first), then every paper's second passage, and so on.
+
+    The token budget (fit_to_budget) cuts from the end, so second passages are dropped before any paper goes
+    unread: the models read every paper that was found, as far as the budget allows."""
     seen: dict = {}
-    out = []
-    for h in hits:
-        if seen.get(h.source_id, 0) < per_source:
-            seen[h.source_id] = seen.get(h.source_id, 0) + 1
-            out.append(h)
-            if len(out) == top_k:
-                break
-    return out
+    taken: set = set()
+    rounds = []
+    for h in sorted(hits, key=lambda h: h.similarity, reverse=True):
+        n = seen.get(h.source_id, 0)
+        if n < per_source and h.chunk_id not in taken:
+            seen[h.source_id] = n + 1
+            taken.add(h.chunk_id)
+            rounds.append((n, h))
+    return [h for _, h in sorted(rounds, key=lambda r: r[0])]   # stable: most relevant first within a round
+
+
+def reading_note(sources: int, passages: int) -> str:
+    """The live step shown while the models read, e.g. 9 sources, 10 passages: the best passage of every source, plus
+    a second passage from the most relevant ones where the reading budget allows."""
+    s = "1 source" if sources == 1 else f"{sources} sources"
+    extra = passages - sources
+    if sources == 1:
+        detail = "its best passage" if passages <= 1 else f"its {passages} best passages"
+    else:
+        detail = "the best passage of each" + (f", plus {extra} more from the most relevant" if extra > 0 else "")
+    return f"Models A and B are each reading {s} ({detail}) and answering independently..."
 
 
 class AskIn(BaseModel):
     question: str = Field(min_length=3, max_length=4000)
-    top_k: int = Field(default=5, ge=1, le=20)
     # open discovery only: restrict to uploaded PDFs, to discovered papers, or both
     scope: Literal["uploads", "api", "both"] = "both"
     # open discovery only: search just these sources (API clients; the web app searches every project upload)
@@ -406,24 +421,36 @@ def render_content(r: DualResult) -> str:
     return "\n".join(lines)
 
 
+_MODEL_IN_ERROR = re.compile(r"model_([ab]):([a-z0-9_.-]+)")   # LLM names are "model_a:<provider>"
+# A used-up quota, as opposed to a per-minute limit that clears by itself.
+_OUT_OF_QUOTA = ("no quota", "daily quota", "insufficient_quota", "quota exceeded", "exceeded your current quota",
+                 "resource_exhausted", "per day", "(tpd)", "(rpd)", "credit", "billing")
+
+
 def _cross_check_note(detail: str) -> str:
-    """A plain-language reason the two-model check could not finish (the raw detail stays in the response and the log)."""
+    """A plain-language reason the two-model check could not finish, naming the model that failed (the raw detail
+    stays in the response and the log)."""
     d = detail.lower()
+    m = _MODEL_IN_ERROR.search(d)
+    who, is_ = (f"Model {m.group(1).upper()} ({m.group(2).capitalize()})", "is") if m else ("The AI models", "are")
+    no_answer = "No answer is shown because it could not be cross-checked."
     if "http 429" in d or "rate limit" in d:
-        return ("The AI models are busy right now (the provider's usage limit was reached). "
-                "No answer is shown because it could not be cross-checked. Wait about a minute and ask again.")
+        if "per-minute limit" not in d and any(k in d for k in _OUT_OF_QUOTA):
+            return (f"{who} {is_} out of tokens: its provider's quota for this API key is used up or not active. "
+                    f"{no_answer} Add credit or activate the key with the provider, use another key, or wait until "
+                    "the quota resets.")
+        return (f"{who} {is_} busy right now (its provider's per-minute limit was reached). {no_answer} "
+                "Wait about a minute and ask again.")
     if "http 413" in d or "request too large" in d:
-        return ("The question pulled in more source text than the AI provider accepts in one request. "
-                "Ask a narrower question, or ask again in a minute.")
+        return (f"The question pulled in more source text than {who if m else 'the AI provider'} accepts in one "
+                "request. Ask a narrower question, or ask again in a minute.")
     if "http 401" in d or "http 403" in d:
-        return ("The AI provider rejected the access key, so the models could not be reached. "
-                "Ask an administrator to check the API key.")
+        return f"{who}: the provider rejected the API key. Ask an administrator to check the key."
     if "json_validate_failed" in d or "invalid output" in d or "malformed" in d:
-        return ("One of the models returned an unusable reply. No answer is shown because it could not be "
-                "cross-checked. Please ask again.")
+        return f"{who if m else 'One of the models'} returned an unusable reply. {no_answer} Please ask again."
     if "timeout" in d or "connect" in d or "transport" in d or "readerror" in d:
-        return "The AI models could not be reached. Check the connection and try again."
-    return "No answer is shown because it could not be cross-checked. Please try again."
+        return f"{who} could not be reached. Check the connection and try again."
+    return f"{no_answer} Please try again."
 
 
 @router.get("/threads/{thread_id}/progress")
@@ -498,7 +525,7 @@ async def ask(
     async def search_saved():
         progress(thread_id, f"Searching this project's {len(search_ids)} "
                             f"{'uploaded documents' if plan.fresh or body.scope == 'uploads' else 'saved sources'}...")
-        hits = await store.search_chunks(pool, q, search_ids, body.top_k * 3)
+        hits = await store.search_per_source(pool, q, search_ids, MAX_PASSAGES_PER_SOURCE)
         progress(thread_id, f"Saved sources searched ({len(hits)} passages).")
         return hits
 
@@ -522,7 +549,7 @@ async def ask(
         online_ids = [r.source_id for r in results if r.chunks]
         if online_ids:
             progress(thread_id, "Online papers are ready; finding their passages for the answer...")
-            stored = stored + await store.search_chunks(pool, q, online_ids, body.top_k * 3)
+            stored = stored + await store.search_per_source(pool, q, online_ids, MAX_PASSAGES_PER_SOURCE)
         search_ids = list(dict.fromkeys([*search_ids, *online_ids]))
         await audit(pool, th["project_id"], user, "source.discover", "project", th["project_id"],
                     question=body.question[:200], found=len(online_ids))
@@ -536,7 +563,7 @@ async def ask(
         progress(thread_id, note)
         return {"kind": "not_in_saved_sources", "thread_id": str(thread_id), "saved_sources": len(search_ids),
                 "top_similarity": best, "threshold": cfg.similarity_threshold, "note": note}
-    all_hits = diversify(stored, body.top_k)
+    all_hits = reading_order(stored)
 
     question_id = await pool.fetchval(
         "INSERT INTO messages (thread_id, role, content) VALUES ($1, 'user', $2) RETURNING id",
@@ -579,8 +606,7 @@ async def ask(
         gate["passages_sent"] = len(chunks)
         gate["papers_read"] = len({c.label for c in chunks})     # distinct papers the models actually read
         await check_budget(pool, th["project_id"])
-        progress(thread_id, f"Models A and B are reading {len(chunks)} passages from {gate['papers_read']} papers "
-                            "and answering independently...")
+        progress(thread_id, reading_note(gate["papers_read"], len(chunks)))
         meter = Meter(llms)
         a, b = meter.llms
         vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)

@@ -20,6 +20,20 @@ class LLM(Protocol):
     async def complete(self, system: str, user: str) -> str: ...
 
 
+def _limit_kind(r: httpx.Response) -> str:
+    """For a 429, which limit was hit: " no quota" (a limit of 0, e.g. Mistral's x-ratelimit-limit-req-minute: 0,
+    which waiting never fixes), " daily quota" or " per-minute limit" (Gemini names the quota in a long body)."""
+    if r.status_code != 429:
+        return ""
+    if any("ratelimit-limit" in k.lower() and v.strip() == "0" for k, v in r.headers.items()):
+        return " no quota"
+    if "PerDay" in r.text:
+        return " daily quota"
+    if "PerMinute" in r.text:
+        return " per-minute limit"
+    return ""
+
+
 class OpenAICompatLLM:
     def __init__(
         self,
@@ -91,14 +105,15 @@ class OpenAICompatLLM:
                 await asyncio.sleep(self.backoff * 2**attempt)
                 continue
 
-            transient = r.status_code in RETRY_STATUS or (
+            # A used-up or zero quota never clears in a few seconds: fail at once instead of waiting through retries.
+            transient = (r.status_code in RETRY_STATUS and _limit_kind(r) not in (" no quota", " daily quota")) or (
                 r.status_code == 400 and "json_validate_failed" in r.text)  # flaky empty JSON reply
             if transient and not last:
                 await asyncio.sleep(self._wait(r, attempt))
                 continue
             if r.status_code != 200:
-                # Truncate: provider error bodies can echo parts of the prompt.
-                raise LLMError(f"{self.name}: HTTP {r.status_code} {r.text[:200]}")
+                # Truncate: provider error bodies can echo parts of the prompt. Read the kind of limit first.
+                raise LLMError(f"{self.name}: HTTP {r.status_code}{_limit_kind(r)} {r.text[:200]}")
             try:
                 return r.json()["choices"][0]["message"]["content"] or ""
             except (KeyError, IndexError, ValueError) as e:

@@ -11,6 +11,7 @@ from app.ingest.chunking import sha256_hex
 from app.orchestration.engine import CrossCheckFailed, decide, run_dual
 from app.orchestration.llm import LLMError, OpenAICompatLLM, build_llms
 from app.orchestration.numeric import extract_quantities, numeric_conflicts
+from app.orchestration.prompts import SECOND_LOOK
 from app.orchestration.schema import (
     INSUFFICIENT, Claim, ContextChunk, JudgeVerdict, ParseError, parse_answer,
 )
@@ -154,6 +155,76 @@ def test_decide_no_overlap_shows_verified_claims_as_single_model():
     assert [c.confirmed for c in claims] == [False, False]  # one from each model, none confirmed by both
 
 
+def quoted(text, quote, chunk=C1):
+    return Claim(text, [chunk], ["C1"], quote)
+
+
+def test_same_sentence_quotes_count_as_agreed_even_if_the_judge_missed_it():
+    from app.orchestration.schema import ParsedAnswer
+    a = ParsedAnswer("answered", [quoted("Heat denatures DNA", "Liquid injection samples were stable at 4 C")])
+    b = ParsedAnswer("answered", [quoted("Samples stayed stable when cold", "injection samples were stable at 4 C for twelve weeks")])
+    v = JudgeVerdict.model_validate_json(verdict("not_addressed"))
+    kind, reason, claims, _ = decide(a, b, v, [])
+    assert (kind, reason) == ("consensus", "models_agree")
+    assert [(c.text, c.confirmed) for c in claims] == [("Heat denatures DNA", True)]   # B's matching claim is not repeated
+
+
+def test_same_passage_needs_the_same_chunk_and_a_real_shared_span():
+    from app.orchestration.engine import same_passage
+    q = "Liquid injection samples were stable at 4 C"
+    assert same_passage(quoted("x", q), quoted("y", q.upper()))                       # normalised, case-insensitive
+    assert not same_passage(quoted("x", q), quoted("y", q, chunk=C2))                 # different passage
+    assert not same_passage(quoted("x", q), quoted("y", "With a citrate stabilizer the injection tolerated 25 C"))
+    assert not same_passage(quoted("x", "stable at 4"), quoted("y", "stable at 4"))   # too short to mean anything
+
+
+def test_same_passage_boundary():
+    from app.orchestration.engine import same_passage
+    ten = "alpha beta gamma delta epsilon zeta eta theta iota kappa"
+    assert same_passage(quoted("x", ten), quoted("y", "gamma delta epsilon zeta other words here"))          # 4 of 10 shared
+    assert not same_passage(quoted("x", ten), quoted("y", "gamma delta epsilon other words here now"))     # only 3 shared
+    assert not same_passage(quoted("x", ten), quoted("y", "alpha beta x delta epsilon y eta theta"))             # scattered words
+
+
+def test_same_sentence_never_hides_a_contradiction():
+    from app.orchestration.schema import ParsedAnswer
+    q = "Liquid injection samples were stable at 4 C for twelve weeks"
+    a = ParsedAnswer("answered", [quoted("Stable at 4 C", q)])
+    b = ParsedAnswer("answered", [quoted("Unstable at 4 C", q)])
+    v = JudgeVerdict.model_validate_json(verdict("contradicted", conflicts=[
+        {"topic": "stability", "a_id": 1, "b_id": 1, "explanation": "opposite"}]))
+    assert decide(a, b, v, [])[0] == "disagreement"
+
+
+def test_agreement_edge_cases():
+    from app.orchestration.engine import same_passage
+    from app.orchestration.schema import ParsedAnswer
+    q1 = "Liquid injection samples were stable at 4 C for twelve weeks"
+    q2 = "With a citrate stabilizer the injection tolerated 25 C"
+    # empty or punctuation-only quotes never match; claims citing several passages match on any shared one
+    assert not same_passage(quoted("x", ""), quoted("y", ""))
+    assert not same_passage(quoted("x", "..."), quoted("y", "..."))
+    assert same_passage(Claim("x", [C1, C2], ["C1", "C2"], q2), quoted("y", q2, chunk=C2))
+    assert not same_passage(Claim("x", [], [], q1), quoted("y", q1))
+
+    # one B claim matching two A claims: both A claims confirmed, the B claim is not shown again
+    a = ParsedAnswer("answered", [quoted("A1", q1), quoted("A2", "samples were stable at 4 C for twelve weeks")])
+    b = ParsedAnswer("answered", [quoted("B1", q1), quoted("B2", q2)])
+    v = JudgeVerdict.model_validate_json(verdict("not_addressed", "not_addressed"))
+    kind, reason, claims, _ = decide(a, b, v, [])
+    assert (kind, reason) == ("consensus", "models_agree")
+    assert [(c.text, c.confirmed) for c in claims] == [("A1", True), ("A2", True), ("B2", False)]
+
+    # the judge's match and a same-sentence match combine; a judge id with no B claim behind it is ignored
+    a = ParsedAnswer("answered", [quoted("A1", q1), quoted("A2", q2, chunk=C2)])
+    b = ParsedAnswer("answered", [quoted("B1", q1)])
+    v = JudgeVerdict.model_validate_json(json.dumps({"a_claims": [
+        {"id": 1, "status": "not_addressed", "b_ids": []}, {"id": 2, "status": "agreed", "b_ids": [7]}], "conflicts": []}))
+    kind, _, claims, _ = decide(a, b, v, [])
+    assert kind == "consensus" and [(c.text, c.confirmed) for c in claims] == [("A1", True), ("A2", True)]
+
+
+
 def test_numeric_check_ignores_unrelated_quantities():
     a = parsed("High temperatures above 90 C accelerate both DNA denaturation and degradation")
     b = parsed("For every 10 C increase the degradation reaction rate rises two to three times")
@@ -235,12 +306,40 @@ def test_numeric_check_catches_what_the_judge_missed():
     assert r.disagreement["conflicts"][0]["detected_by"] == "numeric"
 
 
-def test_one_model_insufficient_is_a_disagreement_not_an_answer():
+def test_one_model_insufficient_after_a_second_look_is_a_disagreement_not_an_answer():
     a = Fake("A", lambda s, u, n: ans(claim("x")))
     b = Fake("B", lambda s, u, n: ans(status="insufficient_source_evidence"))
     r = run(a, b)
     assert (r.kind, r.reason) == ("disagreement", "model_b_insufficient")
-    assert r.claims == [] and len(b.calls) == 1             # no judge call needed
+    assert r.claims == [] and len(a.calls) == 1             # no judge call needed
+    # B read the same passages twice; the second look never shows it A's answer
+    assert len(b.calls) == 2 and "SECOND LOOK" in b.calls[1][1] and "SECOND LOOK" not in b.calls[0][1]
+    assert b.calls[1][1] == b.calls[0][1] + SECOND_LOOK
+    assert len(r.model_b["raw"]) == 2
+
+
+def test_second_look_lets_both_models_answer_and_agree():
+    a = Fake("A", lambda s, u, n: verdict("agreed") if is_judge(s) else ans(claim("Stable at 4 C for twelve weeks")))
+    b = Fake("B", lambda s, u, n: ans(claim("Injection was stable at 4 C")) if "SECOND LOOK" in u
+             else ans(status="insufficient_source_evidence"))
+    r = asyncio.run(run_dual("How stable is the injection, out of 10?", CHUNKS, a, b, judge=a))
+    assert (r.kind, r.reason) == ("consensus", "models_agree")
+    assert r.claims[0].confirmed and len(b.calls) == 2
+
+
+def test_a_failed_second_look_keeps_the_first_reply():
+    a = Fake("A", lambda s, u, n: ans(claim("x")))
+    b = Fake("B", lambda s, u, n: LLMError("rate limited") if "SECOND LOOK" in u
+             else ans(status="insufficient_source_evidence"))
+    r = run(a, b)
+    assert (r.kind, r.reason) == ("disagreement", "model_b_insufficient")
+
+
+def test_no_second_look_when_both_models_agree_there_is_nothing():
+    insuff = lambda s, u, n: ans(status="insufficient_source_evidence")
+    a, b = Fake("A", insuff), Fake("B", insuff)
+    run(a, b)
+    assert len(a.calls) == 1 and len(b.calls) == 1
 
 
 def test_both_insufficient_and_no_chunks():

@@ -9,13 +9,18 @@ from app.ingest.tokenizer import RegexTokenizer
 from app.retrieval.models import DiscoveryResult, Paper
 
 
-def test_diversify_caps_passages_per_paper():
+def test_reading_order_gives_every_paper_a_passage_before_any_second_one():
     from types import SimpleNamespace as H
-    from app.routes_tasks import diversify
-    hits = [H(source_id="big", similarity=0.9 - i / 100) for i in range(6)] + [H(source_id="b", similarity=0.5),
-                                                                              H(source_id="c", similarity=0.4)]
-    out = diversify(hits, top_k=5)
-    assert [h.source_id for h in out] == ["big", "big", "b", "c"]
+    from app.routes_tasks import reading_order
+    hits = ([H(chunk_id=f"big{i}", source_id="big", similarity=0.9 - i / 100) for i in range(6)]
+            + [H(chunk_id=f"p{i}", source_id=f"p{i}", similarity=0.5 - i / 100) for i in range(12)]
+            + [H(chunk_id="b2", source_id="p0", similarity=0.45), H(chunk_id="big0", source_id="big", similarity=0.9)])
+    out = reading_order(hits)
+    ids = [h.source_id for h in out]
+    # all 13 papers come first, most relevant first, so the token budget drops second passages before any paper
+    assert ids[:13] == ["big"] + [f"p{i}" for i in range(12)]
+    # then at most one more passage per paper; a duplicate chunk is read once
+    assert ids[13:] == ["big", "p0"] and len({h.chunk_id for h in out}) == len(out)
 
 
 def test_vague_questions_borrow_the_topic():
@@ -94,3 +99,63 @@ def test_nothing_to_read_refusals_say_why():
     assert "no uploaded documents yet" in render_content(DualResult("insufficient_evidence", "no_uploads"))
     assert "online search returned no papers" in render_content(DualResult("insufficient_evidence",
                                                                            "online_search_failed"))
+
+
+def test_a_failed_model_is_named_and_quota_is_told_apart_from_busy():
+    from app.routes_tasks import _cross_check_note as note
+    out = note('model_b:mistral: HTTP 429 no quota {"message":"Rate limit exceeded"}')
+    assert out.startswith("Model B (Mistral) is out of tokens") and "Add credit" in out
+    out = note("model_a:gemini: HTTP 429 You exceeded your current quota, please check your plan")
+    assert out.startswith("Model A (Gemini) is out of tokens")
+    out = note("model_a:gemini: HTTP 429 daily quota You exceeded your current quota")
+    assert out.startswith("Model A (Gemini) is out of tokens")
+    out = note("model_a:gemini: HTTP 429 per-minute limit You exceeded your current quota")   # same text, clears in a minute
+    assert out.startswith("Model A (Gemini) is busy right now")
+    out = note("model_b:groq: HTTP 429 Rate limit reached for model on tokens per day (TPD): Limit 100000")
+    assert out.startswith("Model B (Groq) is out of tokens")
+    out = note("model_b:groq: HTTP 429 Rate limit reached for model on tokens per minute (TPM): Limit 8000")
+    assert out.startswith("Model B (Groq) is busy right now") and "Wait about a minute" in out
+    assert note("model_a:gemini: HTTP 401 invalid key").startswith("Model A (Gemini): the provider rejected the API key")
+    assert note("model_b:mistral: ConnectTimeout").startswith("Model B (Mistral) could not be reached")
+    assert note("HTTP 429 rate limit").startswith("The AI models are busy")          # no model name in the detail
+    assert note("something else") == "No answer is shown because it could not be cross-checked. Please try again."
+
+
+def test_a_zero_quota_429_is_reported_as_no_quota():
+    import asyncio, httpx, pytest
+    from app.orchestration.llm import LLMError, OpenAICompatLLM
+
+    def handler(request):
+        return httpx.Response(429, headers={"x-ratelimit-limit-req-minute": "0"}, json={"message": "Rate limit exceeded"})
+    llm = OpenAICompatLLM(name="model_b:mistral", base_url="https://x.test/v1", model="m", api_key="k", retries=1, backoff=0,
+                          client=httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(LLMError, match="HTTP 429 no quota"):
+        asyncio.run(llm.complete("s", "u"))
+    # no quota and a used-up daily quota fail at once; a per-minute limit is retried
+    calls = []
+
+    def counted(request):
+        calls.append(1)
+        return httpx.Response(429, text='"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"')
+    daily = OpenAICompatLLM(name="model_a:gemini", base_url="https://x.test/v1", model="m", api_key="k", retries=3,
+                            backoff=0, client=httpx.AsyncClient(transport=httpx.MockTransport(counted)))
+    with pytest.raises(LLMError, match="daily quota"):
+        asyncio.run(daily.complete("s", "u"))
+    assert len(calls) == 1
+
+    for body, kind in (('"quotaId": "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"', "per-minute limit"),
+                       ('"quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier"', "daily quota")):
+        gem = OpenAICompatLLM(name="model_a:gemini", base_url="https://x.test/v1", model="m", api_key="k", retries=1,
+                              backoff=0, client=httpx.AsyncClient(transport=httpx.MockTransport(
+                                  lambda req, b=body: httpx.Response(429, text="x" * 300 + b))))
+        with pytest.raises(LLMError, match=f"HTTP 429 {kind}"):
+            asyncio.run(gem.complete("s", "u"))
+
+
+def test_reading_note_explains_sources_and_passages():
+    from app.routes_tasks import reading_note
+    assert reading_note(9, 10) == ("Models A and B are each reading 9 sources (the best passage of each, plus 1 more "
+                                   "from the most relevant) and answering independently...")
+    assert reading_note(9, 9) == "Models A and B are each reading 9 sources (the best passage of each) and answering independently..."
+    assert reading_note(1, 1) == "Models A and B are each reading 1 source (its best passage) and answering independently..."
+    assert reading_note(1, 2) == "Models A and B are each reading 1 source (its 2 best passages) and answering independently..."

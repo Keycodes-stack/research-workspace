@@ -4,14 +4,16 @@ if the cross-check cannot be completed, nothing is presented as an answer."""
 import asyncio
 import time
 from dataclasses import asdict, dataclass, field
+from difflib import SequenceMatcher
 from typing import Callable, Literal
 from uuid import UUID
 
 from .llm import LLM, LLMError
 from .numeric import NumericConflict, numeric_conflicts, source_conflicts
 from .prompts import (
-    SYSTEM_A, SYSTEM_B, SYSTEM_JUDGE, build_judge_prompt, build_user_prompt,
+    SECOND_LOOK, SYSTEM_A, SYSTEM_B, SYSTEM_JUDGE, build_judge_prompt, build_user_prompt,
 )
+from ..verification.text import normalize, tokens
 from ..verification.verifier import ClaimCheck, VerifyConfig, verify_answer
 from .schema import (
     ANSWERED, INSUFFICIENT, Claim, ContextChunk, JudgeVerdict, ParseError,
@@ -118,6 +120,20 @@ def _at(claims: list[Claim], one_based: int | None) -> Claim | None:
     return None
 
 
+MIN_SHARED_QUOTE_TOKENS = 4      # a shorter shared span is too weak a sign that two claims state one finding
+MIN_SHARED_QUOTE_SHARE = 0.4     # share of the shorter quote that must be one span of the other
+
+
+def same_passage(a: Claim, b: Claim) -> bool:
+    """Both claims quote the same part of the same passage: at least MIN_SHARED_QUOTE_SHARE of the shorter quote (and at
+    least MIN_SHARED_QUOTE_TOKENS words) is one continuous span of the other. Both quotes already passed verification."""
+    if not set(a.chunk_ids) & set(b.chunk_ids):
+        return False
+    qa, qb = (tokens(normalize(c.quote).lower()) for c in (a, b))
+    m = SequenceMatcher(None, qa, qb, autojunk=False).find_longest_match(0, len(qa), 0, len(qb))
+    return m.size >= max(MIN_SHARED_QUOTE_TOKENS, MIN_SHARED_QUOTE_SHARE * min(len(qa), len(qb)))
+
+
 def decide(
     a: ParsedAnswer, b: ParsedAnswer, verdict: JudgeVerdict, numeric: list[NumericConflict],
     source_of: dict | None = None,
@@ -167,8 +183,14 @@ def decide(
     if conflicts:
         return "disagreement", "conflicting_claims", [], _summary("conflicting_claims", conflicts, a, b)
 
-    agreed = {i for i, v in status.items() if v.status == "agreed"}
-    matched_b = {bid for i in agreed for bid in status[i].b_ids}
+    # Agreed: the judge matched the claims, or both models quote the same sentence of the same passage.
+    pairs = {i: set(v.b_ids) for i, v in status.items() if v.status == "agreed"}
+    for i, ca in enumerate(a.claims, start=1):
+        for j, cb in enumerate(b.claims, start=1):
+            if same_passage(ca, cb):
+                pairs.setdefault(i, set()).add(j)
+    agreed = set(pairs)
+    matched_b = {bid for ids in pairs.values() for bid in ids}
     # Nothing contradicts: every claim shown passed citation verification. Claims both models made are
     # "confirmed"; claims only one model made are shown but flagged as single-model.
     final = [
@@ -197,17 +219,32 @@ async def run_dual(
         return DualResult("insufficient_evidence", "no_source_chunks")
 
     user, alias_map = build_user_prompt(question, chunks)
+    cfg = verify or VerifyConfig()
+
+    async def answer(llm: LLM, system: str, prompt: str):
+        # Verify BEFORE the cross-check: a fabricated claim must never create a fake
+        # consensus or a fake disagreement. Purged claims are removed here.
+        parsed, raws, ms = await _timed_answer(llm, system, prompt, alias_map)
+        parsed, checks, purged_all = verify_answer(parsed, chunks, cfg)
+        return parsed, raws, ms, checks, purged_all
 
     # Independent and parallel: neither model sees the other's output.
-    (pa, raws_a, ms_a), (pb, raws_b, ms_b) = await asyncio.gather(
-        _timed_answer(llm_a, SYSTEM_A, user, alias_map),
-        _timed_answer(llm_b, SYSTEM_B, user, alias_map),
-    )
-    # Verify BEFORE the cross-check: a fabricated claim must never create a fake
-    # consensus or a fake disagreement. Purged claims are removed here.
-    cfg = verify or VerifyConfig()
-    pa, checks_a, purged_all_a = verify_answer(pa, chunks, cfg)
-    pb, checks_b, purged_all_b = verify_answer(pb, chunks, cfg)
+    (pa, raws_a, ms_a, checks_a, purged_all_a), (pb, raws_b, ms_b, checks_b, purged_all_b) = await asyncio.gather(
+        answer(llm_a, SYSTEM_A, user), answer(llm_b, SYSTEM_B, user))
+
+    # One model found a verified answer in passages the other read as having none: the other gets one second look
+    # at the same passages (never at the first model's answer). Only if it still finds nothing is it a disagreement.
+    # If the second look itself fails (provider error, invalid output), the first reply stands.
+    if (pa.status == ANSWERED) != (pb.status == ANSWERED):
+        try:
+            if pa.status == ANSWERED:
+                pb, more, ms, checks_b, purged_all_b = await answer(llm_b, SYSTEM_B, user + SECOND_LOOK)
+                raws_b, ms_b = raws_b + more, ms_b + ms
+            else:
+                pa, more, ms, checks_a, purged_all_a = await answer(llm_a, SYSTEM_A, user + SECOND_LOOK)
+                raws_a, ms_a = raws_a + more, ms_a + ms
+        except CrossCheckFailed:
+            pass
     rec_a = _record(llm_a, pa, raws_a, ms_a, sum(not c.verified for c in checks_a))
     rec_b = _record(llm_b, pb, raws_b, ms_b, sum(not c.verified for c in checks_b))
     checks = {"model_a": checks_a, "model_b": checks_b}

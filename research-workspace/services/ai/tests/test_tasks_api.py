@@ -420,13 +420,13 @@ def test_uploads_and_online_search_run_concurrently(api, db_url, monkeypatch):
     from app.retrieval.models import DiscoveryResult, Paper
 
     saved_started, online_started = asyncio.Event(), asyncio.Event()
-    real_search_chunks = rt.store.search_chunks
+    real_search = rt.store.search_per_source
 
-    async def gated_search_chunks(pool, query, source_ids, limit):
+    async def gated_search(pool, query, source_ids, per_source):
         if not online_started.is_set():
             saved_started.set()
             await asyncio.wait_for(online_started.wait(), timeout=3)
-        return await real_search_chunks(pool, query, source_ids, limit)
+        return await real_search(pool, query, source_ids, per_source)
 
     async def fake_search(question, **kw):
         await asyncio.wait_for(saved_started.wait(), timeout=3)
@@ -436,7 +436,7 @@ def test_uploads_and_online_search_run_concurrently(api, db_url, monkeypatch):
         return DiscoveryResult(papers=papers, dropped=[], stats={"query": question, "found": 1, "seconds": 0.1},
                                errors=[])
 
-    monkeypatch.setattr(rt.store, "search_chunks", gated_search_chunks)
+    monkeypatch.setattr(rt.store, "search_per_source", gated_search)
     monkeypatch.setattr(rt, "search_papers", fake_search)
     api.llms = models()
 

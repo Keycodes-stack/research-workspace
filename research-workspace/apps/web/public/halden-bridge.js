@@ -428,7 +428,7 @@
     // The server picks the sources from the scope and the chat's history (see plan_evidence in routes_tasks.py).
     // Every upload in the project counts, so attached files need no selection. When the saved sources do not answer
     // a follow-up, the server says so first ("not_in_saved_sources") and the same question is asked again online.
-    const body = { question, scope, online: scope !== 'uploads', top_k: 10 };
+    const body = { question, scope, online: scope !== 'uploads' };
     const stop = watchProgress(threadId, onSteps);
     let result;
     try {

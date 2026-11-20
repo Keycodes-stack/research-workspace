@@ -53,8 +53,12 @@ async def _init_conn(conn: asyncpg.Connection) -> None:
 async def get_pool() -> asyncpg.Pool:
     global _pool
     if _pool is None:
+        # Hosted Postgres (Neon) closes idle connections and suspends idle compute; asyncpg's default keeps an idle
+        # connection for 300 s, so a request could pick up one the server already closed ("connection was closed in
+        # the middle of operation"). Retire idle connections well before that; a new one is opened on demand.
         _pool = await asyncpg.create_pool(
-            get_settings().database_url, min_size=1, max_size=10, init=_init_conn
+            get_settings().database_url, min_size=1, max_size=10, init=_init_conn,
+            max_inactive_connection_lifetime=60,
         )
     return _pool
 
