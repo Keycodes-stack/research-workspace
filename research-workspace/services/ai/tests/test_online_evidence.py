@@ -119,6 +119,9 @@ def test_a_failed_model_is_named_and_quota_is_told_apart_from_busy():
     assert note("model_b:mistral: ConnectTimeout").startswith("Model B (Mistral) could not be reached")
     assert note("HTTP 429 rate limit").startswith("The AI models are busy")          # no model name in the detail
     assert note("something else") == "No answer is shown because it could not be cross-checked. Please try again."
+    out = note('model_a:gemini: HTTP 503 [{"error": {"message": "This model is currently experiencing high demand."}}]')
+    assert out.startswith("Model A (Gemini) is overloaded right now") and "Wait a minute" in out
+    assert note("model_b:compat: HTTP 500 boom").startswith("Model B (Compat) failed. No answer is shown")
 
 
 def test_a_zero_quota_429_is_reported_as_no_quota():

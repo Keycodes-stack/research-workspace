@@ -448,9 +448,12 @@ def _cross_check_note(detail: str) -> str:
         return f"{who}: the provider rejected the API key. Ask an administrator to check the key."
     if "json_validate_failed" in d or "invalid output" in d or "malformed" in d:
         return f"{who if m else 'One of the models'} returned an unusable reply. {no_answer} Please ask again."
+    if "http 503" in d or "http 502" in d or "high demand" in d or "overloaded" in d or "unavailable" in d:
+        return (f"{who} {is_} overloaded right now (its provider reports high demand). {no_answer} "
+                "Wait a minute and ask again, or switch to another model if it keeps happening.")
     if "timeout" in d or "connect" in d or "transport" in d or "readerror" in d:
         return f"{who} could not be reached. Check the connection and try again."
-    return f"{no_answer} Please try again."
+    return f"{who + ' failed. ' if m else ''}{no_answer} Please try again."
 
 
 @router.get("/threads/{thread_id}/progress")
