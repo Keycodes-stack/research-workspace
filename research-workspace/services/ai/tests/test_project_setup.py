@@ -117,3 +117,17 @@ def test_complete_without_insights_stores_no_assessment(api):
     listed = api.get("/projects", headers=hdr()).json()["projects"]
     project = next(p for p in listed if p["id"] == r.json()["id"])
     assert "insights" not in project["meta"]
+
+
+# ---- research mode is detected, never asked -------------------------------
+
+def test_research_mode_defaults_to_open_discovery():
+    from app.routes_tasks import _detect_research_mode
+    assert _detect_research_mode("Recover waste heat from plants", "", "{}") == "open_discovery"
+
+
+def test_research_mode_is_closed_when_the_brief_says_approved_or_internal_only():
+    from app.routes_tasks import _detect_research_mode
+    assert _detect_research_mode("Use only approved sources for this study") == "closed_repository"
+    assert _detect_research_mode("", "our confidential plant data") == "closed_repository"
+    assert _detect_research_mode("Search the literature for hydrogen storage") == "open_discovery"

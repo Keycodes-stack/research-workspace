@@ -150,6 +150,18 @@ def _clean_intake_patch(raw: Any) -> dict[str, Any]:
     return out
 
 
+CLOSED_REPOSITORY_SIGNALS = (
+    "approved source", "only approved", "closed repository", "internal data", "confidential",
+    "proprietary", "restricted", "air-gapped", "no external",
+)
+
+
+def _detect_research_mode(*texts: str) -> str:
+    """Closed repository when the brief says the work must stay on approved or internal material, else open discovery."""
+    blob = " ".join(t for t in texts if t).lower()
+    return "closed_repository" if any(s in blob for s in CLOSED_REPOSITORY_SIGNALS) else "open_discovery"
+
+
 def _clean_intake_questions(raw: Any) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         return []
@@ -199,7 +211,7 @@ decision_notes, external_orgs, workstreams[{name,department,team,output,owner,re
         gates[{name,owner,approver,date,criteria,workstreams}], risks[{risk,owner,severity,response}], no_risk_reason, approach, reporting, budget, currency,
 cost_centre, resources, controls_mode, visibility, classification, plan_editing, manage_access, approvals,
 change_authority, standards, quality_lead, gate_rule, reg_controls, data_location, retention, external_access, controls,
-mode (open_discovery or closed_repository).
+mode (open_discovery or closed_repository): use closed_repository only when the brief says the work must use approved, internal or confidential material; otherwise open_discovery. Do not ask about it.
 Return questions as [{header,question,multi_select,options:[{label,description}]}]."""
 
 
@@ -233,6 +245,9 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
                     model_calls=meter.calls, chars_in=meter.chars_in, chars_out=meter.chars_out, outcome="failed")
         raise HTTPException(503, "Project suggestions are temporarily unavailable. You can continue with a blank charter.") from exc
     patch = _clean_intake_patch(result.get("patch"))
+    # the research mode is never asked: the model's choice if valid, else detected from the brief
+    patch["mode"] = patch.get("mode") or _detect_research_mode(
+        body.text, history, json.dumps(body.draft, ensure_ascii=False, default=str)[:4000])
     questions = _clean_intake_questions(result.get("questions"))
     if body.mode in ("finish", "edit") or body.round >= 1:
         questions = []
