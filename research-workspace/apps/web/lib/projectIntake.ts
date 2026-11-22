@@ -108,3 +108,35 @@ export type IntakeResponse = {
   done: boolean;
   model: string;
 };
+
+export type RiskLevel = "Low" | "Medium" | "High";
+/** First AI assessment of a project, saved with the project in meta.insights. */
+export type ProjectInsights = {
+  summary: string;
+  recommendation: string;
+  feasibility: number;
+  stats: { label: string; value: string }[];
+  risks: { risk: string; likelihood: RiskLevel; impact: RiskLevel; mitigation: string; owner: string }[];
+  questions: string[];
+  nextSteps: string[];
+  model: string;
+  generatedAt: string;
+};
+
+/** Accept only a well-formed assessment (projects saved before this feature have none). */
+export function asInsights(raw: unknown): ProjectInsights | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Partial<ProjectInsights>;
+  if (typeof f.summary !== "string" || typeof f.feasibility !== "number") return null;
+  return {
+    summary: f.summary,
+    recommendation: typeof f.recommendation === "string" ? f.recommendation : "",
+    feasibility: f.feasibility,
+    stats: Array.isArray(f.stats) ? f.stats : [],
+    risks: Array.isArray(f.risks) ? f.risks : [],
+    questions: Array.isArray(f.questions) ? f.questions.filter((x): x is string => typeof x === "string") : [],
+    nextSteps: Array.isArray(f.nextSteps) ? f.nextSteps.filter((x): x is string => typeof x === "string") : [],
+    model: typeof f.model === "string" ? f.model : "",
+    generatedAt: typeof f.generatedAt === "string" ? f.generatedAt : "",
+  };
+}

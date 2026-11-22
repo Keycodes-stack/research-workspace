@@ -1,7 +1,7 @@
 import type {
   AskResult, AuditEntry, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage,
 } from "./types";
-import type { IntakeResponse, ProjectDraft } from "./projectIntake";
+import type { IntakeResponse, ProjectDraft, ProjectInsights } from "./projectIntake";
 
 if (!process.env.NEXT_PUBLIC_API_URL) {
   throw new Error("NEXT_PUBLIC_API_URL is not set. Add it to .env.local before running the app.");
@@ -136,12 +136,14 @@ export const api = {
     history: { from: "ai" | "user"; text: string }[];
     round: number;
   }) => call<IntakeResponse>("/projects/intake", json(body)),
+  projectInsights: (draft: ProjectDraft) => call<ProjectInsights>("/projects/insights", json({ draft })),
   createProjectComplete: (body: {
     name: string;
     mode: Mode;
     meta: Record<string, string>;
     charter: ProjectDraft;
     work_packages: { title: string; brief: string }[];
+    insights?: ProjectInsights;
   }) => call<Project & { work_packages: { id: string; title: string }[] }>("/projects/complete", json(body)),
   sources: (pid: string) => call<{ sources: SourceRow[] }>(`/projects/${pid}/sources`).then((r) => r.sources),
   upload: (pid: string, file: File) => {
