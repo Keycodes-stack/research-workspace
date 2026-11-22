@@ -1,6 +1,7 @@
 import type {
-  AskResult, AuditEntry, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage,
+  AskResult, AuditEntry, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage,
 } from "./types";
+import type { IntakeResponse, ProjectDraft } from "./projectIntake";
 
 if (!process.env.NEXT_PUBLIC_API_URL) {
   throw new Error("NEXT_PUBLIC_API_URL is not set. Add it to .env.local before running the app.");
@@ -127,6 +128,21 @@ export const api = {
   projects: () => call<{ projects: Project[] }>("/projects").then((r) => r.projects),
   project: (id: string) => call<Project>(`/projects/${id}`),
   createProject: (name: string, mode: Mode) => call<Project>("/projects", json({ name, mode })),
+  projectIntake: (body: {
+    mode: "start" | "answer" | "finish" | "edit";
+    text: string;
+    draft: Partial<ProjectDraft>;
+    asked: string[];
+    history: { from: "ai" | "user"; text: string }[];
+    round: number;
+  }) => call<IntakeResponse>("/projects/intake", json(body)),
+  createProjectComplete: (body: {
+    name: string;
+    mode: Mode;
+    meta: Record<string, string>;
+    charter: ProjectDraft;
+    work_packages: { title: string; brief: string }[];
+  }) => call<Project & { work_packages: { id: string; title: string }[] }>("/projects/complete", json(body)),
   sources: (pid: string) => call<{ sources: SourceRow[] }>(`/projects/${pid}/sources`).then((r) => r.sources),
   upload: (pid: string, file: File) => {
     const f = new FormData();
@@ -198,4 +214,11 @@ export const api = {
     call<unknown>(`/concepts/${id}/comments`, json({ body, stance, section, parent_id: parent_id ?? null })),
   resolveComment: (cid: string, resolved: boolean) => call<unknown>(`/comments/${cid}/resolve`, json({ resolved })),
   ask: (threadId: string, question: string) => call<AskResult>(`/threads/${threadId}/ask`, json({ question })),
+  /** Open-discovery ask: the server picks the sources from the scope and the chat's history. */
+  askOpen: (threadId: string, question: string, scope: EvidenceScope, evidence: "auto" | "online" = "auto") =>
+    call<AskResult | NotInSavedSources>(`/threads/${threadId}/ask`,
+      json({ question, scope, online: scope !== "uploads", evidence })),
+  progress: (threadId: string) => call<{ steps: string[] }>(`/threads/${threadId}/progress`).then((r) => r.steps),
+  chats: (pid: string) => call<{ chats: ChatRow[] }>(`/projects/${pid}/chats`).then((r) => r.chats),
+  createChat: (pid: string, title: string) => call<{ id: string; title: string }>(`/projects/${pid}/chats`, json({ title })),
 };

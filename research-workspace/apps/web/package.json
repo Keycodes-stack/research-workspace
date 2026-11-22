@@ -14,13 +14,17 @@
     "prebuild": "npm run build:notif"
   },
   "dependencies": {
+    "@hugeicons/core-free-icons": "4.4.0",
+    "@hugeicons/react": "1.1.10",
     "@reduxjs/toolkit": "^2.14.0",
+    "@untitledui/icons": "0.0.23",
     "next": "^15.5.29",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-redux": "^9.3.1"
   },
   "devDependencies": {
+    "@tailwindcss/postcss": "4.3.5",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.8",
@@ -30,6 +34,7 @@
     "@vitejs/plugin-react": "^6.3.0",
     "esbuild": "^0.28.2",
     "jsdom": "^31.0.0",
+    "tailwindcss": "4.3.5",
     "typescript": "^5.9.3",
     "vitest": "^5.1.0"
   }

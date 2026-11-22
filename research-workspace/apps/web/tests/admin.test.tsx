@@ -9,7 +9,7 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api", () => ({ api: h, getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {} }));
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
-import Page from "@/app/projects/[id]/admin/page";
+import Page from "@/app/(classic)/projects/[id]/admin/page";
 
 const params = Object.assign(Promise.resolve({ id: "p1" }), { status: "fulfilled", value: { id: "p1" } }) as Promise<{ id: string }>;
 const U = "11111111-1111-4111-8111-111111111111";

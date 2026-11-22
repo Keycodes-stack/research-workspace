@@ -2,7 +2,11 @@ export type Mode = "open_discovery" | "closed_repository";
 export type TaskStatus = "draft" | "approved" | "running" | "complete";
 export type AnswerKind = "consensus" | "disagreement" | "insufficient_evidence";
 
-export interface Project { id: string; name: string; mode: Mode; created_at?: string; role?: string }
+export interface Project {
+  id: string; name: string; mode: Mode; created_at?: string; role?: string;
+  /** String summaries plus the structured project charter saved on creation. */
+  meta?: Record<string, unknown>;
+}
 export interface SourceRow {
   id: string; title: string | null; doi: string | null; filename: string | null;
   origin: string; fulltext: string; year: number | null; page_count: number | null; chunks: number;
@@ -17,6 +21,8 @@ export interface TaskDetail {
 export interface ChunkMeta {
   label: string; source_id: string; filename: string | null; doi: string | null;
   page_start: number | null; page_end: number | null; sha256: string; text: string;
+  /** user_upload | openalex | europe_pmc | unpaywall ...; a link to the paper (DOI or source URL) when known */
+  origin?: string; url?: string | null;
 }
 export interface FinalClaim {
   text: string; chunk_ids: string[]; quote: string; conditions: string | null;
@@ -36,13 +42,22 @@ export interface Disagreement {
 }
 export interface Gate {
   threshold: number; top_similarity: number | null; passed: boolean; corrupt_chunks_dropped: number;
+  /** open discovery: where the answer came from, how many sources were searched and read */
+  evidence_from?: "online_search" | "saved_sources"; saved_sources?: number; papers_read?: number;
+  online?: { found?: number; stored?: number; full_text?: number; abstract_only?: number } | null;
 }
 export interface AskResult {
   message_id: string; kind: AnswerKind; reason: string; content: string;
   claims: FinalClaim[]; disagreement: Disagreement | null; top_similarity: number | null;
   verification: { status: string; verified: number; purged: number };
   gate: Gate; chunks: Record<string, ChunkMeta>;
+  timings?: { total_s?: number };
 }
+/** Sources for an open-discovery question: uploads only, online papers only, or both. */
+export type EvidenceScope = "uploads" | "api" | "both";
+/** A follow-up the project's saved sources did not cover: the client is told first, then asks again online. */
+export interface NotInSavedSources { kind: "not_in_saved_sources"; note: string; saved_sources: number }
+export interface ChatRow { id: string; title: string; created_at: string; updated_at: string; turns: number }
 export interface Message {
   id: string; role: "user" | "assistant"; content: string; answer_kind: AnswerKind | null;
   top_similarity: number | null; created_at: string; final: AskResult | null;

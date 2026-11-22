@@ -19,7 +19,7 @@ vi.mock("@/lib/api", () => ({
 }));
 vi.mock("next/link", () => ({ default: ({ children }: { children: React.ReactNode }) => <a>{children}</a> }));
 
-import SignalsPage from "@/app/projects/[id]/signals/page";
+import SignalsPage from "@/app/(classic)/projects/[id]/signals/page";
 import { api } from "@/lib/api";
 
 // React's use() reads an already-settled thenable synchronously
