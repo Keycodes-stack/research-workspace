@@ -2,19 +2,20 @@
 
 import { useRef, useState } from "react";
 import { Database01, Folder, Send03 } from "@untitledui/icons";
-import { Add01Icon, Cancel01Icon, Mic01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import Icon, { huge, untitled } from "@/components/v2/dashboard/Icon";
 import Picker, { type PickerOption } from "./Picker";
 import { api } from "@/lib/api";
 import type { EvidenceScope } from "@/lib/types";
 import { SCOPES } from "@/lib/v2/ask";
+import { MicButton, RecordingBar, VoiceError, appendText, useDictation, withLive } from "@/components/v2/voice/Voice";
 
 type Upload = { key: string; name: string; state: "uploading" | "added" | "failed"; error?: string };
 
 /**
  * Design: the Home "prompt card" (radius 20, padding 20, blue shadow): an input with "+", then Evidence Sources on the
  * left and mic + send on the right. "+" uploads PDFs to the project at once (they are chunked and embedded on upload,
- * so every later question can use them). The mic has no backend yet (placeholder.md).
+ * so every later question can use them). The mic dictates into the box, same as the reference Home prompt.
  */
 export default function AskComposer({
   projectId, projects, onProjectChange, scope, onScopeChange, busy, onAsk,
@@ -33,9 +34,10 @@ export default function AskComposer({
   const [text, setText] = useState("");
   const [uploads, setUploads] = useState<Upload[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  const rec = useDictation((t) => setText((p) => appendText(p, t)));
   const uploading = uploads.some((u) => u.state === "uploading");
   const question = text.trim();
-  const canAsk = !!projectId && question.length >= 3 && !busy && !uploading;
+  const canAsk = !!projectId && question.length >= 3 && !busy && !uploading && !rec.active;
 
   const upload = async (files: File[]) => {
     if (!projectId) return;
@@ -63,7 +65,8 @@ export default function AskComposer({
       }}
       className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 shadow-[0_14px_30px_0_rgba(40,92,224,0.10)]"
     >
-      <div className="flex items-center gap-2 rounded-[14px] border border-[#EDEDF0] bg-[#FAFAFA] p-4">
+      <div className="flex flex-col justify-center gap-2.5 rounded-[14px] border border-[#EDEDF0] bg-[#FAFAFA] p-4 focus-within:border-blue">
+        <div className="flex items-start gap-2">
         <button
           type="button"
           aria-label="Upload PDFs to this project"
@@ -82,15 +85,26 @@ export default function AskComposer({
           hidden
           onChange={(e) => { void upload(Array.from(e.target.files ?? [])); e.target.value = ""; }}
         />
-        <input
-          type="text"
-          value={text}
+        <textarea
+          rows={1}
+          value={withLive(text, rec)}
+          readOnly={rec.active}
           onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            /* Enter sends, Shift+Enter adds a new line */
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              e.currentTarget.form?.requestSubmit();
+            }
+          }}
           placeholder={placeholder}
           aria-label="Your question"
           maxLength={4000}
-          className="w-full min-w-0 bg-transparent text-base leading-[1.5] tracking-[-0.02em] text-[#101D37] outline-none placeholder:text-body"
+          className="block w-full min-w-0 resize-none overflow-y-auto bg-transparent text-base leading-[1.5] tracking-[-0.02em] text-[#101D37] outline-none placeholder:text-body [field-sizing:content] max-h-[200px]"
         />
+        </div>
+        {rec.active && <RecordingBar rec={rec} caption={false} />}
+        <VoiceError rec={rec} />
       </div>
 
       {uploads.length > 0 && (
@@ -138,15 +152,7 @@ export default function AskComposer({
           />
         </div>
         <div className="flex items-center gap-2.5">
-          <button
-            type="button"
-            aria-label="Voice input (coming soon)"
-            title="Voice input is coming soon"
-            aria-disabled="true"
-            className="flex size-9 items-center justify-center rounded-[10px] border border-[#EDEDF0] text-body"
-          >
-            <Icon icon={huge(Mic01Icon)} size={16} />
-          </button>
+          {!rec.active && !rec.transcribing && <MicButton rec={rec} size={36} />}
           <button
             type="submit"
             aria-label="Send"
