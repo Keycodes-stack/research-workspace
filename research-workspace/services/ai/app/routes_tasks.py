@@ -257,11 +257,12 @@ Return questions as [{header,question,multi_select,options:[{label,description}]
 
 
 @router.post("/projects/intake")
-async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_user), pool=Depends(get_pool),
+                         llms=Depends(get_llms)):
     """Generate editable project-charter suggestions with the same configured models as research answers."""
     from .orchestration.llm import LLMError
 
-    meter = Meter(get_llms())
+    meter = Meter(llms)
     llm = meter.llms[0]
     history = "\n".join(
         f"{('Assistant' if row.get('from') == 'ai' else 'User')}: {str(row.get('text', ''))[:1200]}"
@@ -378,11 +379,12 @@ def _clean_insights(raw: Any, model: str, generated_at: str | None = None) -> di
 
 
 @router.post("/projects/insights")
-async def project_insights(body: ProjectInsightsIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+async def project_insights(body: ProjectInsightsIn, user: UUID = Depends(require_user), pool=Depends(get_pool),
+                           llms=Depends(get_llms)):
     """First AI assessment of a project draft: summary, feasibility, risks, questions and next steps."""
     from .orchestration.llm import LLMError
 
-    meter = Meter(get_llms())
+    meter = Meter(llms)
     llm = meter.llms[0]
     facts = {k: v for k, v in body.draft.items() if v not in (None, "", [], {})}
     prompt = "\n\n".join([
