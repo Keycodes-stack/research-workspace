@@ -10,7 +10,11 @@ import DictateButton from "@/components/v2/projects/DictateButton";
 import { api } from "@/lib/api";
 import {
   EMPTY_PROJECT_DRAFT,
+  FIELD_LIMITS,
+  LIST_LIMITS,
   PROJECT_SECTIONS,
+  ROW_LIMITS,
+  charterOverLimits,
   type IntakeResponse,
   type ProjectDraft,
   type ProjectInsights,
@@ -55,33 +59,60 @@ function Stepper({ active, onSelect, completed }: { active: number; onSelect: (i
   </ol>;
 }
 
+/** One question at a time: answer, then Next; the last question sends all answers together. */
 function QuestionCard({ questions, onAnswer, onSkip, busy }: {
   questions: ProjectQuestion[]; onAnswer: (answers: string) => void; onSkip: () => void; busy: boolean;
 }) {
+  const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<Record<number, string[]>>({});
   const [other, setOther] = useState<Record<number, string>>({});
+  const q = questions[index];
+  const last = index === questions.length - 1;
+  const answerFor = (i: number) => [...(selected[i] ?? []), other[i]?.trim()].filter(Boolean).join(", ");
+  const answered = questions.filter((_, i) => answerFor(i)).length;
+  const allAnswered = answered === questions.length;
   const toggle = (i: number, value: string, multi: boolean) => setSelected((old) => {
     const current = old[i] ?? [];
     return { ...old, [i]: multi ? (current.includes(value) ? current.filter((v) => v !== value) : [...current, value]) : [value] };
   });
   const submit = (e: FormEvent) => {
     e.preventDefault();
-    onAnswer(questions.map((q, i) => `Q: ${q.question}\nA: ${[...(selected[i] ?? []), other[i]?.trim()].filter(Boolean).join(", ") || "Not sure yet"}`).join("\n\n"));
+    if (!allAnswered) return;
+    onAnswer(questions.map((item, i) => `Q: ${item.question}\nA: ${answerFor(i)}`).join("\n\n"));
   };
-  return <form onSubmit={submit} className="flex flex-col gap-4 rounded-[16px] bg-[#FAFAFA] p-4">
-    {questions.map((q, i) => <fieldset key={`${q.header}-${i}`} className="flex flex-col gap-2">
-      <legend className="mb-1 text-sm font-semibold text-[#101D37]">{q.question}</legend>
-      {q.options.map((o) => {
-        const checked = (selected[i] ?? []).includes(o.label);
-        return <button key={o.label} type="button" onClick={() => toggle(i, o.label, q.multi_select)}
-          aria-pressed={checked} className={`flex items-start gap-2 rounded-[10px] border p-3 text-left text-sm ${checked ? "border-blue bg-blue/[0.04]" : "border-[#EDEDF0] bg-white"}`}>
-          <span className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border ${checked ? "border-blue bg-blue text-[10px] text-white" : "border-[#D0D5DD]"}`}>{checked ? "✓" : ""}</span>
-          <span><span className="font-medium text-[#101D37]">{o.label}</span>{o.description && <span className="mt-0.5 block text-xs text-[#667085]">{o.description}</span>}</span>
+  const checkedOf = (label: string) => (selected[index] ?? []).includes(label);
+  return <form onSubmit={submit} className="flex flex-col gap-4 rounded-[16px] border border-[#EDEDF0] bg-white p-4">
+    <div className="flex flex-wrap items-center gap-2">
+      {questions.map((item, i) => <button key={`${item.header}-${i}`} type="button" onClick={() => setIndex(i)} aria-current={i === index ? "step" : undefined}
+        className={`flex items-center gap-1.5 rounded-[10px] border px-3 py-1.5 text-xs font-medium ${i === index ? "border-blue bg-blue text-white" : "border-[#EDEDF0] bg-white text-[#344054]"}`}>
+        <span>{i + 1}</span>{item.header}
+      </button>)}
+      <span className="text-xs text-[#667085]">{answered}/{questions.length} answered</span>
+    </div>
+    <fieldset key={`${q.header}-${index}`} className="flex flex-col gap-3">
+      <legend className="mb-1 text-sm font-semibold text-[#101D37]">{q.question}{q.multi_select && <span className="ml-2 text-xs font-normal text-[#667085]">Choose all that apply</span>}</legend>
+      {q.options.map((o, oi) => {
+        const checked = checkedOf(o.label);
+        return <button key={o.label} type="button" onClick={() => toggle(index, o.label, q.multi_select)}
+          role={q.multi_select ? "checkbox" : "radio"} aria-checked={checked}
+          className={`flex items-start gap-3 rounded-[10px] border p-3 text-left text-sm ${checked ? "border-blue bg-blue/[0.04]" : "border-[#EDEDF0] bg-white"}`}>
+          <span className={`mt-0.5 flex size-4 shrink-0 items-center justify-center border ${q.multi_select ? "rounded-[4px]" : "rounded-full"} ${checked ? "border-blue bg-blue text-[10px] text-white" : "border-[#D0D5DD]"}`}>{checked ? "✓" : ""}</span>
+          <span><span className="font-medium text-[#101D37]">{oi + 1}. {o.label}</span>{o.description && <span className="mt-0.5 block text-xs text-[#667085]">{o.description}</span>}</span>
         </button>;
       })}
-      <input className={inputClass} placeholder="Other / add a note" value={other[i] ?? ""} onChange={(e) => setOther((x) => ({ ...x, [i]: e.target.value }))} />
-    </fieldset>)}
-    <div className="flex flex-wrap justify-between gap-2"><button type="button" onClick={onSkip} disabled={busy} className="text-sm font-medium text-[#667085]">Skip questions and draft the rest</button><button disabled={busy} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{busy ? "Thinking…" : "Send answers"}</button></div>
+      <label className="flex items-center gap-3 rounded-[10px] border border-[#EDEDF0] bg-white p-3 text-sm">
+        <span className="font-medium text-[#344054]">Other</span>
+        <input className="w-full bg-transparent text-sm text-[#101D37] outline-none placeholder:text-[#98A2B3]" placeholder="Type your own answer..." maxLength={500} value={other[index] ?? ""} onChange={(e) => setOther((x) => ({ ...x, [index]: e.target.value }))} />
+      </label>
+    </fieldset>
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <button type="button" onClick={onSkip} disabled={busy} className="text-sm font-medium text-[#667085]">Skip, draft the rest for me</button>
+      <div className="flex gap-2">
+        {index > 0 && <button type="button" onClick={() => setIndex(index - 1)} disabled={busy} className="rounded-[10px] border border-[#EDEDF0] bg-white px-4 py-2 text-sm font-medium text-[#344054]">Back</button>}
+        {!last && <button type="button" onClick={() => setIndex(index + 1)} disabled={busy} className="rounded-[10px] border border-[#EDEDF0] bg-white px-4 py-2 text-sm font-medium text-[#344054]">Next →</button>}
+        <button type="submit" disabled={busy || !allAnswered} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{busy ? "Thinking…" : "Submit answers"}</button>
+      </div>
+    </div>
   </form>;
 }
 
@@ -104,6 +135,7 @@ export default function NewProjectFlow() {
   const [insights, setInsights] = useState<ProjectInsights | null>(null);
   const [insightsMissing, setInsightsMissing] = useState(false);
   const [hydrated, setHydrated] = useState(false);
+  const [draftNote, setDraftNote] = useState(false);
 
   // Resume an unfinished project after a refresh; autosave every change until it is created.
   useEffect(() => {
@@ -183,6 +215,7 @@ export default function NewProjectFlow() {
   };
 
   const missing: string[] = [];
+  for (const problem of charterOverLimits(draft)) missing.push(`Shorten ${problem}.`);
   if (!draft.name.trim()) missing.push("Add a project name.");
   if (!draft.objective.trim()) missing.push("Describe the business objective.");
   if (draft.start && draft.target && draft.target < draft.start) missing.push("Target completion must be after the planned start.");
@@ -221,23 +254,51 @@ export default function NewProjectFlow() {
   const field = (key: keyof ProjectDraft, title: string, multiline = false, type = "text") => {
     const value = key === "teams" ? draft.teams.join("\n") : textValue(draft[key]);
     const change = (next: string) => update(key, (key === "teams" ? next.split("\n").map((x) => x.trim()).filter(Boolean) : next) as never);
+    const maxLength = key === "teams" ? (LIST_LIMITS.teams.item + 1) * LIST_LIMITS.teams.max : FIELD_LIMITS[key];
     return <Field key={key} label={title} suggested={suggested.includes(key)}>
-      {multiline ? <textarea aria-label={title} className={`${inputClass} min-h-24 resize-y`} value={value} onChange={(e) => change(e.target.value)} />
-        : <input aria-label={title} type={type} className={inputClass} value={value} onChange={(e) => change(e.target.value)} />}
+      {multiline ? <textarea aria-label={title} maxLength={maxLength} className={`${inputClass} min-h-24 resize-y`} value={value} onChange={(e) => change(e.target.value)} />
+        : <input aria-label={title} type={type} maxLength={maxLength} className={inputClass} value={value} onChange={(e) => change(e.target.value)} />}
     </Field>;
   };
 
+  /** Charter row: label on the left, value box on the right, "AI Suggested" tag while the AI owns the value. */
+  const row = (key: keyof ProjectDraft, title: string, multiline = false, type = "text") => {
+    const value = textValue(draft[key]);
+    const tag = suggested.includes(key);
+    const limit = FIELD_LIMITS[key];
+    return <div key={key} className="grid gap-2 border-t border-[#EDEDF0] py-4 md:grid-cols-[200px_1fr] md:items-start">
+      <span className="pt-2.5 text-sm font-semibold text-[#101D37]">{title}</span>
+      <div className="relative">
+        {multiline ? <textarea aria-label={title} maxLength={limit} className={`${inputClass} min-h-24 resize-y ${tag ? "pr-28" : ""}`} value={value} onChange={(e) => update(key, e.target.value as never)} />
+          : <input aria-label={title} type={type} maxLength={limit} className={`${inputClass} ${tag ? "pr-28" : ""}`} value={value} onChange={(e) => update(key, e.target.value as never)} />}
+        {tag && <span className="absolute right-3 top-2.5 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested</span>}
+        {multiline && limit && <span className="mt-1 block text-right text-[11px] text-[#98A2B3]">{value.length}/{limit}</span>}
+      </div>
+    </div>;
+  };
+
   const content = () => {
-    if (section === 0) return <div className="grid gap-4 md:grid-cols-2">
-      {field("name", "Project name")}
-      <Field label="Project type" suggested={suggested.includes("type")}><select aria-label="Project type" className={inputClass} value={draft.type} onChange={(e) => update("type", e.target.value)}>{["Research & Development", "Engineering & Validation", "Technology Evaluation", "Regulatory & Quality", "Operational Change", "Commercial Assessment", "Other"].map((x) => <option key={x}>{x}</option>)}</select></Field>
-      <div className="md:col-span-2">{field("objective", "Business objective", true)}</div>
-      <div className="md:col-span-2">{field("background", "Background and context", true)}</div>
-      {field("priority", "Priority")}{field("programme", "Programme / portfolio")}{field("business_unit", "Business unit")}
-      {field("start", "Planned start", false, "date")}{field("target", "Target completion", false, "date")}
-      <div className="md:col-span-2">{field("in_scope", "In scope", true)}{field("out_scope", "Out of scope", true)}</div>
-      {field("deliverable", "Key deliverable", true)}{field("measures", "Success measures", true)}
-      {field("assumptions", "Assumptions", true)}{field("dependencies", "Dependencies", true)}
+    if (section === 0) return <div className="rounded-[16px] border border-[#EDEDF0] bg-white p-5">
+      <div className="mb-1 flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold text-[#101D37]">Project Charter</h3><span className="text-xs text-[#667085]">Review every suggestion before you continue</span></div>
+      {row("name", "Project name")}
+      <div className="grid gap-2 border-t border-[#EDEDF0] py-4 md:grid-cols-[200px_1fr] md:items-start">
+        <span className="pt-2.5 text-sm font-semibold text-[#101D37]">Project type</span>
+        <div className="relative"><select aria-label="Project type" className={`${inputClass} ${suggested.includes("type") ? "pr-28" : ""}`} value={draft.type} onChange={(e) => update("type", e.target.value)}>{["Research & Development", "Engineering & Validation", "Technology Evaluation", "Regulatory & Quality", "Operational Change", "Commercial Assessment", "Other"].map((x) => <option key={x}>{x}</option>)}</select>
+          {suggested.includes("type") && <span className="absolute right-3 top-2.5 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested</span>}</div>
+      </div>
+      {row("priority", "Priority")}
+      {row("programme", "Programme / portfolio")}
+      {row("business_unit", "Business unit")}
+      {row("objective", "Business objective", true)}
+      {row("background", "Background and context", true)}
+      {row("start", "Planned start", false, "date")}
+      {row("target", "Target completion", false, "date")}
+      {row("in_scope", "In scope", true)}
+      {row("out_scope", "Out of scope", true)}
+      {row("deliverable", "Key deliverable", true)}
+      {row("measures", "Success measures", true)}
+      {row("assumptions", "Assumptions", true)}
+      {row("dependencies", "Dependencies", true)}
     </div>;
     if (section === 1) return <div className="grid gap-4 md:grid-cols-2">
       {field("sponsor", "Project sponsor")}{field("lead", "Accountable project lead")}
@@ -247,10 +308,10 @@ export default function NewProjectFlow() {
     if (section === 2) return <div className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-2"><Field label="Research mode" suggested><p aria-label="Research mode" className={`${inputClass} bg-[#FAFAFA] text-[#475467]`}>{draft.mode === "closed_repository" ? "Closed repository · uses approved sources only" : "Open discovery · searches scholarly sources"}</p></Field>{field("approach", "Delivery approach")}{field("reporting", "Reporting cadence")}{field("budget", "Budget / cost range")}{field("currency", "Currency")}{field("resources", "Resource assumptions", true)}</div>
       <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Workstreams</h3><p className="text-xs text-[#667085]">Each workstream becomes a draft research package.</p></div><button type="button" onClick={() => update("workstreams", [...draft.workstreams, { name: "", department: "", team: "", output: "", owner: "", reviewer: "", start: "", due: "", dependencies: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add workstream</button></div>
-        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k}`; return <Field key={k} label={label} suggested={suggested.includes("workstreams")}><input aria-label={label} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>; })}<button type="button" onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove workstream</button></div>)}
+        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k}`; return <Field key={k} label={label} suggested={suggested.includes("workstreams")}><input aria-label={label} maxLength={ROW_LIMITS.workstreams.fields[k]} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>; })}<button type="button" onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove workstream</button></div>)}
       </div>
-      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Decision gates</h3><p className="text-xs text-[#667085]">Add the checks needed before decisions.</p></div><button type="button" onClick={() => update("gates", [...draft.gates, { name: "", owner: "", approver: "", date: "", criteria: "", workstreams: [] }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add gate</button></div>{draft.gates.map((g, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "owner", "approver", "date", "criteria"] as const).map((k) => <Field key={k} label={`Gate ${i + 1} · ${k}`} suggested={suggested.includes("gates")}><input aria-label={`Gate ${i + 1} ${k}`} type={k === "date" ? "date" : "text"} className={inputClass} value={g[k]} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<fieldset className="flex flex-col gap-2"><legend className="text-sm font-medium">Workstreams covered</legend>{draft.workstreams.map((w, wi) => <label key={wi} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={g.workstreams.includes(w.name)} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, workstreams: e.target.checked ? [...x.workstreams, w.name] : x.workstreams.filter((n) => n !== w.name) } : x))} />{w.name || `Workstream ${wi + 1}`}</label>)}</fieldset><button type="button" onClick={() => update("gates", draft.gates.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove gate</button></div>)}</div>
-      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={suggested.includes("risks")}><input aria-label={`Risk ${i + 1} ${k}`} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<button type="button" onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove risk</button></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
+      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Decision gates</h3><p className="text-xs text-[#667085]">Add the checks needed before decisions.</p></div><button type="button" onClick={() => update("gates", [...draft.gates, { name: "", owner: "", approver: "", date: "", criteria: "", workstreams: [] }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add gate</button></div>{draft.gates.map((g, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "owner", "approver", "date", "criteria"] as const).map((k) => <Field key={k} label={`Gate ${i + 1} · ${k}`} suggested={suggested.includes("gates")}><input aria-label={`Gate ${i + 1} ${k}`} type={k === "date" ? "date" : "text"} maxLength={ROW_LIMITS.gates.fields[k]} className={inputClass} value={g[k]} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<fieldset className="flex flex-col gap-2"><legend className="text-sm font-medium">Workstreams covered</legend>{draft.workstreams.map((w, wi) => <label key={wi} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={g.workstreams.includes(w.name)} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, workstreams: e.target.checked ? [...x.workstreams, w.name] : x.workstreams.filter((n) => n !== w.name) } : x))} />{w.name || `Workstream ${wi + 1}`}</label>)}</fieldset><button type="button" onClick={() => update("gates", draft.gates.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove gate</button></div>)}</div>
+      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={suggested.includes("risks")}><input aria-label={`Risk ${i + 1} ${k}`} maxLength={ROW_LIMITS.risks.fields[k]} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<button type="button" onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove risk</button></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
     </div>;
     if (section === 3) return <div className="grid gap-4 md:grid-cols-2">
       {field("governance", "Governance level")}{field("controls_mode", "Controls profile")}
@@ -292,8 +353,8 @@ export default function NewProjectFlow() {
 
       {phase === "chat" && <section className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 sm:p-7"><div><h2 className="font-semibold text-[#101D37]">Project setup assistant</h2><p className="text-xs text-[#667085]">It uses the configured research model. Suggestions stay editable until you create the project.</p></div><div className="flex max-h-[360px] flex-col gap-3 overflow-y-auto">{messages.map((m, i) => <div key={i} className={`max-w-[90%] whitespace-pre-line rounded-[16px] px-4 py-3 text-sm ${m.from === "user" ? "ml-auto bg-[#E8EEFC] text-[#101D37]" : "border border-[#EDEDF0] bg-white text-[#344054]"}`}>{m.text}</div>)}{busy && <div role="status" className="flex items-center gap-2 text-sm text-[#667085]"><span className="size-2 animate-pulse rounded-full bg-blue" />Thinking through your project…</div>}</div>{error && <div role="alert" className="rounded-[12px] border border-[#FDA29B] bg-[#FEF3F2] p-3 text-sm text-[#B42318]">{error} You can continue with your draft and fill the sections yourself.</div>}{questions.length > 0 && <QuestionCard questions={questions} onAnswer={answerQuestions} onSkip={skipQuestions} busy={busy} />}{!busy && questions.length === 0 && <div className="flex flex-wrap justify-between gap-3"><button type="button" onClick={() => { setPhase("setup"); setSection(0); }} className="rounded-[10px] bg-blue px-4 py-2.5 text-sm font-semibold text-white">Review suggested charter →</button>{error && <button type="button" onClick={() => { setPhase("setup"); setSection(0); }} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2.5 text-sm font-medium">Continue manually</button>}</div>}</section>}
 
-      {phase === "setup" && <><section className="rounded-[20px] border border-[#EDEDF0] bg-white px-4 py-5 sm:px-7"><Stepper active={section} onSelect={setSection} completed={Array.from({ length: 5 }, (_, i) => i).filter((i) => i < section)} /><h2 className="mt-6 text-xl font-semibold text-[#101D37]">{PROJECT_SECTIONS[section]}</h2><div className="mb-5 mt-1 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[#667085]">Review and edit every suggestion before you continue. Your draft is saved in this browser.</p><button type="button" onClick={startOver} className="text-sm font-medium text-[#B42318]">Discard draft</button></div>{content()}<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button>{section < 4 ? <button type="button" onClick={() => setSection(section + 1)} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white">{section === 3 ? "Review project →" : "Continue →"}</button> : <button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
-        <form onSubmit={editWithAi} className="flex gap-2 rounded-[16px] border border-[#EDEDF0] bg-white p-3"><input name="change" className={inputClass} placeholder="Ask AI to adjust the project plan…" /><button disabled={busy} className="shrink-0 rounded-[10px] bg-[#101D37] px-4 py-2 text-sm font-semibold text-white">{busy ? "…" : "Ask AI"}</button></form>
+      {phase === "setup" && <><section className="rounded-[20px] border border-[#EDEDF0] bg-white px-4 py-5 sm:px-7"><Stepper active={section} onSelect={setSection} completed={Array.from({ length: 5 }, (_, i) => i).filter((i) => i < section)} /><h2 className="mt-6 text-xl font-semibold text-[#101D37]">{PROJECT_SECTIONS[section]}</h2><div className="mb-5 mt-1 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[#667085]">Review and edit every suggestion before you continue. Your draft is saved in this browser.</p><button type="button" onClick={startOver} className="text-sm font-medium text-[#B42318]">Discard draft</button></div>{content()}<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => setDraftNote(true)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">Save Draft</button>{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved in this browser.</span>}{section < 4 ? <button type="button" onClick={() => setSection(section + 1)} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white">{section === 3 ? "Confirm & Review →" : "Confirm & Continue →"}</button> : <button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
+        <form onSubmit={editWithAi} className="flex gap-2 rounded-[16px] border border-[#EDEDF0] bg-white p-3"><input name="change" maxLength={1000} className={inputClass} placeholder="Ask AI to adjust the project plan…" /><button disabled={busy} className="shrink-0 rounded-[10px] bg-[#101D37] px-4 py-2 text-sm font-semibold text-white">{busy ? "…" : "Ask AI"}</button></form>
         </>}
     </main></div></div>;
 }

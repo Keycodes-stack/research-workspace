@@ -111,6 +111,33 @@ _OBJECT_LISTS = {
 }
 
 
+def charter_over_limits(raw: dict[str, Any]) -> list[str]:
+    """Charter values that exceed their limits. Saving rejects them; _clean_intake_patch would cut them silently."""
+    problems: list[str] = []
+    for key, limit in _INTAKE_TEXT.items():
+        value = raw.get(key)
+        if isinstance(value, str) and len(value.strip()) > limit:
+            problems.append(f"{key} ({len(value.strip())} of {limit} characters)")
+    for key, limit in _LIST_TEXT.items():
+        value = raw.get(key)
+        if isinstance(value, list) and any(isinstance(x, str) and len(x.strip()) > limit for x in value):
+            problems.append(f"{key} (an item is over {limit} characters)")
+    for key, (count, fields) in _OBJECT_LISTS.items():
+        items = raw.get(key)
+        if not isinstance(items, list):
+            continue
+        if len(items) > count:
+            problems.append(f"{key} ({len(items)} of at most {count})")
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for name, limit in fields.items():
+                value = item.get(name)
+                if isinstance(value, str) and len(value.strip()) > limit:
+                    problems.append(f"{key}.{name} ({len(value.strip())} of {limit} characters)")
+    return problems
+
+
 def _intake_text(value: Any, limit: int) -> str:
     return value.strip()[:limit] if isinstance(value, str) else ""
 
@@ -148,6 +175,20 @@ def _clean_intake_patch(raw: Any) -> dict[str, Any]:
     if raw.get("mode") in ("open_discovery", "closed_repository"):
         out["mode"] = raw["mode"]
     return out
+
+
+async def _complete_fast(llm, system: str, prompt: str, seconds: float = 45) -> str:
+    """Project set-up calls must not wait for a slow main model: after `seconds` the backup answers at once."""
+    from .orchestration.llm import LLMError
+
+    main, backup = getattr(llm, "main", llm), getattr(llm, "backup", None)
+    try:
+        return await asyncio.wait_for(main.complete(system, prompt), seconds)
+    except (asyncio.TimeoutError, LLMError) as first:
+        if backup is None:
+            raise LLMError(f"{main.name}: no answer in {seconds:.0f}s") from first
+        log.warning("%s too slow or failed; project set-up uses the backup %s", main.name, backup.name)
+        return await backup.complete(system, prompt)
 
 
 CLOSED_REPOSITORY_SIGNALS = (
@@ -237,7 +278,7 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
         'Return JSON: {"patch":{},"reply":"short response","questions":[],"done":false}',
     ]))
     try:
-        raw = await llm.complete(PROJECT_INTAKE_SYSTEM, prompt)
+        raw = await _complete_fast(llm, PROJECT_INTAKE_SYSTEM, prompt)
         result = extract_json(raw)
     except (LLMError, ParseError) as exc:
         log.warning("project intake model failed: %s", str(exc)[:240])
@@ -350,7 +391,7 @@ async def project_insights(body: ProjectInsightsIn, user: UUID = Depends(require
         "Return JSON exactly in this shape:\n" + PROJECT_INSIGHTS_SHAPE,
     ])
     try:
-        raw = await llm.complete(PROJECT_INSIGHTS_SYSTEM, prompt)
+        raw = await _complete_fast(llm, PROJECT_INSIGHTS_SYSTEM, prompt)
         result = extract_json(raw)
     except (LLMError, ParseError) as exc:
         log.warning("project insights model failed: %s", str(exc)[:240])
@@ -380,6 +421,9 @@ async def create_project(body: ProjectIn, user: UUID = Depends(require_user), po
 @router.post("/projects/complete", status_code=201)
 async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
     """Create the reviewed charter and its planned research packages atomically."""
+    problems = charter_over_limits(body.charter)
+    if problems:
+        raise HTTPException(422, "Too long to save as typed: " + "; ".join(problems))
     meta = _clean_meta(body.meta)
     meta["charter"] = _clean_intake_patch(body.charter)
     if body.insights:
