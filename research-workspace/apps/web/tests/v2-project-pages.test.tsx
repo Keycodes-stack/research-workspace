@@ -17,7 +17,10 @@ vi.mock("next/link", () => ({
 }));
 vi.mock("next/image", () => ({ default: ({ alt }: { alt: string }) => <img alt={alt} /> }));
 vi.mock("@/lib/api", () => ({
-  api: { projects: vi.fn(async () => projects) },
+  api: {
+    projects: vi.fn(async () => projects),
+    tasks: vi.fn(async () => [{ id: "t1", title: "Baseline Assessment", brief: null, status: "draft", created_at: "" }]),
+  },
   getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
 
@@ -54,11 +57,11 @@ describe("project pages from the design (sample content, real projects)", () => 
     expect(screen.queryByRole("link", { name: /Industrial Heat Recovery/ })).toBeNull();
   });
 
-  it("opens Evidence from the work packages, with Workspace not linked until it is built", async () => {
+  it("opens Evidence and the Workspace document from the work packages", async () => {
     render(<V2Frame>{await EvidencePage(params("p1"))}</V2Frame>);
     expect(await screen.findByRole("heading", { name: "Evidence Extraction Ledger" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/v2/projects/p1/evidence");
-    expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "#");
+    expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "/v2/projects/p1/workspace/t1");
   });
 
   it("shows the Knowledge Library", async () => {

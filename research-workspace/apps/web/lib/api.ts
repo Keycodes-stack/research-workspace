@@ -158,6 +158,11 @@ export const api = {
   createTask: (pid: string, title: string, brief?: string) =>
     call<{ id: string }>(`/projects/${pid}/tasks`, json({ title, brief: brief || null })),
   task: (id: string) => call<TaskDetail>(`/tasks/${id}`),
+  /** The work package's Workspace document (plain text). `version` is what the next save must send back. */
+  workPackageDocument: (taskId: string) =>
+    call<{ task_id: string; title: string; body: string; version: number; updated_at: string | null }>(`/tasks/${taskId}/document`),
+  saveWorkPackageDocument: (taskId: string, body: string, base_version: number) =>
+    call<{ task_id: string; version: number }>(`/tasks/${taskId}/document`, { method: "PUT", body: JSON.stringify({ body, base_version }) }),
   setTaskSources: (id: string, source_ids: string[]) =>
     call<{ source_ids: string[] }>(`/tasks/${id}/sources`, { method: "PUT", body: JSON.stringify({ source_ids }) }),
   approve: (id: string) => call<{ status: string; source_lock_hash: string }>(`/tasks/${id}/approve`, { method: "POST" }),

@@ -1204,3 +1204,43 @@ async def list_messages(thread_id: UUID, user: UUID = Depends(require_user), poo
                 d[k] = json.loads(d[k])
         out.append(d)
     return jsonable_encoder({"messages": out})
+
+
+# ---- work package document (the Workspace page) -------------------------------
+
+class WorkPackageDocIn(BaseModel):
+    body: str = Field(max_length=200_000)
+    base_version: int = Field(ge=0)
+
+
+@router.get("/tasks/{task_id}/document")
+async def get_work_package_document(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    task = await task_for_user(pool, task_id, user)
+    doc = await pool.fetchrow(
+        "SELECT body, version, updated_at FROM work_package_documents WHERE task_id=$1", task_id)
+    return {
+        "task_id": task["id"], "title": task["title"],
+        "body": doc["body"] if doc else "", "version": doc["version"] if doc else 0,
+        "updated_at": doc["updated_at"].isoformat() if doc else None,
+    }
+
+
+@router.put("/tasks/{task_id}/document")
+async def save_work_package_document(task_id: UUID, body: WorkPackageDocIn,
+                                     user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Save the document. The client sends the version it edited; a stale version is refused, not overwritten."""
+    task = await task_for_user(pool, task_id, user, "researcher")
+    row = await pool.fetchrow(
+        """INSERT INTO work_package_documents (task_id, body, version, updated_by, updated_at)
+           VALUES ($1, $2, 1, $3, now())
+           ON CONFLICT (task_id) DO UPDATE
+             SET body = EXCLUDED.body, version = work_package_documents.version + 1,
+                 updated_by = EXCLUDED.updated_by, updated_at = now()
+             WHERE work_package_documents.version = $4
+           RETURNING version""",
+        task_id, body.body, user, body.base_version,
+    )
+    if row is None:
+        raise HTTPException(409, "This document was changed by someone else. Reload it before saving.")
+    await audit(pool, task["project_id"], user, "task.document.save", "task", task_id, version=row["version"])
+    return {"task_id": task_id, "version": row["version"]}

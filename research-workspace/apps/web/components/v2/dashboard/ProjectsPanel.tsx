@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Folder } from "@untitledui/icons";
 import {
   Add01Icon,
@@ -12,7 +12,7 @@ import {
   WorkflowSquare03Icon,
 } from "@hugeicons/core-free-icons";
 import Icon, { huge, untitled } from "./Icon";
-import { PANEL_WORK_PACKAGES } from "@/lib/v2/design/projects";
+import { api } from "@/lib/api";
 import { useProjects } from "../V2Frame";
 import { V2 } from "@/lib/v2/routes";
 
@@ -23,7 +23,7 @@ import { V2 } from "@/lib/v2/routes";
  *  - project list (Inter 12, #667085, gap 10 + divider lines) at top 147; active item 600 #101D37
  *  - "+ New …" link Inter 500 12 #285CE0
  *  - Overview frame only: "Work Packages" section (Inter 600 16) with sub items
- * Real projects (GET /projects); the "Work Packages" names are still the design's sample (placeholder.md).
+ * Real projects (GET /projects) and the active project's real work packages (GET /projects/{id}/tasks).
  */
 const WP_SECTIONS = [
   { key: "overview", label: "Overview" },
@@ -56,7 +56,14 @@ export default function ProjectsPanel({
   activePage?: ProjectPage;
 }) {
   const [query, setQuery] = useState("");
+  const [packages, setPackages] = useState<{ id: string; title: string }[]>([]);
   const { projects: all } = useProjects();
+  useEffect(() => {
+    if (!showWorkPackages || !activeId) return;
+    let live = true;
+    api.tasks(activeId).then((rows) => { if (live) setPackages(rows.map((t) => ({ id: t.id, title: t.title }))); }).catch(() => { if (live) setPackages([]); });
+    return () => { live = false; };
+  }, [activeId, showWorkPackages]);
   const list = all.filter((p) =>
     p.name.toLowerCase().includes(query.toLowerCase()),
   );
@@ -118,15 +125,15 @@ export default function ProjectsPanel({
             Work Packages
           </h3>
           <ul className="mt-5 flex w-[186px] flex-col gap-[10px]">
-            {PANEL_WORK_PACKAGES.map((wp, i) => (
-              <li key={wp} className="flex flex-col gap-[10px]">
+            {packages.map((wp, i) => (
+              <li key={wp.id} className="flex flex-col gap-[10px]">
                 {i > 0 && <div className="h-px w-full bg-[#EDEDF0]" />}
                 <Link
-                  href="#" /* the design opens Workspace here: added with that screen */
+                  href={activeId ? `${V2}/projects/${activeId}/workspace/${wp.id}` : "#"}
                   className="flex items-center gap-2 text-xs leading-[1.5] tracking-[-0.02em] text-body hover:text-[#101D37]"
                 >
                   <Icon icon={untitled(Folder)} size={13} stroke={1.1} className="shrink-0" />
-                  <span className="truncate">{wp}</span>
+                  <span className="truncate">{wp.title}</span>
                 </Link>
                 {/* Figma Frame 2147232168: 164 wide at x 298, gap 10, dividers */}
                 {i === 0 && activeSection && activeId && (
@@ -135,7 +142,9 @@ export default function ProjectsPanel({
                       const href =
                         sec.key === "overview"
                           ? `${V2}/projects/${activeId}`
-                          : sec.key === "evidence"   // Workspace: "#" until that screen is added
+                          : sec.key === "workspace" && wp.id
+                              ? `${V2}/projects/${activeId}/workspace/${wp.id}`
+                              : sec.key === "evidence"
                             ? `${V2}/projects/${activeId}/${sec.key}`
                             : "#";
                       const on = sec.key === activeSection;
