@@ -6,6 +6,8 @@ export const PROJECT_DRAFT_KEY = "newProject:draft:v1";
 
 export type StoredProjectDraft = {
   v: 1;
+  /** The server draft this wizard saved to (Save Draft), so the same draft is updated, not duplicated. */
+  draftId?: string;
   phase: "prompt" | "chat" | "setup";
   prompt: string;
   files: string[];

@@ -14,7 +14,7 @@ import {
 import Icon, { huge, untitled } from "./Icon";
 import { api } from "@/lib/api";
 import { useProjects } from "../V2Frame";
-import { V2 } from "@/lib/v2/routes";
+import { V2, projectHref } from "@/lib/v2/routes";
 
 /**
  * Figma "Group 3": secondary panel, 215 wide, white, right border #EDEDF0.
@@ -98,7 +98,7 @@ export default function ProjectsPanel({
             <li key={p.id} className="flex flex-col gap-[10px]">
               {i > 0 && <div className="h-px w-full bg-[#EDEDF0]" />}
               <Link
-                href={`${V2}/projects/${p.id}`}
+                href={projectHref(p)}
                 className={`flex items-center gap-2 text-xs leading-[1.5] tracking-[-0.02em] hover:text-[#101D37] ${
                   active ? "font-semibold text-[#101D37]" : "text-body"
                 }`}

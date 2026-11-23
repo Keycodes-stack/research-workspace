@@ -18,6 +18,9 @@ from .routes_pipeline import router as pipeline_router
 from .routes_signals import router as signals_router
 from .routes_sources import router as sources_router
 from .routes_tasks import router as tasks_router
+from .routes_attachments import router as attachments_router
+from .routes_people import router as people_router
+from .routes_roles import router as roles_router
 
 
 @asynccontextmanager
@@ -39,6 +42,9 @@ errors.install(app)
 app.include_router(discovery_router)
 app.include_router(sources_router)
 app.include_router(tasks_router)
+app.include_router(attachments_router)
+app.include_router(people_router)
+app.include_router(roles_router)
 app.include_router(chats_router)
 app.include_router(export_router)
 app.include_router(signals_router)

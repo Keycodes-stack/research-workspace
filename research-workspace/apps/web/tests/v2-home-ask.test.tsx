@@ -31,7 +31,7 @@ const answer: AskResult = {
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/v2/home",
+  usePathname: () => "/home",
   useRouter: () => ({ push }),
   useParams: () => ({ id: "p1", chatId: "chat1" }),
 }));
@@ -53,8 +53,8 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import V2Frame from "@/components/v2/V2Frame";
-import HomePage from "@/app/(v2)/v2/home/page";
-import ChatPage from "@/app/(v2)/v2/projects/[id]/ask/[chatId]/page";
+import HomePage from "@/app/(v2)/(app)/home/page";
+import ChatPage from "@/app/(v2)/(app)/projects/[id]/ask/[chatId]/page";
 import { api } from "@/lib/api";
 import { answerFacts, citeSources, plainContent, readableTitle } from "@/lib/v2/answer";
 import { pending, runAsk } from "@/lib/v2/ask";
@@ -121,7 +121,7 @@ describe("Home", () => {
     fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "Does heat damage DNA?" } });
     fireEvent.click(send);
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/v2/projects/p1/ask/chat1"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/projects/p1/ask/chat1"));
     expect(api.createChat).toHaveBeenCalledWith("p1", "Does heat damage DNA?");
     expect(pending.take("chat1")).toEqual({ question: "Does heat damage DNA?", scope: "api" });
     expect(localStorage.getItem("v2:ask:scope")).toBe("api");

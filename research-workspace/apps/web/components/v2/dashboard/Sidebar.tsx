@@ -34,7 +34,7 @@ const MAIN_MENU: Item[] = [
 
 const OTHER_MENU: Item[] = [
   { label: "Notifications", href: "#", icon: huge(Notification01Icon) },
-  { label: "Organization & Access", href: "#", icon: huge(UserGroupIcon) },
+  { label: "Organization & Access", href: "/organization", icon: huge(UserGroupIcon) },
   { label: "Settings", href: "#", icon: untitled(Settings02) },
 ];
 

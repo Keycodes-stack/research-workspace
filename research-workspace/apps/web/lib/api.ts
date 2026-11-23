@@ -1,5 +1,5 @@
 import type {
-  AskResult, AuditEntry, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage,
+  AskResult, AuditEntry, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
 } from "./types";
 import type { IntakeResponse, ProjectDraft, ProjectInsights } from "./projectIntake";
 
@@ -123,7 +123,48 @@ async function callBlob(path: string, body: unknown): Promise<{ blob: Blob; file
   return { blob: await res.blob(), filename: m?.[1] ?? "business_case.pdf", fingerprint: res.headers.get("X-Report-Fingerprint") };
 }
 
+/** A file that needs the signed-in user's token (images) as a local object URL. The caller revokes it. */
+export async function authenticatedObjectUrl(path: string): Promise<string> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  let res: Response;
+  try { res = await fetch(`${API_URL}${path}`, { headers }); }
+  catch { throw fail("GET", path, 0, null); }
+  if (!res.ok) throw fail("GET", path, res.status, await res.text());
+  return URL.createObjectURL(await res.blob());
+}
+
+/** GET a file with the signed-in user's token and save it under the server's file name. */
+async function download(path: string): Promise<void> {
+  const token = getToken();
+  const headers = new Headers();
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  let res: Response;
+  try { res = await fetch(`${API_URL}${path}`, { headers }); }
+  catch { throw fail("GET", path, 0, null); }
+  if (!res.ok) {
+    const text = await res.text();
+    let parsed: unknown = text;
+    try { parsed = JSON.parse(text); } catch { /* not json */ }
+    throw fail("GET", path, res.status, parsed);
+  }
+  const m = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "");
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = m?.[1] ?? "document.docx";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
+  /** The whole project as a Word document. */
+  downloadProjectDocument: (projectId: string) => download(`/projects/${projectId}/document.docx`),
+  /** One work package's Workspace document as a Word file. */
+  downloadWorkPackageDocument: (taskId: string) => download(`/tasks/${taskId}/document.docx`),
   exportBusinessCase: (threadId: string, body: unknown) => callBlob(`/threads/${threadId}/export/business-case`, body),
   projects: () => call<{ projects: Project[] }>("/projects").then((r) => r.projects),
   project: (id: string) => call<Project>(`/projects/${id}`),
@@ -142,9 +183,33 @@ export const api = {
     mode: Mode;
     meta: Record<string, string>;
     charter: ProjectDraft;
-    work_packages: { title: string; brief: string }[];
+    work_packages: { title: string; brief: string; lead?: string; due?: string }[];
     insights?: ProjectInsights;
-  }) => call<Project & { work_packages: { id: string; title: string }[] }>("/projects/complete", json(body)),
+  }, draftId?: string) => call<Project & { work_packages: { id: string; title: string }[] }>(
+    `/projects/complete${draftId ? `?draft_id=${encodeURIComponent(draftId)}` : ""}`, json(body)),
+  /** Save the wizard as a draft (status Draft). Pass draft_id to update the same draft. */
+  saveProjectDraft: (body: { draft_id?: string; name: string; mode: Mode; charter: ProjectDraft }) =>
+    call<{ id: string; slug: string; status: string }>("/projects/draft", json(body)),
+  /** Delete a draft. Created projects cannot be deleted (the server answers 409). */
+  deleteProject: (id: string) => call<null>(`/projects/${id}`, { method: "DELETE" }),
+  /** The people directory. Inactive people are included only when asked for. */
+  people: (includeInactive = false) =>
+    call<{ people: Person[] }>(`/people${includeInactive ? "?include_inactive=true" : ""}`).then((r) => r.people),
+  createPerson: (body: { full_name: string; email?: string | null; department?: string | null; job_title?: string | null }) =>
+    call<{ id: string; full_name: string }>("/people", json(body)),
+  updatePerson: (id: string, body: Partial<{ full_name: string; email: string | null; department: string | null; job_title: string | null; active: boolean }>) =>
+    call<{ id: string }>(`/people/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  /** Images attached to a project (PNG, JPEG, GIF or WebP, up to 10 MB). */
+  uploadProjectAttachment: (projectId: string, file: File) => {
+    const body = new FormData();
+    body.append("file", file);
+    return call<{ id: string; filename: string; content_type: string; size_bytes: number }>(
+      `/projects/${projectId}/attachments`, { method: "POST", body });
+  },
+  listProjectAttachments: (projectId: string) =>
+    call<{ attachments: AttachmentRow[] }>(`/projects/${projectId}/attachments`).then((r) => r.attachments),
+  attachmentUrl: (attachmentId: string) => authenticatedObjectUrl(`/attachments/${attachmentId}/file`),
+  deleteAttachment: (attachmentId: string) => call<null>(`/attachments/${attachmentId}`, { method: "DELETE" }),
   sources: (pid: string) => call<{ sources: SourceRow[] }>(`/projects/${pid}/sources`).then((r) => r.sources),
   upload: (pid: string, file: File) => {
     const f = new FormData();
@@ -160,9 +225,20 @@ export const api = {
   task: (id: string) => call<TaskDetail>(`/tasks/${id}`),
   /** The work package's Workspace document (plain text). `version` is what the next save must send back. */
   workPackageDocument: (taskId: string) =>
-    call<{ task_id: string; title: string; body: string; version: number; updated_at: string | null }>(`/tasks/${taskId}/document`),
+    call<{ task_id: string; title: string; body: string; format: "plain" | "tiptap"; version: number; updated_at: string | null }>(`/tasks/${taskId}/document`),
+  /** body is the editor's JSON (format tiptap). Stale versions are refused with HTTP 409. */
   saveWorkPackageDocument: (taskId: string, body: string, base_version: number) =>
-    call<{ task_id: string; version: number }>(`/tasks/${taskId}/document`, { method: "PUT", body: JSON.stringify({ body, base_version }) }),
+    call<{ task_id: string; version: number }>(`/tasks/${taskId}/document`,
+      { method: "PUT", body: JSON.stringify({ body, base_version, format: "tiptap" }) }),
+  workPackageComments: (taskId: string) =>
+    call<{ comments: WorkPackageComment[] }>(`/tasks/${taskId}/comments`).then((r) => r.comments),
+  /** A comment on selected text (anchorText), or a reply to a thread (parentId). */
+  addWorkPackageComment: (taskId: string, body: string, anchorText?: string, parentId?: string) =>
+    call<{ id: string }>(`/tasks/${taskId}/comments`, json({ body, anchor_text: anchorText ?? null, parent_id: parentId ?? null })),
+  deleteWorkPackageComment: (taskId: string, commentId: string) =>
+    call<null>(`/tasks/${taskId}/comments/${commentId}`, { method: "DELETE" }),
+  resolveWorkPackageComment: (taskId: string, commentId: string, resolved: boolean) =>
+    call<{ id: string; resolved: boolean }>(`/tasks/${taskId}/comments/${commentId}`, { method: "PUT", body: JSON.stringify({ resolved }) }),
   setTaskSources: (id: string, source_ids: string[]) =>
     call<{ source_ids: string[] }>(`/tasks/${id}/sources`, { method: "PUT", body: JSON.stringify({ source_ids }) }),
   approve: (id: string) => call<{ status: string; source_lock_hash: string }>(`/tasks/${id}/approve`, { method: "POST" }),
@@ -200,9 +276,17 @@ export const api = {
   decide: (id: string, action: string, reason: string, override = false) =>
     call<{ from: string; to: string }>(`/concepts/${id}/decisions`, json({ action, reason, override })),
   members: (pid: string) => call<Members>(`/projects/${pid}/members`),
-  addMember: (pid: string, user_id: string, role: string) => call<unknown>(`/projects/${pid}/members`, json({ user_id, role })),
-  setRole: (pid: string, uid: string, role: string) =>
-    call<unknown>(`/projects/${pid}/members/${uid}`, { method: "PUT", body: JSON.stringify({ role }) }),
+  /** Add a member with a custom role (roleId) or with a level alone (role). */
+  addMember: (pid: string, user_id: string, roleOrId: { role?: string; role_id?: string }) =>
+    call<unknown>(`/projects/${pid}/members`, json({ user_id, ...roleOrId })),
+  /** One-click role change: pass the custom role (role_id) or a level (role). */
+  setRole: (pid: string, uid: string, roleOrId: { role?: string; role_id?: string }) =>
+    call<unknown>(`/projects/${pid}/members/${uid}`, { method: "PUT", body: JSON.stringify(roleOrId) }),
+  roles: (pid: string) => call<{ roles: ProjectRole[]; your_role: string; role_restrictions: boolean }>(`/projects/${pid}/roles`),
+  createRole: (pid: string, body: { name: string; level: string }) => call<{ id: string }>(`/projects/${pid}/roles`, json(body)),
+  updateRole: (pid: string, roleId: string, body: { name?: string; level?: string }) =>
+    call<unknown>(`/projects/${pid}/roles/${roleId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteRole: (pid: string, roleId: string) => call<null>(`/projects/${pid}/roles/${roleId}`, { method: "DELETE" }),
   removeMember: (pid: string, uid: string) => call<unknown>(`/projects/${pid}/members/${uid}`, { method: "DELETE" }),
   audit: (pid: string, q: { action?: string; before?: number } = {}) => {
     const qs = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)])).toString();

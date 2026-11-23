@@ -4,6 +4,17 @@ export type AnswerKind = "consensus" | "disagreement" | "insufficient_evidence";
 
 export interface Project {
   id: string; name: string; mode: Mode; created_at?: string; role?: string;
+  /** URL name (spec /projects/[slug]); null for projects created before slugs existed. */
+  slug?: string | null;
+  /** Draft, Active, In Progress, Pending Approval, Completed or Parked. */
+  status?: string;
+  /** Reference code shown in the directory, e.g. P-010. */
+  code?: string | null;
+  governance_stage?: string;
+  project_lead?: string | null;
+  /** Number of work packages and the average of their progress (null when there are none). */
+  work_packages?: number;
+  progress?: number | null;
   /** String summaries plus the structured project charter saved on creation. */
   meta?: Record<string, unknown>;
 }
@@ -12,6 +23,17 @@ export interface SourceRow {
   origin: string; fulltext: string; year: number | null; page_count: number | null; chunks: number;
 }
 export interface TaskRow { id: string; title: string; brief: string | null; status: TaskStatus; created_at: string }
+/** A person in the organization's directory (sponsors, project leads and core team are chosen from it). */
+export interface Person { id: string; full_name: string; email: string | null; department: string | null; job_title: string | null; active: boolean }
+export interface AttachmentRow { id: string; filename: string; content_type: string; size_bytes: number; created_at: string }
+export interface WorkPackageComment {
+  id: string; author: string; body: string; resolved: boolean; created_at: string;
+  /** The text the comment is about (null for replies). */
+  anchor_text: string | null;
+  /** The first comment of the thread, for replies. */
+  parent_id: string | null;
+  resolved_by: string | null; resolved_at: string | null;
+}
 export interface ThreadRow { id: string; title: string | null; created_at: string }
 export interface TaskDetail {
   id: string; project_id: string; title: string; status: TaskStatus; mode: Mode;
@@ -105,7 +127,9 @@ export interface Decision {
 }
 export interface Board { order: string[]; stages: Record<string, { id: string; title: string; stage: string; status: string }[]> }
 
-export interface Member { user_id: string; role: string; created_at: string }
+export interface Member { user_id: string; role: string; role_id: string | null; role_name: string | null; created_at: string }
+/** A role a project defines for itself. Its level (viewer … owner) is what the access rules use. */
+export interface ProjectRole { id: string; name: string; level: string; members: number }
 export interface Members { you: string; members: Member[]; permissions: { capability: string; min_role: string }[] }
 export interface AuditEntry { id: number; actor: string; action: string; target_type: string | null; target_id: string | null; detail: Record<string, unknown>; created_at: string }
 export interface Usage {

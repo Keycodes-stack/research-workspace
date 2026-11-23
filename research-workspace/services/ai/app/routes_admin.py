@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field
 
-from .access import ROLES, project_for_user, project_with, rank
+from .access import ROLES, can_manage, project_for_user, project_with, rank, resolve_role, restrictions_on
 from .auth import require_user
 from .clients import get_pool
 from .governance import audit, calls_this_month
@@ -24,43 +24,39 @@ PERMISSIONS = [
 ]
 
 
-def can_manage(actor_role: str, target_role: str, new_role: str | None = None) -> bool:
-    """Owners manage anyone. Admins manage members at or below lead_scientist and can only grant up to lead_scientist."""
-    if actor_role == "owner":
-        return True
-    if actor_role != "admin":
-        return False
-    return rank(target_role) <= rank("lead_scientist") and (new_role is None or rank(new_role) <= rank("lead_scientist"))
-
-
 @router.get("/projects/{project_id}/members")
 async def members(project=Depends(project_for_user), pool=Depends(get_pool)):
     rows = await pool.fetch(
-        "SELECT user_id, role::text AS role, created_at FROM project_members WHERE project_id=$1 ORDER BY role DESC, created_at",
-        project["id"])
+        """SELECT m.user_id, m.role::text AS role, m.role_id, r.name AS role_name, m.created_at
+           FROM project_members m LEFT JOIN project_roles r ON r.id = m.role_id
+           WHERE m.project_id=$1 ORDER BY m.role DESC, m.created_at""", project["id"])
     return jsonable_encoder({"you": project["role"], "members": [dict(r) for r in rows], "permissions": PERMISSIONS})
 
 
 class MemberIn(BaseModel):
     user_id: UUID
-    role: Role
+    role: Role | None = None
+    role_id: UUID | None = None
 
 
 @router.post("/projects/{project_id}/members", status_code=201)
 async def add_member(body: MemberIn, project=Depends(project_with("admin")), user: UUID = Depends(require_user),
                      pool=Depends(get_pool)):
-    if not can_manage(project["role"], "viewer", body.role):
-        raise HTTPException(403, {"error": "forbidden", "note": f"{project['role']} cannot grant {body.role}"})
+    level, role_id = await resolve_role(pool, project["id"], body.role, body.role_id)
+    if not can_manage(project["role"], "viewer", level):
+        raise HTTPException(403, {"error": "forbidden", "note": f"{project['role']} cannot grant {level}"})
     if await pool.fetchval("SELECT 1 FROM project_members WHERE project_id=$1 AND user_id=$2", project["id"], body.user_id):
         raise HTTPException(409, "already a member; change their role instead")
-    await pool.execute("INSERT INTO project_members (project_id, user_id, role, added_by) VALUES ($1,$2,$3::project_role,$4)",
-                       project["id"], body.user_id, body.role, user)
-    await audit(pool, project["id"], user, "member.add", "user", body.user_id, role=body.role)
-    return {"user_id": body.user_id, "role": body.role}
+    await pool.execute(
+        "INSERT INTO project_members (project_id, user_id, role, role_id, added_by) VALUES ($1,$2,$3::project_role,$4,$5)",
+        project["id"], body.user_id, level, role_id, user)
+    await audit(pool, project["id"], user, "member.add", "user", body.user_id, role=level)
+    return {"user_id": body.user_id, "role": level, "role_id": role_id}
 
 
 class RoleIn(BaseModel):
-    role: Role
+    role: Role | None = None
+    role_id: UUID | None = None
 
 
 async def _owners(pool, project_id) -> int:
@@ -68,19 +64,30 @@ async def _owners(pool, project_id) -> int:
 
 
 @router.put("/projects/{project_id}/members/{member_id}")
-async def change_role(member_id: UUID, body: RoleIn, project=Depends(project_with("admin")),
+async def change_role(member_id: UUID, body: RoleIn, project=Depends(project_for_user),
                       user: UUID = Depends(require_user), pool=Depends(get_pool)):
-    cur = await pool.fetchval("SELECT role::text FROM project_members WHERE project_id=$1 AND user_id=$2", project["id"], member_id)
+    """Change a member's role with one request. Anyone may change their own role to one at or below their level
+    (so nobody can raise themselves); changing someone else needs admin rights over them."""
+    cur = await pool.fetchrow("SELECT role::text AS role FROM project_members WHERE project_id=$1 AND user_id=$2",
+                              project["id"], member_id)
     if cur is None:
         raise HTTPException(404, "member not found")
-    if not can_manage(project["role"], cur, body.role):
-        raise HTTPException(403, {"error": "forbidden", "note": f"{project['role']} cannot change {cur} to {body.role}"})
-    if cur == "owner" and body.role != "owner" and await _owners(pool, project["id"]) <= 1:
+    level, role_id = await resolve_role(pool, project["id"], body.role, body.role_id)
+    if member_id == user:
+        if restrictions_on() and rank(level) > rank(project["role"]):
+            raise HTTPException(403, {"error": "forbidden", "note": "you cannot raise your own role"})
+    else:
+        if restrictions_on() and rank(project["role"]) < rank("admin"):
+            raise HTTPException(403, {"error": "forbidden", "required_role": "admin", "your_role": project["role"]})
+        if not can_manage(project["role"], cur["role"], level):
+            raise HTTPException(403, {"error": "forbidden", "note": f"{project['role']} cannot change {cur['role']} to {level}"})
+    if cur["role"] == "owner" and level != "owner" and await _owners(pool, project["id"]) <= 1:
         raise HTTPException(409, "a project must keep at least one owner")
-    await pool.execute("UPDATE project_members SET role=$3::project_role WHERE project_id=$1 AND user_id=$2",
-                       project["id"], member_id, body.role)
-    await audit(pool, project["id"], user, "member.role", "user", member_id, **{"from": cur, "to": body.role})
-    return {"user_id": member_id, "role": body.role}
+    await pool.execute(
+        "UPDATE project_members SET role=$3::project_role, role_id=$4 WHERE project_id=$1 AND user_id=$2",
+        project["id"], member_id, level, role_id)
+    await audit(pool, project["id"], user, "member.role", "user", member_id, **{"from": cur["role"], "to": level})
+    return {"user_id": member_id, "role": level, "role_id": role_id}
 
 
 @router.delete("/projects/{project_id}/members/{member_id}")
@@ -90,7 +97,7 @@ async def remove_member(member_id: UUID, project=Depends(project_for_user), user
     if cur is None:
         raise HTTPException(404, "member not found")
     if member_id != user:                         # anyone may leave; removing someone else needs admin rights over them
-        if rank(project["role"]) < rank("admin"):
+        if restrictions_on() and rank(project["role"]) < rank("admin"):
             raise HTTPException(403, {"error": "forbidden", "required_role": "admin", "your_role": project["role"]})
         if not can_manage(project["role"], cur):
             raise HTTPException(403, {"error": "forbidden", "note": f"{project['role']} cannot remove a {cur}"})

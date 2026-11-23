@@ -7,7 +7,7 @@ const projects = [
 ];
 
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/v2/projects/p1/departments",
+  usePathname: () => "/projects/p1/departments",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useParams: () => ({ id: "p1" }),
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
@@ -25,10 +25,10 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import V2Frame from "@/components/v2/V2Frame";
-import DepartmentsPage from "@/app/(v2)/v2/projects/[id]/departments/page";
-import BaselinePage from "@/app/(v2)/v2/projects/[id]/baseline/page";
-import EvidencePage from "@/app/(v2)/v2/projects/[id]/evidence/page";
-import KnowledgePage from "@/app/(v2)/v2/knowledge/page";
+import DepartmentsPage from "@/app/(v2)/(app)/projects/[id]/departments/page";
+import BaselinePage from "@/app/(v2)/(app)/projects/[id]/baseline/page";
+import EvidencePage from "@/app/(v2)/(app)/projects/[id]/evidence/page";
+import KnowledgePage from "@/app/(v2)/(app)/knowledge/page";
 
 const params = (id: string) => ({ params: Promise.resolve({ id }) });
 
@@ -40,9 +40,9 @@ describe("project pages from the design (sample content, real projects)", () => 
     expect(await screen.findByRole("heading", { name: "Departments & Workstreams" })).toBeInTheDocument();
     expect(screen.getByText("Workstream Matrix")).toBeInTheDocument();                         // design sample
     const panel = screen.getByRole("navigation", { name: "Project" });
-    expect(within(panel).getByRole("link", { name: /Baseline & Approvals/ })).toHaveAttribute("href", "/v2/projects/p1/baseline");
+    expect(within(panel).getByRole("link", { name: /Baseline & Approvals/ })).toHaveAttribute("href", "/projects/p1/baseline");
     expect(within(panel).getByRole("link", { name: /Departments/ })).toHaveAttribute("aria-current", "page");
-    expect(screen.getByRole("link", { name: "Battery recycling" })).toHaveAttribute("href", "/v2/projects/p2");
+    expect(screen.getByRole("link", { name: "Battery recycling" })).toHaveAttribute("href", "/projects/p2");
   });
 
   it("shows the design's not-found card for a project that is not in the workspace", async () => {
@@ -60,8 +60,8 @@ describe("project pages from the design (sample content, real projects)", () => 
   it("opens Evidence and the Workspace document from the work packages", async () => {
     render(<V2Frame>{await EvidencePage(params("p1"))}</V2Frame>);
     expect(await screen.findByRole("heading", { name: "Evidence Extraction Ledger" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/v2/projects/p1/evidence");
-    expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "/v2/projects/p1/workspace/t1");
+    expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/projects/p1/evidence");
+    expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "/projects/p1/workspace/t1");
   });
 
   it("shows the Knowledge Library", async () => {

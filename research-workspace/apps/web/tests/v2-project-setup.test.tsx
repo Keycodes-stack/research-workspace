@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }) }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -8,10 +9,12 @@ vi.mock("@/lib/api", () => ({
     projectIntake: vi.fn(),
     projectInsights: vi.fn(),
     createProjectComplete: vi.fn(),
+    people: vi.fn(async () => []),
+    createPerson: vi.fn(),
   },
   getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
-vi.mock("next/navigation", () => ({ usePathname: () => "/v2/projects/new", useRouter: () => ({ push: () => {} }) }));
+vi.mock("next/navigation", () => ({ usePathname: () => "/projects/new", useRouter: () => ({ push: () => {} }) }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
@@ -34,7 +37,7 @@ const insights: ProjectInsights = {
 /** A draft that passes every review check, so "Create project" is enabled. */
 const readyDraft = {
   ...EMPTY_PROJECT_DRAFT,
-  name: "Heat recovery", objective: "Recover waste heat at Plant A", lead: "Sara", sponsor: "Director",
+  name: "Heat recovery", type: "Technical Feasibility", objective: "Recover waste heat at Plant A", lead: "Sara", sponsor: "Director",
   departments: ["Engineering"], team_mode: "Department leads assign their teams later",
   workstreams: [{ name: "Pilot", department: "", team: "", output: "Pilot report", owner: "Sara", reviewer: "", start: "", due: "", dependencies: "" }],
   gates: [{ name: "Gate 1", owner: "Sara", approver: "Director", date: "", criteria: "Payback under 3 years", workstreams: ["Pilot"] }],
@@ -96,11 +99,11 @@ describe("AI-assisted project creation", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Create project" }));
 
-    expect(await screen.findByRole("heading", { name: "Project created" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Project successfully initialized!" })).toBeInTheDocument();
     expect(api.projectInsights).toHaveBeenCalledWith(expect.objectContaining({ name: "Heat recovery" }));
     expect(api.createProjectComplete).toHaveBeenCalledWith(expect.objectContaining({
       name: "Heat recovery", insights, work_packages: [expect.objectContaining({ title: "Pilot" })],
-    }));
+    }), undefined);
     expect(screen.getByRole("region", { name: "AI assessment" })).toHaveTextContent("Feasibility 72%");
     expect(screen.getByText("What is the payback at Plant A?")).toBeInTheDocument();
     expect(readProjectDraft()).toBeNull();
@@ -114,9 +117,9 @@ describe("AI-assisted project creation", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Create project" }));
 
-    expect(await screen.findByRole("heading", { name: "Project created" })).toBeInTheDocument();
-    expect(api.createProjectComplete).toHaveBeenCalledWith(expect.objectContaining({ insights: undefined }));
-    expect(screen.getByRole("status")).toHaveTextContent("could not be generated");
+    expect(await screen.findByRole("heading", { name: "Project successfully initialized!" })).toBeInTheDocument();
+    expect(api.createProjectComplete).toHaveBeenCalledWith(expect.objectContaining({ insights: undefined }), undefined);
+    expect(screen.getAllByRole("status").some((el) => /could not be generated/.test(el.textContent ?? ""))).toBe(true);
   });
 
   it("discards the saved draft and returns to the idea prompt", async () => {
@@ -131,6 +134,6 @@ describe("AI-assisted project creation", () => {
     renderFlow();
     await screen.findByLabelText("Project idea");
     expect(screen.queryByRole("button", { name: "Speak your idea" })).toBeNull();
-    expect(screen.getByText(/Attached file names are added/)).toBeInTheDocument();
+    expect(screen.getByText(/PDFs and images are added to the project/)).toBeInTheDocument();
   });
 });

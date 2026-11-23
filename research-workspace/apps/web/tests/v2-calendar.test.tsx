@@ -18,7 +18,7 @@ describe("Calendar (design sample, no backend)", () => {
     render(<CalendarBoard />);
     expect(screen.getByText("Commercial Viability — Lead Review")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Kanban" }));
-    expect(replace).toHaveBeenCalledWith("/v2/calendar?view=kanban", expect.anything());
+    expect(replace).toHaveBeenCalledWith("/calendar?view=kanban", expect.anything());
   });
 
   it("shows the Kanban columns when asked by the URL", () => {

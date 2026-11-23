@@ -6,6 +6,7 @@ import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import { useProjects } from "@/components/v2/V2Frame";
 import AssessmentCard from "@/components/v2/projects/AssessmentCard";
+import AttachmentGallery from "@/components/v2/projects/AttachmentGallery";
 import { api } from "@/lib/api";
 import { asInsights } from "@/lib/projectIntake";
 import { workPackage, type WorkPackage } from "@/lib/workPackages";
@@ -44,7 +45,9 @@ export default function ProjectOverview({ id }: { id: string }) {
   const [tasksError, setTasksError] = useState("");
   const [sourceCount, setSourceCount] = useState<number | null>(null);
   const [signalCount, setSignalCount] = useState<number | null>(null);
-  const project: Project | undefined = projects.find((p) => p.id === id);
+  const project: Project | undefined = projects.find((p) => p.id === id || p.slug === id);
+  const [downloadError, setDownloadError] = useState("");
+  const download = () => { setDownloadError(""); api.downloadProjectDocument(id).catch((e) => setDownloadError(e instanceof Error ? e.message : "Could not create the Word document.")); };
 
   useEffect(() => {
     let live = true;
@@ -71,9 +74,15 @@ export default function ProjectOverview({ id }: { id: string }) {
       <TopBar current="Overview" trail={[{ label: "Projects", href: `${V2}/projects` }]} />
       <main className="flex flex-col gap-5 px-4 pt-8 pb-16 sm:px-6 lg:px-10">
         {loading ? <p className="text-sm text-[#667085]">Loading project…</p> : error ? <p role="alert" className="text-sm text-[#B42318]">Could not load project: {error}</p> : !project ? <p className="text-sm text-[#667085]">Project not found.</p> : <>
-          <div>
-            <h1 className="text-2xl font-semibold tracking-[-0.02em] text-[#101D37] sm:text-3xl">{project.name}</h1>
-            <p className="mt-1 text-sm text-[#667085]">{text("objective") || "Project overview."}</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-[-0.02em] text-[#101D37] sm:text-3xl">{project.name}</h1>
+              <p className="mt-1 text-sm text-[#667085]">{text("objective") || "Project overview."}</p>
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <button type="button" onClick={download} className="rounded-[10px] border border-[#EDEDF0] bg-white px-4 py-2.5 text-sm font-semibold text-[#101D37]">Download Word document</button>
+              {downloadError && <p role="alert" className="text-xs text-[#B42318]">{downloadError}</p>}
+            </div>
           </div>
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -111,6 +120,7 @@ export default function ProjectOverview({ id }: { id: string }) {
             </table>}
           </section>
 
+          <AttachmentGallery projectId={id} />
           <section className="rounded-[20px] border border-[#EDEDF0] bg-white p-5"><h2 className="text-lg font-semibold text-[#101D37]">Project charter</h2><dl className="mt-4 grid gap-4 sm:grid-cols-2">
             {[ ["Project type", text("type")], ["Sponsor", text("sponsor")], ["Governance", text("governance")], ["Target completion", text("target")], ["Departments", departments.join(", ")], ["Deliverable", text("deliverable")], ["In scope", text("in_scope")], ["Out of scope", text("out_scope")] ].filter(([, value]) => value).map(([label, value]) => <div key={label}><dt className="text-xs font-medium text-[#667085]">{label}</dt><dd className="mt-1 whitespace-pre-line text-sm text-[#344054]">{value}</dd></div>)}
           </dl></section>

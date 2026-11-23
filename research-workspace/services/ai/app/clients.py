@@ -45,6 +45,10 @@ class LocalStorageClient:
             raise FileNotFoundError(f"Key not found: {Key}")
         return {"Body": io.BytesIO(target.read_bytes())}
 
+    def delete_object(self, Bucket: str, Key: str):
+        (self.root / Bucket / Key).unlink(missing_ok=True)
+        return {"ResponseMetadata": {"HTTPStatusCode": 204}}
+
 
 async def _init_conn(conn: asyncpg.Connection) -> None:
     await register_vector(conn)

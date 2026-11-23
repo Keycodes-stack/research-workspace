@@ -76,22 +76,43 @@ export type ProjectDraft = {
   reg_controls: string[];
   data_location: string;
   retention: string;
-  external_access: string;
+  /** Ids of the people chosen from the directory (sponsor, project lead, core team). */
+  sponsor_id: string;
+  lead_id: string;
+  core_team_ids: string[];
+  /** Spec 3.6: allow external partners to submit evidence. */
+  external_partner_ingestion: boolean;
 };
+
+/* Option lists of the projects module (spec 3.3-3.7). The database and the API accept exactly these values. */
+export const SPEC_OPTIONS = {
+  type: ["Commercial Assessment", "Technical Feasibility", "Experimental Research", "Literature Review", "Comparative Technology Assessment"],
+  governance: ["Standard", "Strict / Regulated", "Lightweight"],
+  priority: ["High", "Medium", "Low"],
+  approach: ["Stage-Gate", "Agile / Sprints", "Hybrid"],
+  reporting: ["Weekly", "Bi-weekly", "Monthly"],
+  classification: ["Public", "Internal", "Confidential", "Restricted / Classified"],
+  data_location: ["EU (Frankfurt)", "US (N. Virginia)", "APAC (Singapore)"],
+  retention: ["3 Years", "5 Years", "10 Years", "Indefinite"],
+  // The spec names no currency list; these are the common ones, and the database accepts any ISO 4217 code.
+  currency: ["USD", "EUR", "GBP", "MYR", "SGD"],
+  // The spec lists these five departments as the assignable choices.
+  departments: ["Research & Development", "Commercial / Marketing", "Finance & Cost Modeling", "Regulatory Affairs", "Manufacturing & Operations"],
+} as const;
 
 export const EMPTY_PROJECT_DRAFT: ProjectDraft = {
   mode: "open_discovery",
-  name: "", type: "Research & Development", objective: "", background: "",
-  governance: "Controlled", priority: "Normal", programme: "", business_unit: "",
+  name: "", type: "", objective: "", background: "", sponsor_id: "", lead_id: "", core_team_ids: [],
+  governance: "Standard", priority: "High", programme: "", business_unit: "",
   start: "", target: "", in_scope: "", out_scope: "", deliverable: "", measures: "",
   assumptions: "", dependencies: "", sponsor: "", lead: "", departments: [], team_mode: "Assign participating teams now",
   teams: [], stakeholders: "", decision_notes: "", external_orgs: "", workstreams: [], gates: [], risks: [], no_risk_reason: "",
-  approach: "Phased", reporting: "Monthly", budget: "", currency: "USD", resources: "",
+  approach: "", reporting: "", budget: "", currency: "USD", resources: "",
   controls_mode: "Controlled", visibility: "Project members only", classification: "Confidential",
   plan_editing: "Project lead and admins", manage_access: "Project lead and admins",
   approvals: "Department reviewers, then project lead", change_authority: "Sponsor and project lead",
   standards: "", quality_lead: "", gate_rule: "Sponsor and accountable reviewers", reg_controls: [],
-  data_location: "", retention: "", external_access: "No external access",
+  data_location: "APAC (Singapore)", retention: "5 Years", external_partner_ingestion: false,
 };
 
 export const PROJECT_SECTIONS = ["Charter", "Organization", "Delivery", "Controls", "Review"] as const;
@@ -150,11 +171,12 @@ export const FIELD_LIMITS: Record<string, number> = {
   no_risk_reason: 500, decision_notes: 800, external_orgs: 500, approach: 50, reporting: 50, budget: 80,
   currency: 8, resources: 800, controls_mode: 80, visibility: 80, classification: 40, plan_editing: 80,
   manage_access: 80, approvals: 120, change_authority: 100, standards: 500, quality_lead: 120, gate_rule: 100,
-  data_location: 120, retention: 200, external_access: 80,
+  data_location: 120, retention: 200,
 };
 /** Per-item limits of list fields (departments, teams, quality checks) and the maximum number of items. */
 export const LIST_LIMITS: Record<string, { item: number; max: number }> = {
   departments: { item: 100, max: 12 }, teams: { item: 160, max: 12 }, reg_controls: { item: 120, max: 12 },
+  core_team_ids: { item: 40, max: 50 },
 };
 /** Row limits for workstreams, gates and risks: per-field length and maximum row count. */
 export const ROW_LIMITS = {

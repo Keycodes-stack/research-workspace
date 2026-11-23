@@ -9,6 +9,8 @@ class Settings(BaseSettings):
         extra="ignore",
         protected_namespaces=("settings_",),
     )
+    # Role-based permissions. Off while everyone uses the same access key; switch on once sign-in is per person.
+    role_restrictions: bool = False
 
     database_url: str = "postgresql://rw:rw_dev_password@localhost:5432/research_workspace"
     redis_url: str = "redis://localhost:6379/0"

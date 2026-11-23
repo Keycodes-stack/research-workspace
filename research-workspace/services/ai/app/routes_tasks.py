@@ -6,14 +6,15 @@ import time
 import json
 from datetime import date, datetime, timezone
 from typing import Any, Literal, NamedTuple
-from uuid import UUID
+from decimal import Decimal, InvalidOperation
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, field_validator
 
 from .access import (
-    compute_lock_hash, project_for_user, project_with, task_for_user, task_sources, thread_for_user,
+    check_role, compute_lock_hash, project_for_user, project_with, task_for_user, task_sources, thread_for_user,
 )
 from .auth import require_user
 from .config import get_settings
@@ -23,6 +24,10 @@ from .deps import get_embedder, get_llms, get_tokenizer
 from .clients import get_s3
 from .deps import make_ingest_config
 from .ingest.service import SourceResult, build_session_sources
+from .routes_people import check_people_chosen
+from .word_export import (
+    DOCX_MEDIA_TYPE, build_project_docx, build_rich_package_docx, risks_from_charter, validate_rich_document,
+)
 from .retrieval.http import make_client
 from .ingest import store
 from .orchestration.engine import CrossCheckFailed, DualResult, run_dual
@@ -48,6 +53,8 @@ class ProjectIn(BaseModel):
 class PlannedWorkPackage(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     brief: str | None = Field(default=None, max_length=10000)
+    lead: str | None = Field(default=None, max_length=120)
+    due: str | None = Field(default=None, max_length=10)
 
 
 class ProjectCompleteIn(ProjectIn):
@@ -91,7 +98,7 @@ class ProjectIntakeIn(BaseModel):
 
 
 _INTAKE_TEXT = {
-    "name": 120, "type": 80, "objective": 1200, "background": 1200,
+    "name": 120, "type": 80, "objective": 1200, "background": 1200, "sponsor_id": 40, "lead_id": 40,
     "governance": 80, "priority": 30, "programme": 120, "business_unit": 120,
     "start": 10, "target": 10, "in_scope": 1200, "out_scope": 1200,
     "deliverable": 500, "measures": 800, "assumptions": 800, "dependencies": 800,
@@ -101,9 +108,9 @@ _INTAKE_TEXT = {
     "controls_mode": 80, "visibility": 80, "classification": 40, "plan_editing": 80,
     "manage_access": 80, "approvals": 120, "change_authority": 100,
     "standards": 500, "quality_lead": 120, "gate_rule": 100,
-    "data_location": 120, "retention": 200, "external_access": 80,
+    "data_location": 120, "retention": 200,
 }
-_LIST_TEXT = {"departments": 100, "teams": 160, "steering": 120, "reg_controls": 120}
+_LIST_TEXT = {"departments": 100, "teams": 160, "steering": 120, "reg_controls": 120, "core_team_ids": 40}
 _OBJECT_LISTS = {
     "workstreams": (8, {"name": 140, "department": 100, "team": 120, "output": 300, "owner": 120, "reviewer": 120, "start": 10, "due": 10, "dependencies": 300}),
     "gates": (8, {"name": 140, "owner": 120, "approver": 120, "date": 10, "criteria": 500}),
@@ -166,7 +173,7 @@ def _clean_intake_patch(raw: Any) -> dict[str, Any]:
                 if any(row.values()):
                     rows.append(row)
             out[key] = rows
-    for key in ("require_all",):
+    for key in ("require_all", "external_partner_ingestion"):
         if key in raw and isinstance(raw[key], bool):
             out[key] = raw[key]
     for key in ("controls",):
@@ -174,6 +181,10 @@ def _clean_intake_patch(raw: Any) -> dict[str, Any]:
             out[key] = list(dict.fromkeys(_intake_text(x, 120) for x in raw[key] if isinstance(x, str) and x.strip()))[:12]
     if raw.get("mode") in ("open_discovery", "closed_repository"):
         out["mode"] = raw["mode"]
+    # A suggested value outside the spec's options is dropped, so the user picks it instead of the save failing.
+    for key, (allowed, _label) in SPEC_CHOICES.items():
+        if out.get(key) not in (None, "") and out[key] not in allowed:
+            del out[key]
     return out
 
 
@@ -251,7 +262,7 @@ deliverable, measures, assumptions, dependencies, sponsor, lead, departments, te
 decision_notes, external_orgs, workstreams[{name,department,team,output,owner,reviewer,start,due,dependencies}],
         gates[{name,owner,approver,date,criteria,workstreams}], risks[{risk,owner,severity,response}], no_risk_reason, approach, reporting, budget, currency,
 cost_centre, resources, controls_mode, visibility, classification, plan_editing, manage_access, approvals,
-change_authority, standards, quality_lead, gate_rule, reg_controls, data_location, retention, external_access, controls,
+change_authority, standards, quality_lead, gate_rule, reg_controls, data_location, retention, external_partner_ingestion (true or false), controls,
 mode (open_discovery or closed_repository): use closed_repository only when the brief says the work must use approved, internal or confidential material; otherwise open_discovery. Do not ask about it.
 Return questions as [{header,question,multi_select,options:[{label,description}]}]."""
 
@@ -420,12 +431,193 @@ async def create_project(body: ProjectIn, user: UUID = Depends(require_user), po
     return {"id": pid, "name": body.name.strip(), "mode": body.mode, "meta": _clean_meta(body.meta)}
 
 
-@router.post("/projects/complete", status_code=201)
-async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
-    """Create the reviewed charter and its planned research packages atomically."""
-    problems = charter_over_limits(body.charter)
+# ---- the project's spec values (spec 3.3-3.7; enforced here and by the database CHECK constraints) ----
+PROJECT_TYPES = ("Commercial Assessment", "Technical Feasibility", "Experimental Research",
+                 "Literature Review", "Comparative Technology Assessment")
+GOVERNANCE_LEVELS = ("Standard", "Strict / Regulated", "Lightweight")
+PRIORITIES = ("High", "Medium", "Low")
+DELIVERY_APPROACHES = ("Stage-Gate", "Agile / Sprints", "Hybrid")
+REPORTING_FREQUENCIES = ("Weekly", "Bi-weekly", "Monthly")
+CLASSIFICATIONS = ("Public", "Internal", "Confidential", "Restricted / Classified")
+DATA_REGIONS = ("EU (Frankfurt)", "US (N. Virginia)", "APAC (Singapore)")
+RETENTIONS = ("3 Years", "5 Years", "10 Years", "Indefinite")
+# charter key -> (allowed values, label used in error messages)
+SPEC_CHOICES = {
+    "type": (PROJECT_TYPES, "Project type"),
+    "governance": (GOVERNANCE_LEVELS, "Governance level"),
+    "priority": (PRIORITIES, "Priority"),
+    "approach": (DELIVERY_APPROACHES, "Delivery approach"),
+    "reporting": (REPORTING_FREQUENCIES, "Reporting frequency"),
+    "classification": (CLASSIFICATIONS, "Security classification"),
+    "data_location": (DATA_REGIONS, "Data handling region"),
+    "retention": (RETENTIONS, "Retention requirement"),
+}
+
+
+def charter_choice_problems(raw: dict[str, Any], required: bool = True) -> list[str]:
+    """Required choices must be present, and every choice must be one of the spec's values."""
+    problems = []
+    if required and not raw.get("type"):
+        problems.append("Project type is required")
+    if required and not str(raw.get("objective") or "").strip():
+        problems.append("Business objective is required")
+    for key, (allowed, label) in SPEC_CHOICES.items():
+        value = raw.get(key)
+        if value not in (None, "") and value not in allowed:
+            problems.append(f"{label} must be one of: {', '.join(allowed)}")
+    return problems
+
+
+def _date_or_none(value: Any, label: str) -> date | None:
+    if value in (None, ""):
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        raise HTTPException(422, f"{label} must be a date (YYYY-MM-DD)")
+
+
+def _lines(value: Any, separators: str = "\n") -> list[str]:
+    parts = re.split(f"[{re.escape(separators)}]", str(value or ""))
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _budget_or_none(value: Any) -> Decimal | None:
+    digits = re.sub(r"[^0-9.]", "", str(value or ""))
+    if not digits:
+        return None
+    try:
+        return Decimal(digits)
+    except InvalidOperation:
+        raise HTTPException(422, "Indicative budget must be a number")
+
+
+def charter_columns(raw: dict[str, Any]) -> dict[str, Any]:
+    """Map the reviewed charter onto the projects columns of spec section 5. Empty values fall back to the defaults."""
+    cols: dict[str, Any] = {
+        "project_type": raw.get("type") or None,
+        "governance_level": raw.get("governance") or None,
+        "priority": raw.get("priority") or None,
+        "programme": raw.get("programme") or None,
+        "business_unit": raw.get("business_unit") or None,
+        "business_objective": str(raw.get("objective") or "").strip() or None,
+        "business_case": raw.get("background") or None,
+        "expected_outcome": raw.get("deliverable") or None,
+        "in_scope": json.dumps(_lines(raw.get("in_scope"))),
+        "out_of_scope": json.dumps(_lines(raw.get("out_scope"))),
+        "success_measures": json.dumps(_lines(raw.get("measures"))),
+        "assumptions": raw.get("assumptions") or None,
+        "external_dependencies": raw.get("dependencies") or None,
+        "start_date": _date_or_none(raw.get("start"), "Planned start"),
+        "target_date": _date_or_none(raw.get("target"), "Target completion"),
+        "budget_indicative": _budget_or_none(raw.get("budget")),
+        "currency": raw.get("currency") or None,
+        "delivery_approach": raw.get("approach") or None,
+        "reporting_frequency": raw.get("reporting") or None,
+        "resource_allocation": raw.get("resources") or None,
+        "executive_sponsor": raw.get("sponsor") or None,
+        "project_lead": raw.get("lead") or None,
+        "stakeholder_notes": "\n".join(x for x in (raw.get("stakeholders"), raw.get("decision_notes")) if x) or None,
+        "departments": json.dumps([d for d in (raw.get("departments") or []) if isinstance(d, str)]),
+        "external_organizations": json.dumps(_lines(raw.get("external_orgs"), ",\n")),
+        "standards": json.dumps(_lines(raw.get("standards"), ",\n")),
+        "quality_lead": raw.get("quality_lead") or None,
+        "external_partner_ingestion": raw.get("external_partner_ingestion") is True,
+        "executive_sponsor_id": _uuid_or_none(raw.get("sponsor_id")),
+        "project_lead_id": _uuid_or_none(raw.get("lead_id")),
+        "core_team_ids": json.dumps([str(x) for x in (raw.get("core_team_ids") or []) if isinstance(x, str)]),
+        "security_classification": raw.get("classification") or None,
+        "data_region": raw.get("data_location") or None,
+        "retention": raw.get("retention") or None,
+    }
+    return {k: v for k, v in cols.items() if v is not None}
+
+
+def _uuid_or_none(value: Any) -> UUID | None:
+    try:
+        return UUID(str(value)) if value else None
+    except ValueError:
+        return None
+
+
+def _slug(name: str, project_id: UUID) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:60] or "project"
+    return f"{base}-{project_id.hex[:8]}"
+
+
+class ProjectDraftIn(BaseModel):
+    draft_id: UUID | None = None
+    name: str = Field(default="", max_length=200)
+    mode: Literal["open_discovery", "closed_repository"] = "open_discovery"
+    charter: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("charter")
+    @classmethod
+    def _bounded_charter(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(value, default=str)) > 40_000:
+            raise ValueError("charter is too large")
+        return value
+
+
+async def _writable_draft(pool, draft_id: UUID, user: UUID):
+    """A draft the caller may change: a Draft project where the caller is at least a researcher."""
+    row = await pool.fetchrow(
+        """SELECT p.id, p.status, m.role::text AS role FROM projects p
+           JOIN project_members m ON m.project_id = p.id AND m.user_id = $2 WHERE p.id = $1""", draft_id, user)
+    if row is None:
+        raise HTTPException(404, "draft not found")
+    check_role(row["role"], "researcher")
+    if row["status"] != "Draft":
+        raise HTTPException(409, "this project is no longer a draft")
+    return row
+
+
+@router.post("/projects/draft")
+async def save_project_draft(body: ProjectDraftIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Save the wizard as a draft. Drafts keep whatever was entered; the full checks run when the project is created."""
+    problems = charter_over_limits(body.charter) + charter_choice_problems(body.charter, required=False)
     if problems:
-        raise HTTPException(422, "Too long to save as typed: " + "; ".join(problems))
+        raise HTTPException(422, "Please correct: " + "; ".join(problems))
+    await check_people_chosen(pool, body.charter)
+    columns = charter_columns(body.charter)
+    name = body.name.strip() or "Untitled draft"
+    meta = json.dumps({"charter": _clean_intake_patch(body.charter)})
+    if body.draft_id:
+        await _writable_draft(pool, body.draft_id, user)
+        values = {**columns, "name": name, "mode": body.mode, "meta": meta}
+        sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(values, start=2))
+        slug = await pool.fetchval(
+            f"UPDATE projects SET {sets}, updated_at = now() WHERE id = $1 RETURNING slug",
+            body.draft_id, *values.values())
+        return {"id": body.draft_id, "slug": slug, "status": "Draft"}
+    project_id = uuid4()
+    values = {**columns, "id": project_id, "owner_id": user, "name": name, "mode": body.mode,
+              "slug": _slug(name, project_id), "status": "Draft", "meta": meta}
+    names = list(values)
+    placeholders = ", ".join(f"${i}" for i in range(1, len(names) + 1))
+    await pool.execute(f"INSERT INTO projects ({', '.join(names)}) VALUES ({placeholders})", *values.values())
+    return {"id": project_id, "slug": values["slug"], "status": "Draft"}
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+async def delete_project_draft(project=Depends(project_with("researcher")), pool=Depends(get_pool)):
+    """Only drafts can be deleted. Projects that have been created are kept."""
+    if project["status"] != "Draft":
+        raise HTTPException(409, "Only a draft can be deleted. Created projects are kept.")
+    await pool.execute("DELETE FROM projects WHERE id = $1 AND status = 'Draft'", project["id"])
+    return Response(status_code=204)
+
+
+@router.post("/projects/complete", status_code=201)
+async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(require_user), pool=Depends(get_pool),
+                                  draft_id: UUID | None = None):
+    """Create the reviewed charter, its work packages and decision gates in one transaction (spec section 5).
+    With draft_id, the draft becomes the project (same id and slug)."""
+    problems = charter_over_limits(body.charter) + charter_choice_problems(body.charter)
+    if problems:
+        raise HTTPException(422, "Please correct: " + "; ".join(problems))
+    await check_people_chosen(pool, body.charter)
+    columns = charter_columns(body.charter)
     meta = _clean_meta(body.meta)
     meta["charter"] = _clean_intake_patch(body.charter)
     if body.insights:
@@ -433,27 +625,64 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
                                            str(body.insights.get("generatedAt", "")) or None)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            pid = await conn.fetchval(
-                "INSERT INTO projects (owner_id, name, mode, meta) VALUES ($1, $2, $3, $4::jsonb) RETURNING id",
-                user, body.name.strip(), body.mode, json.dumps(meta),
-            )
+            if draft_id:
+                await _writable_draft(conn, draft_id, user)
+                project_id = draft_id
+                values = {**columns, "name": body.name.strip(), "mode": body.mode, "status": "Active",
+                          "meta": json.dumps(meta)}
+                sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(values, start=2))
+                slug = await conn.fetchval(
+                    f"UPDATE projects SET {sets}, updated_at = now() WHERE id = $1 RETURNING slug",
+                    project_id, *values.values())
+            else:
+                project_id = uuid4()
+                slug = _slug(body.name, project_id)
+                values = {**columns, "id": project_id, "owner_id": user, "name": body.name.strip(), "mode": body.mode,
+                          "slug": slug, "status": "Active", "meta": json.dumps(meta)}
+                names = list(values)
+                placeholders = ", ".join(f"${i}" for i in range(1, len(names) + 1))
+                await conn.execute(f"INSERT INTO projects ({', '.join(names)}) VALUES ({placeholders})", *values.values())
+            pid = project_id
             packages = []
-            for item in body.work_packages:
+            for index, item in enumerate(body.work_packages, start=1):
+                wp_id = await conn.fetchval(
+                    """INSERT INTO work_packages (project_id, code, title, lead_id, due_date)
+                       VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+                    pid, f"WP-{index}", item.title.strip(), item.lead or None,
+                    _date_or_none(item.due, "Work package due date"),
+                )
                 tid = await conn.fetchval(
-                    "INSERT INTO tasks (project_id, title, brief) VALUES ($1, $2, $3) RETURNING id",
-                    pid, item.title.strip(), item.brief,
+                    "INSERT INTO tasks (project_id, title, brief, work_package_id) VALUES ($1, $2, $3, $4) RETURNING id",
+                    pid, item.title.strip(), item.brief, wp_id,
                 )
                 packages.append({"id": tid, "title": item.title.strip()})
+            for gate in body.charter.get("gates") or []:
+                if not isinstance(gate, dict) or not str(gate.get("name") or "").strip():
+                    continue
+                await conn.execute(
+                    """INSERT INTO decision_gates (project_id, gate_name, target_date, decision_owner, approver,
+                                                   acceptance_criteria, gate_scope)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+                    pid, str(gate["name"]).strip()[:255],
+                    _date_or_none(gate.get("date"), "Decision gate date"),
+                    str(gate.get("owner") or "")[:100] or None, str(gate.get("approver") or "")[:100] or None,
+                    str(gate.get("criteria") or "")[:4000] or None,
+                    ", ".join(w for w in (gate.get("workstreams") or []) if isinstance(w, str)) or None,
+                )
     await audit(pool, pid, user, "project.create", "project", pid, name=body.name.strip(), mode=body.mode)
     for item in packages:
         await audit(pool, pid, user, "task.create", "task", item["id"], title=item["title"], source="project_setup")
-    return {"id": pid, "name": body.name.strip(), "mode": body.mode, "meta": meta, "work_packages": packages}
+    return {"id": pid, "slug": slug, "name": body.name.strip(), "mode": body.mode, "meta": meta,
+            "work_packages": packages}
 
 
 @router.get("/projects")
 async def list_projects(user: UUID = Depends(require_user), pool=Depends(get_pool)):
     rows = await pool.fetch(
-        """SELECT p.id, p.name, p.mode::text AS mode, p.meta, p.created_at, m.role::text AS role
+        """SELECT p.id, p.name, p.slug, p.code, p.status, p.governance_stage, p.project_lead,
+                  p.mode::text AS mode, p.meta, p.created_at, m.role::text AS role,
+                  (SELECT count(*) FROM work_packages w WHERE w.project_id = p.id) AS work_packages,
+                  (SELECT round(avg(w.progress))::int FROM work_packages w WHERE w.project_id = p.id) AS progress
            FROM projects p JOIN project_members m ON m.project_id = p.id AND m.user_id=$1
            ORDER BY (SELECT max(ms.created_at) FROM messages ms JOIN threads th ON th.id = ms.thread_id
                        JOIN tasks t ON t.id = th.task_id WHERE t.project_id = p.id) DESC NULLS LAST,
@@ -471,7 +700,8 @@ async def list_projects(user: UUID = Depends(require_user), pool=Depends(get_poo
 
 @router.get("/projects/{project_id}")
 async def get_project(project=Depends(project_for_user)):
-    return {"id": project["id"], "name": project["name"], "mode": project["mode"], "role": project["role"]}
+    return {"id": project["id"], "slug": project["slug"], "status": project["status"], "name": project["name"],
+            "mode": project["mode"], "role": project["role"]}
 
 
 @router.get("/projects/{project_id}/tasks")
@@ -1211,16 +1441,18 @@ async def list_messages(thread_id: UUID, user: UUID = Depends(require_user), poo
 class WorkPackageDocIn(BaseModel):
     body: str = Field(max_length=200_000)
     base_version: int = Field(ge=0)
+    format: Literal["plain", "tiptap"] = "tiptap"
 
 
 @router.get("/tasks/{task_id}/document")
 async def get_work_package_document(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
     task = await task_for_user(pool, task_id, user)
     doc = await pool.fetchrow(
-        "SELECT body, version, updated_at FROM work_package_documents WHERE task_id=$1", task_id)
+        "SELECT body, format, version, updated_at FROM work_package_documents WHERE task_id=$1", task_id)
     return {
         "task_id": task["id"], "title": task["title"],
-        "body": doc["body"] if doc else "", "version": doc["version"] if doc else 0,
+        "body": doc["body"] if doc else "", "format": doc["format"] if doc else "tiptap",
+        "version": doc["version"] if doc else 0,
         "updated_at": doc["updated_at"].isoformat() if doc else None,
     }
 
@@ -1230,17 +1462,130 @@ async def save_work_package_document(task_id: UUID, body: WorkPackageDocIn,
                                      user: UUID = Depends(require_user), pool=Depends(get_pool)):
     """Save the document. The client sends the version it edited; a stale version is refused, not overwritten."""
     task = await task_for_user(pool, task_id, user, "researcher")
+    if body.format == "tiptap":
+        try:
+            validate_rich_document(body.body or '{"type":"doc","content":[]}')
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(422, f"Document not saved: {exc}")
     row = await pool.fetchrow(
-        """INSERT INTO work_package_documents (task_id, body, version, updated_by, updated_at)
-           VALUES ($1, $2, 1, $3, now())
+        """INSERT INTO work_package_documents (task_id, body, format, version, updated_by, updated_at)
+           VALUES ($1, $2, $3, 1, $4, now())
            ON CONFLICT (task_id) DO UPDATE
-             SET body = EXCLUDED.body, version = work_package_documents.version + 1,
+             SET body = EXCLUDED.body, format = EXCLUDED.format, version = work_package_documents.version + 1,
                  updated_by = EXCLUDED.updated_by, updated_at = now()
-             WHERE work_package_documents.version = $4
+             WHERE work_package_documents.version = $5
            RETURNING version""",
-        task_id, body.body, user, body.base_version,
+        task_id, body.body, body.format, user, body.base_version,
     )
     if row is None:
         raise HTTPException(409, "This document was changed by someone else. Reload it before saving.")
     await audit(pool, task["project_id"], user, "task.document.save", "task", task_id, version=row["version"])
     return {"task_id": task_id, "version": row["version"]}
+
+
+class WorkPackageCommentIn(BaseModel):
+    body: str = Field(min_length=1, max_length=4000)
+    anchor_text: str | None = Field(default=None, max_length=1000)
+    parent_id: UUID | None = None
+
+
+@router.get("/tasks/{task_id}/comments")
+async def list_work_package_comments(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    await task_for_user(pool, task_id, user)
+    rows = await pool.fetch(
+        """SELECT id, author, body, resolved, resolved_by, resolved_at, anchor_text, parent_id, created_at
+           FROM work_package_comments WHERE task_id=$1 ORDER BY created_at""", task_id)
+    return {"comments": [dict(r) for r in rows]}
+
+
+@router.post("/tasks/{task_id}/comments", status_code=201)
+async def add_work_package_comment(task_id: UUID, body: WorkPackageCommentIn,
+                                   user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """A new comment on selected text (anchor_text), or a reply to a comment (parent_id). Replies are one level deep."""
+    task = await task_for_user(pool, task_id, user)
+    text = body.body.strip()
+    if not text:
+        raise HTTPException(422, "A comment cannot be empty.")
+    if body.parent_id is not None:
+        parent = await pool.fetchrow(
+            "SELECT parent_id FROM work_package_comments WHERE id=$1 AND task_id=$2", body.parent_id, task_id)
+        if parent is None:
+            raise HTTPException(404, "the comment being replied to was not found")
+        if parent["parent_id"] is not None:
+            raise HTTPException(422, "Replies go to the first comment of a thread.")
+    cid = await pool.fetchval(
+        """INSERT INTO work_package_comments (task_id, author, body, anchor_text, parent_id)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+        task_id, user, text, None if body.parent_id else (body.anchor_text or None), body.parent_id)
+    await audit(pool, task["project_id"], user, "task.comment.add", "task", task_id)
+    return {"id": cid}
+
+
+class CommentResolveIn(BaseModel):
+    resolved: bool
+
+
+@router.put("/tasks/{task_id}/comments/{comment_id}")
+async def resolve_work_package_comment(task_id: UUID, comment_id: UUID, body: CommentResolveIn,
+                                       user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Resolve or reopen a thread. Anyone who can comment can resolve (as in Google Docs)."""
+    await task_for_user(pool, task_id, user)
+    row = await pool.fetchrow(
+        """UPDATE work_package_comments
+           SET resolved=$3,
+               resolved_by = CASE WHEN $3 THEN $4::uuid ELSE NULL END,
+               resolved_at = CASE WHEN $3 THEN now() ELSE NULL END
+           WHERE id=$1 AND task_id=$2 AND parent_id IS NULL RETURNING id""",
+        comment_id, task_id, body.resolved, user)
+    if row is None:
+        raise HTTPException(404, "comment not found")
+    return {"id": comment_id, "resolved": body.resolved}
+
+
+@router.delete("/tasks/{task_id}/comments/{comment_id}", status_code=204)
+async def delete_work_package_comment(task_id: UUID, comment_id: UUID,
+                                      user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Only the author can delete a comment. Its replies go with it."""
+    await task_for_user(pool, task_id, user)
+    row = await pool.fetchrow(
+        "DELETE FROM work_package_comments WHERE id=$1 AND task_id=$2 AND author=$3 RETURNING id",
+        comment_id, task_id, user)
+    if row is None:
+        raise HTTPException(404, "comment not found, or it is not yours to delete")
+    return Response(status_code=204)
+
+
+# ---- Word documents: the whole project, and one work package's document -----------------
+
+@router.get("/projects/{project_id}/document.docx")
+async def project_word_document(project=Depends(project_for_user), pool=Depends(get_pool)):
+    """The project as a Word document: charter, organization, delivery, work packages, gates, risks and controls."""
+    pid = project["id"]
+    row = await pool.fetchrow("SELECT * FROM projects WHERE id=$1", pid)
+    packages = await pool.fetch(
+        "SELECT code, title, lead_id, due_date, stage, progress FROM work_packages WHERE project_id=$1 ORDER BY code", pid)
+    gates = await pool.fetch(
+        """SELECT gate_name, target_date, decision_owner, approver, acceptance_criteria, gate_scope, status
+           FROM decision_gates WHERE project_id=$1 ORDER BY target_date NULLS LAST, gate_name""", pid)
+    values = dict(row)
+    for key in ("in_scope", "out_of_scope", "success_measures", "departments", "external_organizations", "standards"):
+        if isinstance(values.get(key), str):
+            values[key] = json.loads(values[key])
+    data = build_project_docx(values, [dict(p) for p in packages], [dict(g) for g in gates],
+                              risks_from_charter(values.get("meta")))
+    filename = f"{values.get('slug') or pid}.docx"
+    return Response(content=data, media_type=DOCX_MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+@router.get("/tasks/{task_id}/document.docx")
+async def work_package_word_document(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """One work package's Workspace document as a Word file."""
+    task = await task_for_user(pool, task_id, user)
+    doc = await pool.fetchrow("SELECT body, format FROM work_package_documents WHERE task_id=$1", task_id)
+    project = await pool.fetchrow("SELECT name FROM projects WHERE id=$1", task["project_id"])
+    data = build_rich_package_docx(task["title"], doc["body"] if doc else "", project["name"] if project else "",
+                                   doc["format"] if doc else "plain")
+    filename = f"{task['title'][:60] or task_id}.docx".replace('"', "")
+    return Response(content=data, media_type=DOCX_MEDIA_TYPE,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
