@@ -4,6 +4,8 @@ import os
 os.environ.setdefault("INTERNAL_TOKEN", "test-internal-token")
 # HashEmbedder similarities are meaningless against the real 0.76 gate; gate tests set it explicitly.
 os.environ.setdefault("SIMILARITY_THRESHOLD", "0.0")
+# The permission tests check the role rules, so the suite runs with them on (the app ships with them off).
+os.environ.setdefault("ROLE_RESTRICTIONS", "true")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

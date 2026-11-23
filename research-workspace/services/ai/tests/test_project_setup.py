@@ -90,7 +90,7 @@ def test_complete_stores_charter_assessment_and_packages_together(api):
     body = {
         "name": "Heat recovery", "mode": "open_discovery",
         "meta": {"lead": "Sara", "priority": "High"},
-        "charter": {"objective": "Recover heat", "departments": ["Engineering"], "mode": "open_discovery"},
+        "charter": {"type": "Technical Feasibility", "objective": "Recover heat", "departments": ["Engineering"], "mode": "open_discovery"},
         "work_packages": [{"title": "Pilot study", "brief": "{}"}],
         "insights": {"summary": "Viable", "feasibility": 70, "stats": [], "risks": [], "questions": [],
                      "nextSteps": [], "model": "A", "generatedAt": "2026-11-22T00:00:00Z"},
@@ -112,7 +112,7 @@ def test_complete_stores_charter_assessment_and_packages_together(api):
 
 def test_complete_without_insights_stores_no_assessment(api):
     api.llms = pair()
-    r = api.post("/projects/complete", headers=hdr(), json={"name": "Plain", "mode": "closed_repository", "meta": {}})
+    r = api.post("/projects/complete", headers=hdr(), json={"name": "Plain", "mode": "closed_repository", "meta": {}, "charter": {"type": "Technical Feasibility", "objective": "Plain"}})
     assert r.status_code == 201
     listed = api.get("/projects", headers=hdr()).json()["projects"]
     project = next(p for p in listed if p["id"] == r.json()["id"])
