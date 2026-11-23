@@ -1,13 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Database01, Folder, Send03 } from "@untitledui/icons";
+import { Folder, Send03 } from "@untitledui/icons";
 import { Add01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import Icon, { huge, untitled } from "@/components/v2/dashboard/Icon";
 import Picker, { type PickerOption } from "./Picker";
+import { ModelsPicker, ReasoningPicker, SourcesPicker } from "@/components/v2/knowledge/ResearchPickers";
 import { api } from "@/lib/api";
 import type { EvidenceScope } from "@/lib/types";
-import { SCOPES } from "@/lib/v2/ask";
 import { MicButton, RecordingBar, VoiceError, appendText, useDictation, withLive } from "@/components/v2/voice/Voice";
 
 type Upload = { key: string; name: string; state: "uploading" | "added" | "failed"; error?: string };
@@ -18,13 +18,15 @@ type Upload = { key: string; name: string; state: "uploading" | "added" | "faile
  * so every later question can use them). The mic dictates into the box, same as the reference Home prompt.
  */
 export default function AskComposer({
-  projectId, projects, onProjectChange, scope, onScopeChange, busy, onAsk,
+  projectId, projects, onProjectChange, onCreateProject, scope, onScopeChange, busy, onAsk,
   placeholder = "Describe a question, research objective or decision to make..",
 }: {
   projectId: string | null;
   /** when given, a project picker is shown (Home); the chat page passes none */
   projects?: PickerOption<string>[];
   onProjectChange?: (id: string) => void;
+  /** when given, a "New project" button sits by the project picker (Home) */
+  onCreateProject?: () => void;
   scope: EvidenceScope;
   onScopeChange: (s: EvidenceScope) => void;
   busy: boolean;
@@ -65,6 +67,28 @@ export default function AskComposer({
       }}
       className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 shadow-[0_14px_30px_0_rgba(40,92,224,0.10)]"
     >
+      {projects && onProjectChange && (
+        <div className="flex flex-wrap items-center gap-2">
+          <Picker
+            icon={untitled(Folder)}
+            label="Project"
+            value={projectId}
+            options={projects}
+            onChange={onProjectChange}
+            emptyText="No project can take questions yet. Create an open-discovery project first."
+          />
+          {onCreateProject && (
+            <button
+              type="button"
+              onClick={onCreateProject}
+              className="flex h-9 items-center gap-1 rounded-[10px] border border-dashed border-blue/40 px-2.5 text-sm font-medium text-blue hover:bg-blue/[0.04]"
+            >
+              <Icon icon={huge(Add01Icon)} size={14} stroke={1.4} />
+              New project
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex flex-col justify-center gap-2.5 rounded-[14px] border border-[#EDEDF0] bg-[#FAFAFA] p-4 focus-within:border-blue">
         <div className="flex items-start gap-2">
         <button
@@ -133,23 +157,9 @@ export default function AskComposer({
 
       <div className="flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          {projects && onProjectChange && (
-            <Picker
-              icon={untitled(Folder)}
-              label="Project"
-              value={projectId}
-              options={projects}
-              onChange={onProjectChange}
-              emptyText="No project can take questions yet. Create an open-discovery project first."
-            />
-          )}
-          <Picker
-            icon={untitled(Database01)}
-            label="Evidence Sources"
-            value={scope}
-            options={SCOPES}
-            onChange={onScopeChange}
-          />
+          <SourcesPicker scope={scope} onScopeChange={onScopeChange} />
+          <ModelsPicker />
+          <ReasoningPicker />
         </div>
         <div className="flex items-center gap-2.5">
           {!rec.active && !rec.transcribing && <MicButton rec={rec} size={36} />}

@@ -112,8 +112,8 @@ describe("Home", () => {
     expect(screen.queryByRole("option", { name: /Locked repository/ })).toBeNull();
     fireEvent.click(screen.getByRole("option", { name: /DNA heat study/ }));
 
-    fireEvent.click(screen.getByRole("button", { name: /Evidence Sources/ }));
-    fireEvent.click(screen.getByRole("option", { name: /^Online/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Sources/ }));
+    fireEvent.click(screen.getByRole("switch", { name: "Uploaded files" }));   // online only
 
     const send = screen.getByRole("button", { name: "Send" });
     fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "ok" } });

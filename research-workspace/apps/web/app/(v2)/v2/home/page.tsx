@@ -113,6 +113,7 @@ export default function HomePage() {
               projectId={projectId}
               projects={options}
               onProjectChange={(id) => { setProjectId(id); prefs.setProject(id); }}
+              onCreateProject={() => router.push(`${V2}/projects/new`)}
               scope={scope}
               onScopeChange={(s) => { setScope(s); prefs.setScope(s); }}
               busy={busy || loading}

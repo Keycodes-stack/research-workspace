@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { V2 } from "@/lib/v2/routes";
+import type { EvidenceScope } from "@/lib/types";
 import {
   useEffect,
   useLayoutEffect,
@@ -264,14 +265,25 @@ function RepoList() {
 }
 
 /** "Sources · Uploads + online" – which evidence the research may use. */
-export function SourcesPicker({ up }: { up?: boolean }) {
+/**
+ * Without `scope` the toggles are the design's sample state. With `scope` (the Home ask box) they are the real
+ * evidence scope of the question: uploads, online, or both (at least one must stay on).
+ */
+export function SourcesPicker({ up, scope, onScopeChange }: { up?: boolean; scope?: EvidenceScope; onScopeChange?: (s: EvidenceScope) => void }) {
   const k = useKnowledge();
+  const real = scope !== undefined && onScopeChange !== undefined;
+  const uploads = real ? scope !== "api" : k.useUploads;
+  const online = real ? scope !== "uploads" : k.useOnline;
   const active = k.repos.filter((r) => r.active);
-  const parts = [
-    k.useUploads && "Uploads",
-    k.useOnline && "online",
-    active.length && `${active.length} repos`,
-  ].filter(Boolean);
+  const parts = real
+    ? [uploads && "Uploads", online && "online"].filter(Boolean)
+    : [k.useUploads && "Uploads", k.useOnline && "online", active.length && `${active.length} repos`].filter(Boolean);
+  const setToggle = (key: "useUploads" | "useOnline", on: boolean) => {
+    if (!real) return updateKnowledge(() => ({ [key]: on }));
+    const nextUploads = key === "useUploads" ? on : uploads;
+    const nextOnline = key === "useOnline" ? on : online;
+    if (nextUploads || nextOnline) onScopeChange(nextUploads && nextOnline ? "both" : nextUploads ? "uploads" : "api");
+  };
   return (
     <Dropdown
       up={up}
@@ -319,9 +331,9 @@ export function SourcesPicker({ up }: { up?: boolean }) {
                   <span className="block text-xs text-body">{o.desc}</span>
                 </span>
                 <Switch
-                  on={k[o.k]}
+                  on={o.k === "useUploads" ? uploads : online}
                   label={o.name}
-                  onChange={(v) => updateKnowledge(() => ({ [o.k]: v }))}
+                  onChange={(v) => setToggle(o.k, v)}
                 />
               </div>
             ))}

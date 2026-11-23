@@ -131,3 +131,25 @@ def test_research_mode_is_closed_when_the_brief_says_approved_or_internal_only()
     assert _detect_research_mode("Use only approved sources for this study") == "closed_repository"
     assert _detect_research_mode("", "our confidential plant data") == "closed_repository"
     assert _detect_research_mode("Search the literature for hydrogen storage") == "open_discovery"
+
+
+# ---- a slow main model hands over to the backup at once ----------------------
+
+def test_project_setup_uses_backup_when_main_model_is_slow():
+    import asyncio
+    from app.routes_tasks import _complete_fast
+    from app.orchestration.llm import FallbackLLM
+
+    class Slow:
+        name = "slow"
+        async def complete(self, system, user):
+            await asyncio.sleep(10)
+            return "late"
+
+    class Quick:
+        name = "quick"
+        async def complete(self, system, user):
+            return '{"ok": true}'
+
+    out = asyncio.run(_complete_fast(FallbackLLM(Slow(), Quick()), "sys", "user", seconds=0.05))
+    assert out == '{"ok": true}'
