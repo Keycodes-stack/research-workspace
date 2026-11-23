@@ -8,6 +8,7 @@ import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import AssessmentCard from "@/components/v2/projects/AssessmentCard";
 import DictateButton from "@/components/v2/projects/DictateButton";
+import RemoveButton from "@/components/v2/ui/RemoveButton";
 import { api, ApiError } from "@/lib/api";
 import type { Person } from "@/lib/types";
 import {
@@ -36,7 +37,7 @@ const labelClass = "mb-1.5 block text-sm font-medium text-[#344054]";
 const STEP_FIELDS: Record<number, (keyof ProjectDraft)[]> = {
   0: ["name", "type", "objective", "background", "priority", "programme", "business_unit", "start", "target",
       "in_scope", "out_scope", "deliverable", "measures", "assumptions", "dependencies"],
-  1: ["sponsor", "lead", "departments", "stakeholders", "decision_notes", "external_orgs"],
+  1: ["departments", "stakeholders", "decision_notes", "external_orgs"],
   2: ["approach", "reporting", "budget", "currency", "resources", "workstreams", "gates", "risks", "no_risk_reason"],
   3: ["governance", "classification", "data_location", "retention", "standards", "quality_lead", "reg_controls",
       "visibility", "approvals", "change_authority", "gate_rule", "plan_editing", "manage_access", "external_partner_ingestion"],
@@ -48,8 +49,13 @@ const isTextSuggestion = (v: unknown) => typeof v === "string" || (Array.isArray
 const asText = (v: unknown) => (Array.isArray(v) ? v.join(", ") : String(v ?? ""));
 const labelOf = (key: string) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
-function Field({ label, suggested, children }: { label: string; suggested?: boolean; children: ReactNode }) {
-  return <div className="block"><span className={labelClass}>{label}{suggested && <span className="ml-2 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested · review</span>}</span>{children}</div>;
+/** Red asterisk after the label of a field the project cannot be created without. */
+const RequiredMark = () => <span aria-hidden="true" className="ml-0.5 text-[#B42318]">*</span>;
+/** Fields that are always required (conditional ones are decided where they are shown). */
+const REQUIRED_FIELDS = new Set<keyof ProjectDraft>(["name", "type", "objective", "lead", "departments"]);
+
+function Field({ label, suggested, required, children }: { label: string; suggested?: boolean; required?: boolean; children: ReactNode }) {
+  return <div className="block"><span className={labelClass}>{label}{required && <RequiredMark />}{suggested && <span className="ml-2 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested · review</span>}</span>{children}</div>;
 }
 
 function textValue(v: unknown) { return typeof v === "string" ? v : ""; }
@@ -355,11 +361,15 @@ export default function NewProjectFlow() {
     finally { setBusy(false); }
   };
 
+  const isRequired = (key: keyof ProjectDraft) =>
+    REQUIRED_FIELDS.has(key)
+    || (key === "teams" && draft.team_mode === "Assign participating teams now")
+    || (key === "no_risk_reason" && !draft.risks.some((r) => r.risk.trim()));
   const field = (key: keyof ProjectDraft, title: string, multiline = false, type = "text") => {
     const value = key === "teams" ? draft.teams.join("\n") : textValue(draft[key]);
     const change = (next: string) => update(key, (key === "teams" ? next.split("\n").map((x) => x.trim()).filter(Boolean) : next) as never);
     const maxLength = key === "teams" ? (LIST_LIMITS.teams.item + 1) * LIST_LIMITS.teams.max : FIELD_LIMITS[key];
-    return <Field key={key} label={title} suggested={suggested.includes(key)}>
+    return <Field key={key} label={title} suggested={suggested.includes(key)} required={isRequired(key)}>
       {multiline ? <textarea aria-label={title} maxLength={maxLength} className={`${inputClass} min-h-24 resize-y`} value={value} onChange={(e) => change(e.target.value)} />
         : <input aria-label={title} type={type} maxLength={maxLength} className={inputClass} value={value} onChange={(e) => change(e.target.value)} />}
     </Field>;
@@ -371,7 +381,7 @@ export default function NewProjectFlow() {
     const tag = suggested.includes(key);
     const limit = FIELD_LIMITS[key];
     return <div key={key} className="grid gap-2 border-t border-[#EDEDF0] py-4 md:grid-cols-[200px_1fr] md:items-start">
-      <span className="pt-2.5 text-sm font-semibold text-[#101D37]">{title}</span>
+      <span className="pt-2.5 text-sm font-semibold text-[#101D37]">{title}{isRequired(key) && <RequiredMark />}</span>
       <div className="relative">
         {multiline ? <textarea aria-label={title} maxLength={limit} className={`${inputClass} min-h-24 resize-y ${tag ? "pr-28" : ""}`} value={value} onChange={(e) => update(key, e.target.value as never)} />
           : <input aria-label={title} type={type} maxLength={limit} className={`${inputClass} ${tag ? "pr-28" : ""}`} value={value} onChange={(e) => update(key, e.target.value as never)} />}
@@ -383,13 +393,13 @@ export default function NewProjectFlow() {
 
   /** Charter row with a dropdown (spec 3.3): label on the left, "AI Suggested" tag while the AI owns the value. */
   const choiceRow = (key: keyof ProjectDraft, title: string, options: readonly string[]) => <div key={key} className="grid gap-2 border-t border-[#EDEDF0] py-4 md:grid-cols-[200px_1fr] md:items-start">
-    <span className="pt-2.5 text-sm font-semibold text-[#101D37]">{title}</span>
+    <span className="pt-2.5 text-sm font-semibold text-[#101D37]">{title}{isRequired(key) && <RequiredMark />}</span>
     <div className="relative"><select aria-label={title} className={`${inputClass} ${suggested.includes(key) ? "pr-28" : ""}`} value={textValue(draft[key])} onChange={(e) => update(key, e.target.value as never)}>
       <option value="">Select…</option>{options.map((x) => <option key={x}>{x}</option>)}</select>
       {suggested.includes(key) && <span className="absolute right-3 top-2.5 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested</span>}</div>
   </div>;
   /** Dropdown in the grid layout of steps 3-4. */
-  const selectField = (key: keyof ProjectDraft, title: string, options: readonly string[]) => <Field label={title} suggested={suggested.includes(key)}>
+  const selectField = (key: keyof ProjectDraft, title: string, options: readonly string[]) => <Field label={title} suggested={suggested.includes(key)} required={isRequired(key)}>
     <select aria-label={title} className={inputClass} value={textValue(draft[key])} onChange={(e) => update(key, e.target.value as never)}>
       <option value="">Select…</option>{options.map((x) => <option key={x}>{x}</option>)}</select>
   </Field>;
@@ -416,7 +426,7 @@ export default function NewProjectFlow() {
       setPersonError(e instanceof Error ? e.message : "The person could not be added.");
     }
   };
-  const personPicker = (idKey: "sponsor_id" | "lead_id", nameKey: "sponsor" | "lead", label: string) => <Field label={label}>
+  const personPicker = (idKey: "sponsor_id" | "lead_id", nameKey: "sponsor" | "lead", label: string) => <Field label={label} required={idKey === "lead_id"}>
     <select aria-label={label} className={inputClass} value={draft[idKey]}
       onChange={(e) => (e.target.value === "__new__" ? setAddingPerson(idKey) : choosePerson(idKey, nameKey, e.target.value))}>
       <option value="">Select a person…</option>
@@ -458,16 +468,16 @@ export default function NewProjectFlow() {
     if (section === 1) return <div className="grid gap-4 md:grid-cols-2">
       {personPicker("sponsor_id", "sponsor", "Project sponsor")}{personPicker("lead_id", "lead", "Accountable project lead")}
       <Field label="Core team members">{peopleError ? <p role="alert" className="text-xs text-[#B42318]">{peopleError}</p> : <div className="grid gap-2 sm:grid-cols-2">{people.map((p) => <label key={p.id} className="flex items-center gap-2 text-sm text-[#344054]"><input type="checkbox" checked={draft.core_team_ids.includes(p.id)} onChange={(e) => update("core_team_ids", e.target.checked ? [...draft.core_team_ids, p.id] : draft.core_team_ids.filter((x) => x !== p.id))} />{p.full_name}</label>)}{people.length === 0 && <p className="text-xs text-[#667085]">No people yet. Add them from Organization &amp; Access or from the sponsor and lead fields.</p>}</div>}</Field>
-      <Field label="Participating departments" suggested={suggested.includes("departments")}><div className="grid gap-2 sm:grid-cols-2">{DEPARTMENTS.map((d) => <label key={d} className="flex items-center gap-2 text-sm text-[#344054]"><input type="checkbox" checked={draft.departments.includes(d)} onChange={(e) => update("departments", e.target.checked ? [...draft.departments, d] : draft.departments.filter((x) => x !== d))} />{d}</label>)}</div></Field>
-      <div className="flex flex-col gap-4"><Field label="Team assignment"><select aria-label="Team assignment" className={inputClass} value={draft.team_mode} onChange={(e) => update("team_mode", e.target.value)}><option>Assign participating teams now</option><option>Department leads assign their teams later</option></select></Field>{field("teams", "Participating teams (one per line)", true)}{field("stakeholders", "Key stakeholders", true)}{field("decision_notes", "Stakeholder and decision notes", true)}{field("external_orgs", "External organizations", true)}</div>
+      <Field label="Participating departments" suggested={suggested.includes("departments")} required><div className="grid gap-2 sm:grid-cols-2">{DEPARTMENTS.map((d) => <label key={d} className="flex items-center gap-2 text-sm text-[#344054]"><input type="checkbox" checked={draft.departments.includes(d)} onChange={(e) => update("departments", e.target.checked ? [...draft.departments, d] : draft.departments.filter((x) => x !== d))} />{d}</label>)}</div></Field>
+      <div className="flex flex-col gap-4"><Field label="Team assignment" required><select aria-label="Team assignment" className={inputClass} value={draft.team_mode} onChange={(e) => update("team_mode", e.target.value)}><option>Assign participating teams now</option><option>Department leads assign their teams later</option></select></Field>{field("teams", "Participating teams (one per line)", true)}{field("stakeholders", "Key stakeholders", true)}{field("decision_notes", "Stakeholder and decision notes", true)}{field("external_orgs", "External organizations", true)}</div>
     </div>;
     if (section === 2) return <div className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-2"><Field label="Research mode" suggested><p aria-label="Research mode" className={`${inputClass} bg-[#FAFAFA] text-[#475467]`}>{draft.mode === "closed_repository" ? "Closed repository · uses approved sources only" : "Open discovery · searches scholarly sources"}</p></Field>{selectField("approach", "Delivery approach", SPEC_OPTIONS.approach)}{selectField("reporting", "Reporting frequency", SPEC_OPTIONS.reporting)}{field("budget", "Indicative budget", false, "number")}{selectField("currency", "Currency", SPEC_OPTIONS.currency)}{field("resources", "Resource assumptions", true)}</div>
       <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Workstreams</h3><p className="text-xs text-[#667085]">Each workstream becomes a draft research package.</p></div><button type="button" onClick={() => update("workstreams", [...draft.workstreams, { name: "", department: "", team: "", output: "", owner: "", reviewer: "", start: "", due: "", dependencies: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add workstream</button></div>
-        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k}`; return <Field key={k} label={label} suggested={suggested.includes("workstreams")}><input aria-label={label} maxLength={ROW_LIMITS.workstreams.fields[k]} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>; })}<button type="button" onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove workstream</button></div>)}
+        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer", "start", "due", "dependencies"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k === "start" ? "start date" : k === "due" ? "due date" : k}`; return <Field key={k} label={label} suggested={suggested.includes("workstreams")} required={k === "name" || k === "owner" || k === "output"}><input aria-label={label} type={k === "start" || k === "due" ? "date" : "text"} maxLength={ROW_LIMITS.workstreams.fields[k]} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>; })}<RemoveButton onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} /></div>)}
       </div>
-      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Decision gates</h3><p className="text-xs text-[#667085]">Add the checks needed before decisions.</p></div><button type="button" onClick={() => update("gates", [...draft.gates, { name: "", owner: "", approver: "", date: "", criteria: "", workstreams: [] }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add gate</button></div>{draft.gates.map((g, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "owner", "approver", "date", "criteria"] as const).map((k) => <Field key={k} label={`Gate ${i + 1} · ${k}`} suggested={suggested.includes("gates")}><input aria-label={`Gate ${i + 1} ${k}`} type={k === "date" ? "date" : "text"} maxLength={ROW_LIMITS.gates.fields[k]} className={inputClass} value={g[k]} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<fieldset className="flex flex-col gap-2"><legend className="text-sm font-medium">Workstreams covered</legend>{draft.workstreams.map((w, wi) => <label key={wi} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={g.workstreams.includes(w.name)} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, workstreams: e.target.checked ? [...x.workstreams, w.name] : x.workstreams.filter((n) => n !== w.name) } : x))} />{w.name || `Workstream ${wi + 1}`}</label>)}</fieldset><button type="button" onClick={() => update("gates", draft.gates.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove gate</button></div>)}</div>
-      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={suggested.includes("risks")}><input aria-label={`Risk ${i + 1} ${k}`} maxLength={ROW_LIMITS.risks.fields[k]} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<button type="button" onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} className="text-left text-sm text-[#B42318]">Remove risk</button></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
+      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Decision gates</h3><p className="text-xs text-[#667085]">Add the checks needed before decisions.</p></div><button type="button" onClick={() => update("gates", [...draft.gates, { name: "", owner: "", approver: "", date: "", criteria: "", workstreams: [] }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add gate</button></div>{draft.gates.map((g, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "owner", "approver", "date", "criteria"] as const).map((k) => <Field key={k} label={`Gate ${i + 1} · ${k}`} suggested={suggested.includes("gates")} required={k === "name" || k === "criteria" || k === "approver"}><input aria-label={`Gate ${i + 1} ${k}`} type={k === "date" ? "date" : "text"} maxLength={ROW_LIMITS.gates.fields[k]} className={inputClass} value={g[k]} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<fieldset className="flex flex-col gap-2"><legend className="text-sm font-medium">Workstreams covered<RequiredMark /></legend>{draft.workstreams.map((w, wi) => <label key={wi} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={g.workstreams.includes(w.name)} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, workstreams: e.target.checked ? [...x.workstreams, w.name] : x.workstreams.filter((n) => n !== w.name) } : x))} />{w.name || `Workstream ${wi + 1}`}</label>)}</fieldset><RemoveButton onClick={() => update("gates", draft.gates.filter((_, j) => j !== i))} /></div>)}</div>
+      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={suggested.includes("risks")}><input aria-label={`Risk ${i + 1} ${k}`} maxLength={ROW_LIMITS.risks.fields[k]} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<RemoveButton onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} /></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
     </div>;
     if (section === 3) return <div className="grid gap-4 md:grid-cols-2">
       {selectField("governance", "Governance level", SPEC_OPTIONS.governance)}{field("controls_mode", "Controls profile")}

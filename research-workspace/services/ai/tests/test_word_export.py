@@ -100,3 +100,18 @@ def test_comment_anchor_needs_an_id_and_other_marks_stay_refused():
     with _pytest.raises(ValueError):
         validate_rich_document(_doc({"type": "paragraph", "content": [
             {"type": "text", "text": "x", "marks": [{"type": "link", "attrs": {"href": "https://x"}}]}]}))
+
+
+def test_work_package_starts_with_its_own_details_and_is_a_valid_document():
+    import json as _json
+    from app.word_export import build_rich_package_docx, work_package_template
+    brief = _json.dumps({"objective": "Cut noise to 70 dB(A)", "workstream": {
+        "name": "Site survey", "output": "Noise map", "owner": "Sara Lee", "reviewer": "Omar Patel",
+        "department": "Operations", "team": "", "start": "2027-01-05", "due": "2027-02-15", "dependencies": "Site access"}})
+    body = work_package_template(brief, "Site survey")
+    validate_rich_document(body)
+    text = _text(build_rich_package_docx("Site survey", body, "Heat", "tiptap"))
+    for expected in ["Cut noise to 70 dB(A)", "Noise map", "Sara Lee", "Omar Patel", "2027-02-15", "Site access"]:
+        assert expected in text
+    # a brief that is not JSON still gives a valid, blank-ready document
+    validate_rich_document(work_package_template("not json", "Plain"))

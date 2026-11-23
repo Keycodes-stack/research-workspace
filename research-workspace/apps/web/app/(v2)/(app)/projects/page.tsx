@@ -11,6 +11,7 @@ import { useProjects } from "@/components/v2/V2Frame";
 import { api, ApiError } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { V2, projectHref } from "@/lib/v2/routes";
+import RemoveButton from "@/components/v2/ui/RemoveButton";
 
 /*
  * Design: the reference Projects directory (Projects Research Initiatives): Projects (name and code), Lead,
@@ -37,15 +38,15 @@ function StatusPill({ status }: { status?: string }) {
   return <span className={`inline-flex w-fit rounded-md px-2.5 py-1 text-xs font-medium ${STATUS_CLS[label] ?? "bg-[#F2F4F7] text-[#475467]"}`}>{label}</span>;
 }
 
-/** Progress track with a knob showing the percentage, as in the reference. Red at 0%. */
+/** Short progress track with a round knob showing the percentage, as in the reference. Red at 0%. */
 function StageProgress({ value }: { value?: number | null }) {
   if (value == null) return <span className="text-sm text-[#242C2C]">{NO_DATA}</span>;
   const colour = value === 0 ? "#D92D20" : "#F97316";
-  return <div className="flex items-center gap-2" role="progressbar" aria-label="Progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
-    <div className="relative h-1.5 w-full min-w-[90px] rounded-full bg-[#EDEDF0]">
+  return <div className="flex h-6 w-[100px] items-center" role="progressbar" aria-label="Progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}>
+    <div className="relative h-1 w-full rounded-full bg-[#EDEDF0]">
       <div className="absolute left-0 top-0 h-full rounded-full" style={{ width: `${value}%`, background: colour }} />
-      <span className="absolute top-1/2 -translate-y-1/2 rounded-full px-1.5 text-[10px] font-semibold leading-4 text-white"
-        style={{ left: `calc(${value}% - 14px)`, background: colour, minWidth: 28, textAlign: "center" }}>{value}%</span>
+      <span className="absolute top-1/2 flex size-[22px] -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-[9px] font-semibold text-white"
+        style={{ left: `${value}%`, background: colour }}>{value}%</span>
     </div>
   </div>;
 }
@@ -61,7 +62,7 @@ export default function ProjectsPage() {
   const shown = projects.filter((p) => {
     const text = `${p.name} ${p.code ?? ""} ${lead(p)}`.toLowerCase();
     return text.includes(query.trim().toLowerCase()) && (status === "All" || (p.status ?? "Active") === status);
-  });
+  }).sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")); // newest first
 
   const deleteDraft = async (p: Project) => {
     if (!window.confirm(`Delete the draft "${p.name}"? This cannot be undone.`)) return;
@@ -134,7 +135,7 @@ export default function ProjectsPage() {
                       <StageProgress value={p.progress} />
                       <div className="flex items-center justify-between gap-2">
                         <StatusPill status={p.status} />
-                        {p.status === "Draft" && <button type="button" onClick={() => void deleteDraft(p)} className="text-sm font-semibold text-[#B42318]">Delete draft</button>}
+                        {p.status === "Draft" && <RemoveButton label="Delete draft" onClick={() => void deleteDraft(p)} />}
                       </div>
                     </li>
                   ))}
@@ -160,7 +161,7 @@ export default function ProjectsPage() {
                           <StageProgress value={p.progress} />
                           <div className="flex flex-col items-start gap-1">
                             <StatusPill status={p.status} />
-                            {p.status === "Draft" && <button type="button" onClick={() => void deleteDraft(p)} className="text-xs font-semibold text-[#B42318]">Delete draft</button>}
+                            {p.status === "Draft" && <RemoveButton label="Delete draft" onClick={() => void deleteDraft(p)} />}
                           </div>
                         </div>
                       ))}

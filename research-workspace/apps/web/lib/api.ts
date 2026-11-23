@@ -225,11 +225,11 @@ export const api = {
   task: (id: string) => call<TaskDetail>(`/tasks/${id}`),
   /** The work package's Workspace document (plain text). `version` is what the next save must send back. */
   workPackageDocument: (taskId: string) =>
-    call<{ task_id: string; title: string; body: string; format: "plain" | "tiptap"; version: number; updated_at: string | null }>(`/tasks/${taskId}/document`),
-  /** body is the editor's JSON (format tiptap). Stale versions are refused with HTTP 409. */
-  saveWorkPackageDocument: (taskId: string, body: string, base_version: number) =>
+    call<{ task_id: string; title: string; body: string; format: "plain" | "tiptap" | "sfdt"; version: number; updated_at: string | null; ai_drafted: boolean }>(`/tasks/${taskId}/document`),
+  /** body is the editor's document: JSON in format "sfdt" (Syncfusion) or "tiptap". Stale versions are refused with HTTP 409. */
+  saveWorkPackageDocument: (taskId: string, body: string, base_version: number, format: "tiptap" | "sfdt" = "tiptap") =>
     call<{ task_id: string; version: number }>(`/tasks/${taskId}/document`,
-      { method: "PUT", body: JSON.stringify({ body, base_version, format: "tiptap" }) }),
+      { method: "PUT", body: JSON.stringify({ body, base_version, format }) }),
   workPackageComments: (taskId: string) =>
     call<{ comments: WorkPackageComment[] }>(`/tasks/${taskId}/comments`).then((r) => r.comments),
   /** A comment on selected text (anchorText), or a reply to a thread (parentId). */

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api, ApiError, currentUserId } from "@/lib/api";
+import RemoveButton from "@/components/v2/ui/RemoveButton";
 import type { Member, ProjectRole } from "@/lib/types";
 
 const LEVELS = [
@@ -74,10 +75,7 @@ export default function ProjectAccess({ projectId }: { projectId: string }) {
               {LEVELS.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
             </select>
             {canManage && renaming?.id !== r.id && <button type="button" onClick={() => setRenaming({ id: r.id, name: r.name })} className="text-sm font-semibold text-blue">Rename</button>}
-            {canManage && <button type="button" disabled={r.members > 0}
-              onClick={() => void run(() => api.deleteRole(projectId, r.id), "The role could not be deleted.")}
-              title={r.members > 0 ? "Move the members to another role first" : "Delete this role"}
-              className="text-sm font-semibold text-[#B42318] disabled:opacity-40">Delete</button>}
+            {canManage && <RemoveButton label="Delete" disabled={r.members > 0} title={r.members > 0 ? "Move the members to another role first" : "Delete this role"} onClick={() => void run(() => api.deleteRole(projectId, r.id), "The role could not be deleted.")} />}
           </div>
         </li>)}
       </ul>
@@ -111,7 +109,7 @@ export default function ProjectAccess({ projectId }: { projectId: string }) {
                 className={input}>
                 {roles.map((r) => <option key={r.id} value={r.id}>{r.name} ({levelName(r.level)})</option>)}
               </select>
-              {canManage && !isMe && <button type="button" onClick={() => void run(() => api.removeMember(projectId, m.user_id), "The member could not be removed.")} className="text-sm font-semibold text-[#B42318]">Remove</button>}
+              {canManage && !isMe && <RemoveButton onClick={() => void run(() => api.removeMember(projectId, m.user_id), "The member could not be removed.")} />}
             </div>
           </li>;
         })}

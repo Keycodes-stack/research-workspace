@@ -4,7 +4,19 @@ import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { Mark, mergeAttributes } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
+import TextStyle from "@tiptap/extension-text-style";
+import FontFamily from "@tiptap/extension-font-family";
+import Color from "@tiptap/extension-color";
+import Highlight from "@tiptap/extension-highlight";
+import TextAlign from "@tiptap/extension-text-align";
+import Subscript from "@tiptap/extension-subscript";
+import Superscript from "@tiptap/extension-superscript";
+import { Table } from "@tiptap/extension-table";
+import TableRow from "@tiptap/extension-table-row";
+import TableCell from "@tiptap/extension-table-cell";
+import TableHeader from "@tiptap/extension-table-header";
 import { useEffect, useRef } from "react";
+import EditorToolbar from "@/components/v2/projects/EditorToolbar";
 
 /**
  * A comment anchor: the selected text carries a mark with the comment's id (as Google Docs anchors comments
@@ -26,13 +38,38 @@ export const CommentAnchor = Mark.create({
   renderHTML({ HTMLAttributes }) { return ["mark", mergeAttributes({ class: "comment-mark" }, HTMLAttributes), 0]; },
 });
 
-/** Only the formatting the server accepts (see validate_rich_document in services/ai/app/word_export.py). */
+/** Text style with a font size (the toolbar's size menu). The server accepts fontSize inside textStyle. */
+const SizedTextStyle = TextStyle.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      fontSize: {
+        default: null,
+        parseHTML: (el) => el.style.fontSize || null,
+        renderHTML: (attrs) => (attrs.fontSize ? { style: `font-size: ${attrs.fontSize}` } : {}),
+      },
+    };
+  },
+});
+
+/** Every formatting option the editor can store. The server accepts exactly these (see validate_rich_document). */
 export const EDITOR_EXTENSIONS = [
   StarterKit.configure({
     heading: { levels: [1, 2, 3] },
-    blockquote: false, codeBlock: false, code: false, horizontalRule: false, strike: false,
+    blockquote: false, codeBlock: false, code: false,
   }),
   Underline,
+  SizedTextStyle,
+  FontFamily,
+  Color,
+  Highlight.configure({ multicolor: true }),
+  TextAlign.configure({ types: ["heading", "paragraph"] }),
+  Subscript,
+  Superscript,
+  Table.configure({ resizable: false }),
+  TableRow,
+  TableHeader,
+  TableCell,
   CommentAnchor,
 ];
 
@@ -65,7 +102,9 @@ function anchorRange(editor: Editor, commentId: string): { from: number; to: num
 
 /** Operations the workspace page uses on the editor. */
 export type EditorApi = {
-  /** Anchor the comment to the text that was selected when "Comment" was pressed. */
+  /** "New" in the comments panel: quote the current selection ("" when nothing is selected). */
+  beginComment: () => void;
+  /** Anchor the comment to the text that was selected when "New" was pressed. */
   addCommentAnchor: (commentId: string) => void;
   /** Move the cursor to a comment's text and scroll there. */
   focusComment: (commentId: string) => void;
@@ -89,36 +128,15 @@ export function toEditorContent(format: string, body: string): JSONContent {
   };
 }
 
-function Toolbar({ editor, onComment }: { editor: Editor; onComment?: () => void }) {
-  const button = (label: string, active: boolean, onClick: () => void, title: string, disabled = false) => (
-    <button type="button" key={title} title={title} aria-label={title} aria-pressed={active} onClick={onClick} disabled={disabled}
-      className={`min-w-8 rounded-md px-2 py-1 text-sm font-semibold disabled:opacity-40 ${active ? "bg-blue text-white" : "text-[#344054] hover:bg-[#F2F4F7]"}`}>{label}</button>
-  );
-  const hasSelection = !editor.state.selection.empty;
-  return <div role="toolbar" aria-label="Formatting" className="flex flex-wrap items-center gap-1 border-b border-[#EDEDF0] pb-2">
-    {button("B", editor.isActive("bold"), () => editor.chain().focus().toggleBold().run(), "Bold")}
-    {button("I", editor.isActive("italic"), () => editor.chain().focus().toggleItalic().run(), "Italic")}
-    {button("U", editor.isActive("underline"), () => editor.chain().focus().toggleUnderline().run(), "Underline")}
-    <span className="mx-1 h-5 w-px bg-[#EDEDF0]" />
-    {button("H1", editor.isActive("heading", { level: 1 }), () => editor.chain().focus().toggleHeading({ level: 1 }).run(), "Heading 1")}
-    {button("H2", editor.isActive("heading", { level: 2 }), () => editor.chain().focus().toggleHeading({ level: 2 }).run(), "Heading 2")}
-    {button("H3", editor.isActive("heading", { level: 3 }), () => editor.chain().focus().toggleHeading({ level: 3 }).run(), "Heading 3")}
-    <span className="mx-1 h-5 w-px bg-[#EDEDF0]" />
-    {button("• List", editor.isActive("bulletList"), () => editor.chain().focus().toggleBulletList().run(), "Bulleted list")}
-    {button("1. List", editor.isActive("orderedList"), () => editor.chain().focus().toggleOrderedList().run(), "Numbered list")}
-    <span className="mx-1 h-5 w-px bg-[#EDEDF0]" />
-    {onComment && button("Comment", false, onComment, "Comment on selected text", !hasSelection)}
-    {button("Undo", false, () => editor.chain().focus().undo().run(), "Undo")}
-    {button("Redo", false, () => editor.chain().focus().redo().run(), "Redo")}
-  </div>;
-}
-
-/** Word-style editor. Changes are reported as JSON through onChange; comments are anchored to selected text. */
+/**
+ * Figma "Workspace" editor: the formatting toolbar above a white A4 sheet (595 wide, border #EDEDF0, 40px inner padding).
+ * Changes are reported as JSON through onChange.
+ */
 export default function RichEditor({ initial, onChange, disabled, onCommentRequest, onReady, resolvedIds }: {
   initial: JSONContent;
   onChange: (json: string) => void;
   disabled?: boolean;
-  /** Called with the selected text when the user asks to comment on it. */
+  /** Called with the selected text when the user asks to comment on it ("" when nothing is selected). */
   onCommentRequest?: (selectedText: string) => void;
   onReady?: (api: EditorApi) => void;
   /** Comments already resolved: their anchors are shown faded. */
@@ -127,6 +145,10 @@ export default function RichEditor({ initial, onChange, disabled, onCommentReque
   const range = useRef<{ from: number; to: number } | null>(null);
   const resolvedRef = useRef<string[]>(resolvedIds ?? []);
   resolvedRef.current = resolvedIds ?? [];
+  const requestRef = useRef(onCommentRequest);
+  requestRef.current = onCommentRequest;
+  // The content as it was when the editor opened: opening a document is not an edit, so it is not saved.
+  const baseline = useRef("");
 
   const styleAnchors = (editor: Editor) => {
     const resolved = new Set(resolvedRef.current);
@@ -141,16 +163,28 @@ export default function RichEditor({ initial, onChange, disabled, onCommentReque
     editable: !disabled,
     immediatelyRender: false,
     onUpdate: ({ editor: changed }) => {
-      onChange(JSON.stringify(changed.getJSON()));
+      const json = JSON.stringify(changed.getJSON());
       styleAnchors(changed);
+      if (json !== baseline.current) onChange(json);
     },
     onCreate: ({ editor: created }) => {
+      baseline.current = JSON.stringify(created.getJSON());
       styleAnchors(created);
       onReady?.({
+        beginComment: () => {
+          const { from, to, empty } = created.state.selection;
+          if (empty) {
+            range.current = null;
+            requestRef.current?.("");
+            return;
+          }
+          range.current = { from, to };
+          requestRef.current?.(created.state.doc.textBetween(from, to, " "));
+        },
         addCommentAnchor: (commentId: string) => {
           const selection = range.current;
           if (!selection) return;
-          editor?.chain().focus().setTextSelection(selection).setMark("comment", { id: commentId }).run();
+          created.chain().focus().setTextSelection(selection).setMark("comment", { id: commentId }).run();
           range.current = null;
         },
         focusComment: (commentId: string) => {
@@ -170,16 +204,23 @@ export default function RichEditor({ initial, onChange, disabled, onCommentReque
 
   if (!editor) return <div className="min-h-[50vh] rounded-[12px] border border-[#EDEDF0] p-4 text-sm text-[#667085]">Loading editor…</div>;
 
-  const askComment = () => {
-    const { from, to } = editor.state.selection;
-    if (from === to) return;
-    range.current = { from, to };
-    onCommentRequest?.(editor.state.doc.textBetween(from, to, " "));
-  };
-
-  return <div className="flex flex-col gap-3">
-    <Toolbar editor={editor} onComment={onCommentRequest ? askComment : undefined} />
-    <EditorContent editor={editor} aria-label="Work package document"
-      className="min-h-[50vh] rounded-[12px] border border-[#EDEDF0] bg-white p-4 text-sm leading-6 text-[#101D37] focus-within:border-blue [&_.ProseMirror]:min-h-[46vh] [&_.ProseMirror]:outline-none [&_.ProseMirror_h1]:text-2xl [&_.ProseMirror_h1]:font-semibold [&_.ProseMirror_h2]:text-xl [&_.ProseMirror_h2]:font-semibold [&_.ProseMirror_h3]:text-lg [&_.ProseMirror_h3]:font-semibold [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ul]:pl-6 [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_ol]:pl-6 [&_.comment-mark]:rounded-[3px] [&_.comment-mark]:bg-[#FEF0C7] [&_.comment-resolved]:bg-transparent [&_.comment-resolved]:text-[#98A2B3]" />
-  </div>;
+  return <>
+    <div className="mt-[31px]">
+      <EditorToolbar editor={editor} />
+    </div>
+    <div className="flex justify-center px-4 pt-10 pb-16 sm:px-6">
+      <div className="min-h-[842px] w-full max-w-[595px] border border-[#EDEDF0] bg-white p-6 sm:p-10">
+        <EditorContent editor={editor} aria-label="Work package document"
+          className="text-[13px] leading-[1.6] text-[#101D37] [&_.ProseMirror]:min-h-[700px] [&_.ProseMirror]:outline-none [&_.ProseMirror_h1]:mb-3 [&_.ProseMirror_h1]:text-[22px] [&_.ProseMirror_h1]:font-semibold [&_.ProseMirror_h2]:mt-5 [&_.ProseMirror_h2]:mb-2 [&_.ProseMirror_h2]:text-[17px] [&_.ProseMirror_h2]:font-semibold [&_.ProseMirror_h3]:mt-4 [&_.ProseMirror_h3]:text-[15px] [&_.ProseMirror_h3]:font-semibold [&_.ProseMirror_p]:mb-2 [&_.ProseMirror_ul]:list-disc [&_.ProseMirror_ul]:pl-6 [&_.ProseMirror_ol]:list-decimal [&_.ProseMirror_ol]:pl-6 [&_.ProseMirror_table]:w-full [&_.ProseMirror_table]:border-collapse [&_.ProseMirror_td]:border [&_.ProseMirror_td]:border-[#D0D5DD] [&_.ProseMirror_td]:p-2 [&_.ProseMirror_th]:border [&_.ProseMirror_th]:border-[#D0D5DD] [&_.ProseMirror_th]:bg-[#F8FAFC] [&_.ProseMirror_th]:p-2 [&_.ProseMirror_th]:text-left [&_.ProseMirror_hr]:my-4 [&_.ProseMirror_hr]:border-[#D0D5DD] [&_.comment-mark]:rounded-[3px] [&_.comment-mark]:bg-[#FEF0C7] [&_.comment-resolved]:bg-transparent [&_.comment-resolved]:text-[#98A2B3]" />
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => editor.chain().focus("end").insertContent("<h2>New Section</h2><p></p>").run()}
+          className="mt-[30px] flex items-center gap-1.5 text-xs leading-[1.5] font-medium tracking-[-0.02em] text-blue disabled:opacity-40"
+        >
+          + Add Section
+        </button>
+      </div>
+    </div>
+  </>;
 }

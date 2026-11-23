@@ -131,8 +131,11 @@ def risks_from_charter(meta: Any) -> list[dict[str, Any]]:
 
 # ---- structured (rich text) documents from the Workspace editor -----------------------------
 
-_BLOCKS = {"paragraph", "heading", "bulletList", "orderedList", "listItem", "hardBreak", "text"}
-_MARKS = {"bold", "italic", "underline"}
+_BLOCKS = {"paragraph", "heading", "bulletList", "orderedList", "listItem", "hardBreak", "text",
+           "table", "tableRow", "tableCell", "tableHeader", "horizontalRule"}
+_MARKS = {"bold", "italic", "underline", "strike", "subscript", "superscript", "highlight", "textStyle"}
+_ALIGNMENTS = {"left", "center", "right", "justify"}
+_STYLE_KEYS = {"fontFamily", "fontSize", "color"}
 _MAX_DEPTH = 12
 
 
@@ -161,8 +164,16 @@ def validate_rich_document(body: str) -> None:
                         raise ValueError("a comment anchor needs an id")
                 elif mark.get("type") not in _MARKS:
                     raise ValueError("unsupported text formatting")
+                elif mark.get("type") in ("textStyle", "highlight"):
+                    attrs = mark.get("attrs") or {}
+                    for key, value in attrs.items():
+                        if key not in _STYLE_KEYS or (value is not None and (not isinstance(value, str) or len(value) > 60)):
+                            raise ValueError("unsupported text style")
         if kind == "heading" and (node.get("attrs") or {}).get("level") not in (1, 2, 3):
             raise ValueError("headings must be level 1 to 3")
+        align = (node.get("attrs") or {}).get("textAlign")
+        if align is not None and align not in _ALIGNMENTS:
+            raise ValueError("unsupported paragraph alignment")
         for child in node.get("content") or []:
             walk(child, depth + 1)
 
@@ -194,10 +205,75 @@ def add_rich_document(doc: Document, data: dict[str, Any]) -> None:
             for item in node.get("content") or []:
                 for para in item.get("content") or []:
                     _runs(doc.add_paragraph(style=style), para.get("content"))
+        elif kind == "table":
+            rows = [r for r in (node.get("content") or []) if r.get("type") == "tableRow"]
+            columns = max((len(r.get("content") or []) for r in rows), default=1)
+            table = doc.add_table(rows=len(rows) or 1, cols=max(columns, 1))
+            table.style = "Table Grid"
+            for row_index, row in enumerate(rows):
+                for col_index, cell in enumerate((row.get("content") or [])[:columns]):
+                    target = table.rows[row_index].cells[col_index]
+                    target.text = " ".join(
+                        "".join(t.get("text", "") for t in (p.get("content") or []))
+                        for p in (cell.get("content") or []) if p.get("type") == "paragraph").strip()
+                    if cell.get("type") == "tableHeader":
+                        for run in target.paragraphs[0].runs:
+                            run.bold = True
+
+
+def validate_sfdt(body: str) -> None:
+    """The Syncfusion Document Editor's own format (SFDT): a JSON object with a list of sections. Only its shape is
+    checked; the editor produces it, and the text is read back with sfdt_paragraphs."""
+    data = json.loads(body)
+    if not isinstance(data, dict) or not isinstance(data.get("sections"), list):
+        raise ValueError("the document must be an editor document")
+    if len(json.dumps(data)) > 2_000_000:
+        raise ValueError("the document is too large")
+
+
+def sfdt_paragraphs(body: str) -> list[str]:
+    """The text of each paragraph of an SFDT document, in order (tables give one line per row)."""
+    try:
+        data = json.loads(body or "null")
+    except ValueError:
+        return []
+    out: list[str] = []
+
+    def text_of(node: Any) -> str:
+        if isinstance(node, dict):
+            if isinstance(node.get("text"), str):
+                return node["text"]
+            return "".join(text_of(child) for child in node.get("inlines") or [])
+        return ""
+
+    def walk(blocks: Any) -> None:
+        for block in blocks or []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("rows") is not None:
+                for row in block.get("rows") or []:
+                    out.append(" | ".join(
+                        " ".join(text_of(b) for b in (cell.get("blocks") or [])).strip()
+                        for cell in (row.get("cells") or []) if isinstance(cell, dict)))
+            else:
+                out.append(text_of(block))
+
+    for section in (data or {}).get("sections") or []:
+        if isinstance(section, dict):
+            walk(section.get("blocks"))
+    return out
 
 
 def build_rich_package_docx(title: str, body: str, project_name: str, fmt: str) -> bytes:
     """A work package's Workspace document. Structured documents keep their headings, lists and emphasis."""
+    if fmt == "sfdt":
+        doc = Document()
+        doc.styles["Normal"].font.size = Pt(10)
+        doc.add_heading(title or "Work package", level=0)
+        doc.add_paragraph(project_name)
+        for line in sfdt_paragraphs(body):
+            doc.add_paragraph(line)
+        return _save(doc)
     if fmt != "tiptap":
         return build_package_docx(title, body, project_name)
     doc = Document()
@@ -206,3 +282,98 @@ def build_rich_package_docx(title: str, body: str, project_name: str, fmt: str) 
     doc.add_paragraph(project_name)
     add_rich_document(doc, json.loads(body or '{"type":"doc","content":[]}'))
     return _save(doc)
+
+
+# ---- starting document of a work package, built from its details at creation time --------------
+
+def work_package_template(brief: str | None, title: str) -> str:
+    """The first version of a work package's document: the objective and the workstream's details, from the
+    project's own data. Returned as the editor's JSON, so the Workspace is never blank for a new package."""
+    try:
+        data = json.loads(brief or "{}")
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    workstream = data.get("workstream") if isinstance(data.get("workstream"), dict) else {}
+
+    def text(value: Any) -> str:
+        return str(value).strip() if value not in (None, "") else ""
+
+    def label_line(label: str, value: Any) -> dict[str, Any]:
+        return {"type": "paragraph", "content": [
+            {"type": "text", "text": f"{label}: ", "marks": [{"type": "bold"}]},
+            {"type": "text", "text": text(value) or "Not set"},
+        ]}
+
+    objective = text(data.get("objective"))
+    content: list[dict[str, Any]] = [
+        {"type": "heading", "attrs": {"level": 1}, "content": [{"type": "text", "text": text(title) or "Work package"}]},
+        {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Research objective"}]},
+        {"type": "paragraph", "content": [{"type": "text", "text": objective or "Not set"}]},
+        {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Scope of work"}]},
+        label_line("Expected output", workstream.get("output")),
+        label_line("Owner", workstream.get("owner")),
+        label_line("Reviewer", workstream.get("reviewer")),
+        label_line("Department", workstream.get("department")),
+        label_line("Team", workstream.get("team")),
+        label_line("Start", workstream.get("start")),
+        label_line("Due", workstream.get("due")),
+        label_line("Dependencies", workstream.get("dependencies")),
+        {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Findings"}]},
+        {"type": "paragraph"},
+    ]
+    return json.dumps({"type": "doc", "content": content})
+
+
+def rich_text(body: str) -> str:
+    """All the text of a rich-text document, in order (empty when the document has no text)."""
+    def walk(node: Any) -> list[str]:
+        if not isinstance(node, dict):
+            return []
+        parts = [node.get("text", "")] if node.get("type") == "text" else []
+        for child in node.get("content") or []:
+            parts.extend(walk(child))
+        return parts
+    try:
+        return "".join(walk(json.loads(body or "null"))).strip()
+    except ValueError:
+        return ""
+
+
+def drafted_document(title: str, sections: Any) -> str | None:
+    """A work package document from AI-written sections (heading, paragraphs, bullets). None when the sections
+    are not usable, so the caller falls back to the template."""
+    if not isinstance(sections, list) or not sections:
+        return None
+
+    def clean(value: Any, limit: int = 1200) -> str:
+        return str(value).strip()[:limit] if isinstance(value, (str, int, float)) else ""
+
+    content: list[dict[str, Any]] = [{"type": "heading", "attrs": {"level": 1},
+                                      "content": [{"type": "text", "text": clean(title, 300) or "Work package"}]}]
+    for section in sections[:6]:
+        if not isinstance(section, dict):
+            continue
+        heading = clean(section.get("heading"), 120)
+        if heading:
+            content.append({"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": heading}]})
+        for paragraph in (section.get("paragraphs") or [])[:8]:
+            text = clean(paragraph)
+            if text:
+                content.append({"type": "paragraph", "content": [{"type": "text", "text": text}]})
+        bullets = [b for b in (clean(x, 300) for x in (section.get("bullets") or [])[:12]) if b]
+        if bullets:
+            content.append({"type": "bulletList", "content": [
+                {"type": "listItem", "content": [{"type": "paragraph", "content": [{"type": "text", "text": b}]}]}
+                for b in bullets]})
+    if len(content) < 3:
+        return None
+    content.append({"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Findings"}]})
+    content.append({"type": "paragraph"})
+    body = json.dumps({"type": "doc", "content": content})
+    try:
+        validate_rich_document(body)
+    except ValueError:
+        return None
+    return body

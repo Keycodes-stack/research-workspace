@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { CURRENT_PROFILE } from "@/lib/v2/currentUser";
 import {
   ChevronLeftDouble,
   ChevronRight,
@@ -193,8 +194,8 @@ export default function Sidebar({
         >
           <div className="flex items-center gap-2.5">
             <Image
-              src="/images/avatar-ibrahim.png"
-              alt="Ibrahim Ghatila"
+              src={CURRENT_PROFILE.avatar}
+              alt={CURRENT_PROFILE.name}
               width={40}
               height={40}
               className="size-10 shrink-0 rounded-full"
@@ -202,10 +203,10 @@ export default function Sidebar({
             {!collapsed && (
               <div className="flex flex-col">
                 <span className="text-base leading-[1.5] tracking-[-0.02em] text-[#EDEDF0]">
-                  Ibrahim Ghatila
+                  {CURRENT_PROFILE.name}
                 </span>
                 <span className="-mt-1 text-xs leading-[1.5] tracking-[-0.02em] text-[#EDEDF0]">
-                  Admin
+                  {CURRENT_PROFILE.role}
                 </span>
               </div>
             )}

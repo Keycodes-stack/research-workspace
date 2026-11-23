@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type { AttachmentRow } from "@/lib/types";
+import RemoveButton from "@/components/v2/ui/RemoveButton";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
@@ -84,7 +85,7 @@ export default function AttachmentGallery({ projectId }: { projectId: string }) 
           <span className="truncate font-medium text-[#101D37]" title={item.filename}>{item.filename}</span>
           <span className="shrink-0 text-xs text-[#667085]">{Math.max(1, Math.round(item.size_bytes / 1024))} KB</span>
         </div>
-        <button type="button" onClick={() => void remove(item)} className="self-start text-sm font-semibold text-[#B42318]">Remove</button>
+        <RemoveButton onClick={() => void remove(item)} />
       </li>)}
     </ul>}
   </section>;
