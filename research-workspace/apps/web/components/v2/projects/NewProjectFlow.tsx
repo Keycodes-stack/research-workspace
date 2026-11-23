@@ -16,6 +16,8 @@ import {
   FIELD_LIMITS,
   SPEC_OPTIONS,
   LIST_LIMITS,
+  applyIntakePatch,
+  isBlankValue,
   PROJECT_SECTIONS,
   ROW_LIMITS,
   charterOverLimits,
@@ -33,16 +35,6 @@ const REG_CONTROLS = ["Independent acceptance", "Evidence traceability", "Record
 const inputClass = "w-full rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-2.5 text-sm text-[#101D37] outline-none transition focus:border-blue focus:ring-2 focus:ring-blue/10";
 const labelClass = "mb-1.5 block text-sm font-medium text-[#344054]";
 
-/** Fields each wizard step owns; "Suggest with AI" fills only the empty ones among them. */
-const STEP_FIELDS: Record<number, (keyof ProjectDraft)[]> = {
-  0: ["name", "type", "objective", "background", "priority", "programme", "business_unit", "start", "target",
-      "in_scope", "out_scope", "deliverable", "measures", "assumptions", "dependencies"],
-  1: ["departments", "stakeholders", "decision_notes", "external_orgs"],
-  2: ["approach", "reporting", "budget", "currency", "resources", "workstreams", "gates", "risks", "no_risk_reason"],
-  3: ["governance", "classification", "data_location", "retention", "standards", "quality_lead", "reg_controls",
-      "visibility", "approvals", "change_authority", "gate_rule", "plan_editing", "manage_access", "external_partner_ingestion"],
-  4: [],
-};
 const isEmptyValue = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
 /** Only text and lists of text can be suggested and pasted into a field; object lists (workstreams, gates, risks) are added by hand. */
 const isTextSuggestion = (v: unknown) => typeof v === "string" || (Array.isArray(v) && v.every((x) => typeof x === "string"));
@@ -157,7 +149,6 @@ export default function NewProjectFlow() {
   const [insightsMissing, setInsightsMissing] = useState(false);
   const [hydrated, setHydrated] = useState(false);
   const [draftNote, setDraftNote] = useState(false);
-  const [suggesting, setSuggesting] = useState(false);
   useEffect(() => {
     let live = true;
     api.people().then((rows) => { if (live) setPeople(rows); }).catch(() => { if (live) setPeopleError("The people directory could not be loaded. Try again."); });
@@ -211,8 +202,11 @@ export default function NewProjectFlow() {
     setBusy(true); setError("");
     try {
       const response: IntakeResponse = await api.projectIntake({ mode, text, draft: current, asked, history: history.slice(-10), round: currentRound });
-      setDraft((old) => ({ ...old, ...response.patch }));
-      setSuggested((old) => [...new Set([...old, ...Object.keys(response.patch)])]);
+      // A field the user filled or edited (has a value and is no longer AI-tagged) is never overwritten by the AI.
+      const userFilled = Object.keys(current).filter((k) => !isBlankValue((current as unknown as Record<string, unknown>)[k]) && !suggested.includes(k));
+      const { suggestedKeys } = applyIntakePatch(current, response.patch, userFilled);
+      setDraft((old) => applyIntakePatch(old, response.patch, userFilled).draft);
+      setSuggested((old) => [...new Set([...old, ...suggestedKeys])]);
       if (response.reply) setMessages((old) => [...old, { from: "ai", text: response.reply }]);
       setQuestions(response.questions);
       setRound((n) => n + 1);
@@ -256,7 +250,7 @@ export default function NewProjectFlow() {
     try {
       const response = await api.projectIntake({ mode: "edit", text, draft, asked: [], history: next.slice(-10), round });
       const patch = response.patch as Record<string, unknown>;
-      const proposed = Object.keys(patch).filter((k) => isTextSuggestion(patch[k]));
+      const proposed = Object.keys(patch).filter((k) => isTextSuggestion(patch[k]) && !isBlankValue(patch[k]));
       setSuggestions((old) => ({ ...old, ...Object.fromEntries(proposed.map((k) => [k, asText(patch[k])])) }));
       if (response.reply) setMessages((old) => [...old, { from: "ai", text: response.reply }]);
     } catch (err) {
@@ -265,23 +259,6 @@ export default function NewProjectFlow() {
   };
 
   /** Asks the AI for the empty fields of the current step only. Values the user typed are never replaced. */
-  const suggestStep = async () => {
-    const keys = STEP_FIELDS[section].filter((k) => isEmptyValue(draft[k]));
-    if (keys.length === 0) { setSaveError("Every field in this step already has a value."); return; }
-    setSuggesting(true); setSaveError("");
-    try {
-      const response = await api.projectIntake({
-        mode: "edit",
-        text: `Suggest values only for these empty fields: ${keys.join(", ")}. Leave every other field unchanged.`,
-        draft, asked: [], history: messages.slice(-10), round,
-      });
-      const filled = keys.filter((k) => !isEmptyValue(response.patch[k]) && isTextSuggestion(response.patch[k]));
-      if (filled.length === 0) { setSaveError("The AI had no suggestion for these fields. Fill them in yourself."); return; }
-      setSuggestions((old) => ({ ...old, ...Object.fromEntries(filled.map((k) => [k, asText(response.patch[k])])) }));
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "AI suggestions are unavailable right now.");
-    } finally { setSuggesting(false); }
-  };
 
   const saveDraft = async () => {
     setSavingDraft(true); setSaveError("");
@@ -527,7 +504,7 @@ export default function NewProjectFlow() {
           </div>
         </div>)}
       </div>}
-<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void saveDraft()} disabled={savingDraft} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054] disabled:opacity-50">{savingDraft ? "Saving draft…" : "Save Draft"}</button>{draftId && <button type="button" onClick={() => void deleteDraft()} className="rounded-[10px] border border-[#FDA29B] px-4 py-2 text-sm font-medium text-[#B42318]">Delete draft</button>}{section < 4 && <button type="button" onClick={() => void suggestStep()} disabled={suggesting || busy} className="rounded-[10px] border border-blue/30 bg-blue/[0.04] px-4 py-2 text-sm font-medium text-blue disabled:opacity-50">{suggesting ? "Suggesting…" : "Suggest with AI"}</button>}{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved.</span>}{section < 4 ? <button type="button" onClick={() => setSection(section + 1)} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white">{section === 3 ? "Confirm & Review →" : "Confirm & Continue →"}</button> : <button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
+<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void saveDraft()} disabled={savingDraft} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054] disabled:opacity-50">{savingDraft ? "Saving draft…" : "Save Draft"}</button>{draftId && <button type="button" onClick={() => void deleteDraft()} className="rounded-[10px] border border-[#FDA29B] px-4 py-2 text-sm font-medium text-[#B42318]">Delete draft</button>}{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved.</span>}{section < 4 ? <button type="button" onClick={() => setSection(section + 1)} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white">{section === 3 ? "Confirm & Review →" : "Confirm & Continue →"}</button> : <button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
         <form onSubmit={editWithAi} className="flex gap-2 rounded-[16px] border border-[#EDEDF0] bg-white p-3"><input name="change" maxLength={1000} className={inputClass} placeholder="Ask AI to adjust the project plan…" /><button disabled={busy} className="shrink-0 rounded-[10px] bg-[#101D37] px-4 py-2 text-sm font-semibold text-white">{busy ? "…" : "Ask AI"}</button></form>
         </>}
     </main></div></div>;

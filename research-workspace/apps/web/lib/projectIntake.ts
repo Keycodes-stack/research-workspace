@@ -209,3 +209,29 @@ export function charterOverLimits(draft: ProjectDraft): string[] {
   }
   return problems;
 }
+
+/** A value the AI can leave empty: nothing, blank text, or a list whose items are all empty (including object rows). */
+export function isBlankValue(v: unknown): boolean {
+  if (v === undefined || v === null) return true;
+  if (typeof v === "string") return v.trim() === "";
+  if (Array.isArray(v)) return v.every(isBlankValue);
+  if (typeof v === "object") return Object.values(v as Record<string, unknown>).every(isBlankValue);
+  return false;
+}
+
+/** Merges the AI's patch into the draft. Empty values are skipped, so they never overwrite text and are never tagged
+ *  as AI suggested. suggestedKeys lists only the fields that received a value. */
+export function applyIntakePatch(
+  draft: ProjectDraft,
+  patch: Partial<ProjectDraft>,
+  protectedKeys: readonly string[] = [],
+): { draft: ProjectDraft; suggestedKeys: string[] } {
+  const next: Record<string, unknown> = { ...draft };
+  const suggestedKeys: string[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (isBlankValue(value) || protectedKeys.includes(key)) continue;
+    next[key] = value;
+    suggestedKeys.push(key);
+  }
+  return { draft: next as ProjectDraft, suggestedKeys };
+}

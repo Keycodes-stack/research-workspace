@@ -152,6 +152,7 @@ export default function HomePage() {
             ))}
           </div>
 
+          {/* Analytics hidden for now
           <div className="h-px w-full bg-[#EDEDF0]" />
 
           <div className="flex items-center justify-between gap-3">
@@ -178,6 +179,7 @@ export default function HomePage() {
             <ChartCard title="Research Activity Overview" subtitle="Research items created over time" />
             <ChartCard title="Research Item Status" subtitle="Research items created over time" />
           </div>
+          */}
         </div>
       </main>
     </div>
