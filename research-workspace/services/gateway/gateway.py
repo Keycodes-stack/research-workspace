@@ -57,7 +57,7 @@ def allow(user: str) -> bool:
     return True
 
 
-ALLOWED_PREFIXES = ("/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts", "/comments")
+ALLOWED_PREFIXES = ("/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts", "/comments", "/people", "/attachments")
 
 def b64url_decode(s: str) -> bytes:
     padding = '=' * (-len(s) % 4)

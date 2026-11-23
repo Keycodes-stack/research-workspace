@@ -38,7 +38,7 @@ type Config struct {
 
 // Only these prefixes are forwarded. The AI service's /health, /docs and
 // /openapi.json are intentionally not reachable through the gateway.
-var allowedPrefixes = []string{"/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts", "/comments"}
+var allowedPrefixes = []string{"/projects", "/tasks", "/threads", "/discover", "/signals", "/concepts", "/comments", "/people", "/attachments"}
 
 type ctxKey struct{}
 
