@@ -391,7 +391,8 @@ async def project_evidence(q: str | None = None, work_package: str | None = None
     # always offers a Run button for it.
     runs = await pool.fetch(
         """SELECT t.id AS task_id, t.project_id, COALESCE(r.status, 'not_started') AS status, r.question,
-                  r.statement, r.papers_read, r.models, r.error, COALESCE(r.references_added, false) AS references_added,
+                  r.statement, COALESCE(r.papers_read, 0) AS papers_read, r.models, r.error,
+                  COALESCE(r.references_added, false) AS references_added,
                   r.started_at, r.finished_at, w.code, w.title AS work_package_title
            FROM tasks t JOIN work_packages w ON w.id = t.work_package_id
            LEFT JOIN evidence_runs r ON r.task_id = t.id
