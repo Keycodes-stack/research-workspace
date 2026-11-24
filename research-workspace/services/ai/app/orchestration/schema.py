@@ -204,6 +204,12 @@ class JudgeConflict(BaseModel):
 class JudgeVerdict(BaseModel):
     a_claims: list[JudgeClaim] = []
     conflicts: list[JudgeConflict] = []
+    statement: str = ""          # optional plain-language summary for the reader; checked before it is shown
+
+    @field_validator("statement", mode="before")
+    @classmethod
+    def _statement(cls, v):
+        return "" if v is None else str(v)
 
 
 def parse_verdict(text: str) -> JudgeVerdict:

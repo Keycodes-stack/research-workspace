@@ -7,6 +7,7 @@ import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import { useProjects } from "@/components/v2/V2Frame";
 import AssessmentCard from "@/components/v2/projects/AssessmentCard";
 import AttachmentGallery from "@/components/v2/projects/AttachmentGallery";
+import NewWorkPackage from "@/components/v2/projects/NewWorkPackage";
 import { api } from "@/lib/api";
 import { asInsights } from "@/lib/projectIntake";
 import { workPackage, type WorkPackage } from "@/lib/workPackages";
@@ -48,6 +49,10 @@ export default function ProjectOverview({ id }: { id: string }) {
   const project: Project | undefined = projects.find((p) => p.id === id || p.slug === id);
   const [downloadError, setDownloadError] = useState("");
   const download = () => { setDownloadError(""); api.downloadProjectDocument(id).catch((e) => setDownloadError(e instanceof Error ? e.message : "Could not create the Word document.")); };
+
+  const reloadTasks = () => {
+    api.tasks(id).then(setTasks).catch((e) => setTasksError(e instanceof Error ? e.message : "Could not load work packages."));
+  };
 
   useEffect(() => {
     let live = true;
@@ -109,7 +114,10 @@ export default function ProjectOverview({ id }: { id: string }) {
           </section>
 
           <section className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
-            <h2 className="text-lg font-semibold text-[#101D37]">Work Packages</h2>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h2 className="text-lg font-semibold text-[#101D37]">Work Packages</h2>
+              <NewWorkPackage projectId={id} onCreated={reloadTasks} />
+            </div>
             {tasksError ? <p role="alert" className="mt-4 text-sm text-[#B42318]">Could not load work packages: {tasksError}</p> : packages.length === 0 ? <p className="mt-4 text-sm text-[#667085]">No work packages yet.</p> : <table className="mt-4 w-full text-left text-sm">
               <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]"><th className="py-2 font-medium">Work Package</th><th className="py-2 font-medium">Responsible</th><th className="py-2 font-medium">Status</th></tr></thead>
               <tbody>{packages.map((wp) => <tr key={wp.id} className="border-b border-[#EDEDF0] last:border-0">

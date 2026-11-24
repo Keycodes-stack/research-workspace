@@ -20,6 +20,7 @@ vi.mock("@/lib/api", () => ({
   api: {
     projects: vi.fn(async () => projects),
     tasks: vi.fn(async () => [{ id: "t1", title: "Baseline Assessment", brief: null, status: "draft", created_at: "" }]),
+    projectEvidence: vi.fn(async () => ({ summary: { total_sources: 0, claims_supported: 0, need_verification: 0 }, models: {}, runs: [], items: [] })),
   },
   getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
@@ -59,7 +60,7 @@ describe("project pages from the design (sample content, real projects)", () => 
 
   it("opens Evidence and the Workspace document from the work packages", async () => {
     render(<V2Frame>{await EvidencePage(params("p1"))}</V2Frame>);
-    expect(await screen.findByRole("heading", { name: "Evidence Extraction Ledger" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Evidence Library" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/projects/p1/evidence");
     expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "/projects/p1/workspace/t1");
   });

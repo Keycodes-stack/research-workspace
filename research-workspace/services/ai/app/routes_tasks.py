@@ -739,8 +739,52 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
     await audit(pool, pid, user, "project.create", "project", pid, name=body.name.strip(), mode=body.mode)
     for item in packages:
         await audit(pool, pid, user, "task.create", "task", item["id"], title=item["title"], source="project_setup")
+    # Every work package starts its evidence research now. Best effort: the project exists either way.
+    try:
+        from .evidence import schedule_project_runs
+        await schedule_project_runs(pool, pid, user)
+    except Exception:
+        log.exception("could not start the evidence research for project %s", pid)
     return {"id": pid, "slug": slug, "name": body.name.strip(), "mode": body.mode, "meta": meta,
             "work_packages": packages}
+
+
+class WorkPackageIn(BaseModel):
+    title: str = Field(min_length=1, max_length=300)
+    brief: str | None = Field(default=None, max_length=10000)
+    lead: str | None = Field(default=None, max_length=120)
+    due: str | None = Field(default=None, max_length=10)
+
+
+@router.post("/projects/{project_id}/work-packages", status_code=201)
+async def create_work_package(body: WorkPackageIn, project=Depends(project_with("researcher")),
+                              user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Add one work package to a project, set up like the ones created with the project: its code, its research
+    task, its starting document, and its evidence research (started now)."""
+    pid = project["id"]
+    title = body.title.strip()
+    async with pool.acquire() as conn, conn.transaction():
+        last = await conn.fetchval(
+            "SELECT COALESCE(max(CAST(substring(code FROM 'WP-([0-9]+)$') AS INT)), 0) FROM work_packages WHERE project_id=$1",
+            pid)
+        code = f"WP-{last + 1}"
+        wp_id = await conn.fetchval(
+            """INSERT INTO work_packages (project_id, code, title, lead_id, due_date)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+            pid, code, title, body.lead or None, _date_or_none(body.due, "Work package due date"))
+        tid = await conn.fetchval(
+            "INSERT INTO tasks (project_id, title, brief, work_package_id) VALUES ($1, $2, $3, $4) RETURNING id",
+            pid, title, body.brief, wp_id)
+        await conn.execute(
+            "INSERT INTO work_package_documents (task_id, body, format, version, ai_drafted) VALUES ($1, $2, 'tiptap', 0, false)",
+            tid, work_package_template(body.brief, title))
+    await audit(pool, pid, user, "task.create", "task", tid, title=title, source="work_package")
+    try:
+        from .evidence import schedule_runs
+        await schedule_runs(pool, pid, [tid], user)
+    except Exception:
+        log.exception("could not start the evidence research for work package %s", tid)
+    return {"id": tid, "work_package_id": wp_id, "code": code, "title": title, "status": "draft"}
 
 
 @router.get("/projects")
@@ -1306,7 +1350,8 @@ async def ask(
         a, b = meter.llms
         vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)
         try:
-            result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg)  # the stronger model matches claims; it never decides who is right
+            result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg,  # the stronger model matches claims; it never decides who is right
+                                    lenient=cfg.judge_lenient)
         except CrossCheckFailed as e:
             await meter.record(pool, th["project_id"], user, "ask")
             log.warning("ask cross-check unavailable: %s", e)
@@ -1367,6 +1412,8 @@ async def ask(
         "verification": {"status": "complete", "verified": n_ok, "purged": n_bad},
         "gate": gate,
         "models": _model_breakdown(result),
+        "statement": result.statement,
+        "differences": result.differences,
         "chunks": await _chunk_meta(pool, result),
         # Measured, so the UI shows real numbers: passages read and seconds spent per step.
         "timings": {"retrieve_s": round(t_retrieved - t0, 1), "models_s": round(t_models - t_retrieved, 1),
@@ -1454,6 +1501,9 @@ def _model_breakdown(result: DualResult) -> dict:
             "purged": sum(not c.verified for c in checks),
             "claims": [{"text": c.claim_text, "quote": c.quote, "verified": c.verified, "reason": c.reason,
                         "match_kind": c.match_kind, "chunk_ids": c.chunk_ids} for c in checks],
+            # the model's own verdict on the question, so the UI can say "found insufficient evidence: ..."
+            "status": ((result.model_a if key == "model_a" else result.model_b) or {}).get("status"),
+            "notes": ((result.model_a if key == "model_a" else result.model_b) or {}).get("notes"),
         }
         for key, checks in result.checks.items()
     }

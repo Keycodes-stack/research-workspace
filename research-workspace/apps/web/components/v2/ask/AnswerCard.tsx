@@ -3,6 +3,8 @@
 import { explainReason } from "@/lib/explain";
 import type { AskResult, Position } from "@/lib/types";
 import { answerFacts, citeSources, plainContent, type CitedSource } from "@/lib/v2/answer";
+import JudgeStatement, { statusChip } from "./JudgeStatement";
+import ModelsPanel from "./ModelsPanel";
 
 /*
  * The design has no answer screen, so this card follows the design's chat style (white card, #EDEDF0 border, radius
@@ -66,6 +68,19 @@ export default function AnswerCard({ result }: { result: AskResult }) {
     return { ...cf, a: side(cf.position_a), b: side(cf.position_b) };
   });
   const single = claims.filter((c) => !c.confirmed).length;
+  // Differences (lenient cross-check) and each model's own claims: numbered here, before the source list is built.
+  const diffs = (result.differences ?? []).map((cf) => {
+    const side = (p: Position | null) => (p ? { ...p, ns: refs(p.chunk_ids, p.quote) } : null);
+    return { ...cf, a: side(cf.position_a), b: side(cf.position_b) };
+  });
+  const models = result.models ?? null;
+  const claimNs: Partial<Record<"model_a" | "model_b", number[][]>> = {};
+  for (const key of ["model_a", "model_b"] as const) {
+    const m = models?.[key];
+    // A removed claim's quote never reached a source, so it gets no number.
+    if (m) claimNs[key] = m.claims.map((c) => (c.verified ? refs(c.chunk_ids, c.quote) : []));
+  }
+  const chip = statusChip(result.kind, diffs.length > 0, single > 0);
 
   return (
     <article aria-label={k.title} className="flex w-full flex-col gap-3 rounded-2xl border border-[#EDEDF0] bg-white p-4">
@@ -125,7 +140,32 @@ export default function AnswerCard({ result }: { result: AskResult }) {
         </p>
       )}
 
-      {result.kind === "consensus" && <p className="text-xs text-body">{explainReason(result)}</p>}
+      {diffs.length > 0 && (
+        <section aria-label="Differences" className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold text-[#101D37]">Where the sources differ ({diffs.length})</h3>
+          <ul className="flex flex-col gap-2">
+            {diffs.map((cf, i) => (
+              <li key={i} className="flex flex-col gap-2 rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] p-2.5">
+                <p className="text-sm font-medium text-[#101D37]">{cf.topic}</p>
+                {([["Model A", cf.a], ["Model B", cf.b]] as const).map(([who, p]) => (
+                  <p key={who} className="text-sm leading-[1.5] text-[#101D37]">
+                    <span className="font-semibold">{who}: </span>
+                    {p ? <>{p.text}<Refs ns={p.ns} />{p.conditions && <span className="text-body"> ({p.conditions})</span>}</>
+                      : <span className="text-body">no finding on this point</span>}
+                  </p>
+                ))}
+                {cf.explanation && <p className="text-xs text-body">{cf.explanation}</p>}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {models && <ModelsPanel models={models} claimNs={claimNs} />}
+
+      {result.statement
+        ? <JudgeStatement text={result.statement} chip={chip} />
+        : result.kind === "consensus" && <p className="text-xs text-body">{explainReason(result)}</p>}
       <SourceList sources={sources()} />
     </article>
   );

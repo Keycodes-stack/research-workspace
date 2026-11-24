@@ -48,7 +48,14 @@ export const brandOf = (model: string) => {
   if (m.includes("gemini")) return "gemini";
   if (m.includes("qwen")) return "qwen";
   if (m.includes("gpt-oss")) return "oss";
+  if (m.includes("groq")) return "groq";
   return null;
+};
+
+/* Brands with no official mark here: a monogram instead */
+const MONOGRAMS: Record<string, { title: string; text: string }> = {
+  oss: { title: "GPT-OSS (open-weight, on Groq)", text: "OSS" },
+  groq: { title: "Groq", text: "G" },
 };
 
 export function ModelLogo({
@@ -59,15 +66,15 @@ export function ModelLogo({
   size?: number;
 }) {
   const brand = brandOf(model);
-  /* open-weight GPT-OSS on Groq: no official mark, so a monogram */
-  if (brand === "oss")
+  const mono = brand ? MONOGRAMS[brand] : undefined;
+  if (mono)
     return (
       <span
-        title="GPT-OSS (open-weight, on Groq)"
+        title={mono.title}
         className="flex shrink-0 items-center justify-center rounded-full border border-[#EDEDF0] bg-[#101D37] font-bold tracking-tight text-white"
         style={{ width: size, height: size, fontSize: size * 0.3 }}
       >
-        OSS
+        {mono.text}
       </span>
     );
   const b = BRANDS[brand ?? ""];

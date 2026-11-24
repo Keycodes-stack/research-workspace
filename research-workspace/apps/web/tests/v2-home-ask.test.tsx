@@ -43,6 +43,8 @@ vi.mock("@/lib/api", () => ({
   api: {
     projects: vi.fn(async () => projects),
     tasks: vi.fn(async () => []),
+    chats: vi.fn(async () => []),
+    sources: vi.fn(async () => []),
     createChat: vi.fn(async () => ({ id: "chat1", title: "t" })),
     messages: vi.fn(async () => []),
     progress: vi.fn(async () => ["Searching OpenAlex and Europe PMC..."]),
@@ -121,10 +123,31 @@ describe("Home", () => {
     fireEvent.change(screen.getByLabelText("Your question"), { target: { value: "Does heat damage DNA?" } });
     fireEvent.click(send);
 
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/projects/p1/ask/chat1"));
+    // the answer appears on Home itself, with the question and the chosen scope
+    const card = await screen.findByRole("article", { name: "Answer" });
     expect(api.createChat).toHaveBeenCalledWith("p1", "Does heat damage DNA?");
-    expect(pending.take("chat1")).toEqual({ question: "Does heat damage DNA?", scope: "api" });
+    expect(api.askOpen).toHaveBeenCalledWith("chat1", "Does heat damage DNA?", "api");
+    expect(within(card).getByText("Heat separates the DNA strands")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+    expect(pending.take("chat1")).toBeNull();                              // nothing is handed over any more
+    expect(screen.getByRole("link", { name: "Open chat" })).toHaveAttribute("href", "/projects/p1/ask/chat1");
     expect(localStorage.getItem("v2:ask:scope")).toBe("api");
+  });
+
+  it("continues the same chat for a follow-up question", async () => {
+    render(<V2Frame><HomePage /></V2Frame>);
+    fireEvent.click(await screen.findByRole("button", { name: /Project/ }));
+    fireEvent.click(screen.getByRole("option", { name: /DNA heat study/ }));
+    const ask = async (q: string) => {
+      fireEvent.change(screen.getByLabelText("Your question"), { target: { value: q } });
+      fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    };
+    await ask("Does heat damage DNA?");
+    await screen.findAllByRole("article", { name: "Answer" });
+    await ask("And at 60 C?");
+    await waitFor(() => expect(api.askOpen).toHaveBeenCalledTimes(2));
+    expect(api.createChat).toHaveBeenCalledTimes(1);                      // one chat, not one per question
+    expect(vi.mocked(api.askOpen).mock.calls[1][0]).toBe("chat1");
   });
 
   it("shows why a chat could not start", async () => {

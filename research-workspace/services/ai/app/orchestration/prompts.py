@@ -113,10 +113,15 @@ Examples:
 
 List every contradiction under "conflicts" with a short topic and an explanation.
 
+Also write "statement": one to three plain sentences for the reader. Say what both analysts found, which findings both
+agree on, and where their claims differ. Use only the claims and quotes shown above, never outside knowledge, and never
+a number that does not appear in them. Do not say which analyst is right.
+
 Reply with ONE JSON object and nothing else:
 {
   "a_claims": [{"id": 1, "status": "agreed" | "contradicted" | "not_addressed", "b_ids": [1]}],
-  "conflicts": [{"topic": "<short topic>", "a_id": 1, "b_id": 2, "explanation": "<what differs>"}]
+  "conflicts": [{"topic": "<short topic>", "a_id": 1, "b_id": 2, "explanation": "<what differs>"}],
+  "statement": "<one to three plain sentences>"
 }
 """
 

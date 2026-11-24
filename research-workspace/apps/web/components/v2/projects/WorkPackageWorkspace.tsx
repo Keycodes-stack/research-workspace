@@ -20,7 +20,8 @@ export default function WorkPackageWorkspace({ projectId, taskId }: { projectId:
     <ProjectsPanel activeId={projectId} showWorkPackages activeSection="workspace" />
     <div className="flex min-w-0 flex-1 flex-col">
       <TopBar current="Workspace" trail={[{ label: "Projects", href: `${V2}/projects` }]} />
-      <DocEditor taskId={taskId} />
+      {/* keyed by work package: opening another one re-creates the editor instead of keeping the previous document */}
+      <DocEditor key={taskId} taskId={taskId} />
     </div>
   </div>;
 }

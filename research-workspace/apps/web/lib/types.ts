@@ -74,6 +74,18 @@ export interface AskResult {
   verification: { status: string; verified: number; purged: number };
   gate: Gate; chunks: Record<string, ChunkMeta>;
   timings?: { total_s?: number };
+  /** Each model's own claims and verdict. Absent on answers saved before the side-by-side view. */
+  models?: Partial<Record<"model_a" | "model_b", ModelBreakdown>> | null;
+  /** The closing statement from the cross-check. Absent on older answers. */
+  statement?: string | null;
+  /** Points where the papers or conditions differ (lenient cross-check); each keeps both citations. */
+  differences?: Conflict[] | null;
+}
+export interface ModelBreakdown {
+  verified: number; purged: number;
+  /** "answered" or "insufficient_source_evidence" */
+  status?: string | null; notes?: string | null;
+  claims: { text: string; quote: string; verified: boolean; reason: string; match_kind: string | null; chunk_ids: string[] }[];
 }
 /** Sources for an open-discovery question: uploads only, online papers only, or both. */
 export type EvidenceScope = "uploads" | "api" | "both";
@@ -145,3 +157,60 @@ export interface CommentRow {
   body: string; resolved: boolean; created_at: string;
 }
 export interface CommentsResp { comments: CommentRow[]; summary: Record<string, Record<string, number>>; note: string }
+
+/* ---- Evidence Library (work package research: papers -> top 10 -> both models -> judge) ---- */
+export type EvidenceStatus = "verified" | "pending";
+export type EvidenceRunStatus = "not_started" | "queued" | "running" | "complete" | "failed" | "waiting";
+export type EvidenceModels = Partial<Record<"model_a" | "model_b", { label: string }>>;
+
+export type EvidenceRun = {
+  task_id: string;
+  status: EvidenceRunStatus;
+  question: string;
+  statement: string | null;
+  papers_read: number;
+  models: EvidenceModels;
+  error: string | null;
+  references_added: boolean;
+  started_at: string;
+  finished_at: string | null;
+  code?: string | null;
+  work_package_title?: string | null;
+};
+
+export type EvidenceItem = {
+  id: string;
+  evidence_id: string;            // "Evidence 001"
+  task_id: string;
+  work_package_code: string | null;
+  work_package_title: string | null;
+  claim_text: string;
+  quote: string;
+  status: EvidenceStatus;
+  found_by: ("model_a" | "model_b")[];
+  confirmed: boolean;
+  chunk_ids: string[];
+  source_id: string | null;
+  source_title: string | null;
+  doi: string | null;
+  source_url: string | null;
+  origin: string | null;
+  pub_year: number | null;
+  created_at: string | null;
+};
+
+export type EvidenceLibrary = {
+  summary: { total_sources: number; claims_supported: number; need_verification: number };
+  models: EvidenceModels;
+  runs: EvidenceRun[];
+  items: EvidenceItem[];
+};
+
+export type EvidenceFilter = { q?: string; work_package?: string; model?: string; status?: string };
+
+export type EvidenceDetail = {
+  item: EvidenceItem;
+  passages: { chunk_id: string; source_title: string | null; page_start: number | null; page_end: number | null; sha256: string; text: string }[];
+  statement: string | null;
+  models: EvidenceModels;
+};

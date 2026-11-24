@@ -1,5 +1,5 @@
 import type {
-  AskResult, AuditEntry, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
+  AskResult, AuditEntry, EvidenceDetail, EvidenceFilter, EvidenceItem, EvidenceLibrary, EvidenceRun, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
 } from "./types";
 import type { IntakeResponse, ProjectDraft, ProjectInsights } from "./projectIntake";
 
@@ -220,9 +220,23 @@ export const api = {
     call<{ sources: { title?: string; status?: string }[]; dropped: unknown[]; errors: string[]; skipped?: boolean; existing_sources?: number; reason?: string }>(
       `/projects/${pid}/discover-and-ingest`, json({ question, top_n: topN, force })),
   tasks: (pid: string) => call<{ tasks: TaskRow[] }>(`/projects/${pid}/tasks`).then((r) => r.tasks),
+  /** Add one work package to a project (its code, research task, Workspace document and evidence research). */
+  createWorkPackage: (pid: string, body: { title: string; brief?: string; lead?: string; due?: string }) =>
+    call<{ id: string; code: string; title: string }>(`/projects/${pid}/work-packages`, json(body)),
   createTask: (pid: string, title: string, brief?: string) =>
     call<{ id: string }>(`/projects/${pid}/tasks`, json({ title, brief: brief || null })),
   task: (id: string) => call<TaskDetail>(`/tasks/${id}`),
+  /** Evidence Library for a project: totals, every work package run, and the evidence items (filtered). */
+  projectEvidence: (pid: string, f: EvidenceFilter = {}) => {
+    const qs = new URLSearchParams(Object.entries(f).filter(([, v]) => v) as [string, string][]).toString();
+    return call<EvidenceLibrary>(`/projects/${pid}/evidence${qs ? `?${qs}` : ""}`);
+  },
+  taskEvidence: (tid: string) => call<{ run: EvidenceRun | null; items: EvidenceItem[] }>(`/tasks/${tid}/evidence`),
+  /** The references block as rich text, for the Workspace's "Insert references" action. */
+  taskReferences: (tid: string) => call<{ heading: string; doc: unknown }>(`/tasks/${tid}/evidence/references`),
+  /** Run (or run again) the research for one work package. */
+  runTaskEvidence: (tid: string) => call<{ task_id: string; status: string }>(`/tasks/${tid}/evidence/run`, { method: "POST" }),
+  evidenceDetail: (tid: string, itemId: string) => call<EvidenceDetail>(`/tasks/${tid}/evidence/${itemId}`),
   /** The work package's Workspace document (plain text). `version` is what the next save must send back. */
   workPackageDocument: (taskId: string) =>
     call<{ task_id: string; title: string; body: string; format: "plain" | "tiptap" | "sfdt"; version: number; updated_at: string | null; ai_drafted: boolean }>(`/tasks/${taskId}/document`),

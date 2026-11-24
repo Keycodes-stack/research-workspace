@@ -78,6 +78,7 @@ export default function DocEditor({ taskId }: { taskId: string }) {
   const [tracking, setTracking] = useState(false);
   const [props, setProps] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
+  const [refsNote, setRefsNote] = useState("");
 
   const de = (): DocumentEditor | null => ref.current?.documentEditor ?? null;
   const boxes = (): CommentElementBox[] => de()?.documentHelper.comments ?? [];
@@ -290,6 +291,25 @@ export default function DocEditor({ taskId }: { taskId: string }) {
   };
   const railOn = { comments: panel, review: tracking, document: props, present: readOnly };
 
+  /* Adds the work package's references at the end of the document. Refuses if the document already has a list, so
+     running it twice never duplicates the list. */
+  const insertReferences = async () => {
+    const c = ref.current;
+    if (!c) return;
+    setRefsNote("");
+    try {
+      const refs = await api.taskReferences(taskId);
+      if (c.documentEditor.serialize().includes(refs.heading)) {
+        setRefsNote("This document already has a references list.");
+        return;
+      }
+      c.documentEditor.selection.moveToDocumentEnd();
+      c.documentEditor.editor.paste(tiptapToSfdt(refs.doc));
+    } catch {
+      setRefsNote("Could not insert the references.");
+    }
+  };
+
   const statusText =
     loadError ? loadError
     : status === "conflict" ? "Changed elsewhere. Reload the page to see the latest version."
@@ -303,11 +323,22 @@ export default function DocEditor({ taskId }: { taskId: string }) {
         <h1 className="text-2xl leading-[1.2] font-semibold tracking-[-0.02em] text-[#101D37] sm:text-[30px]">
           Work <span className="text-blue">Package</span>
         </h1>
-        <span className="pb-1 text-[10px] leading-[1.5] tracking-[-0.02em] text-body" aria-live="polite">
-          {readOnly && "Read-only · "}
-          {tracking && "Tracking changes · "}
-          {statusText}
-        </span>
+        <div className="flex items-center gap-3 pb-1">
+          <button
+            type="button"
+            onClick={() => void insertReferences()}
+            disabled={readOnly || !loaded}
+            className="rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-1.5 text-xs font-semibold text-[#344054] hover:border-[#D0D5DD] disabled:opacity-60"
+          >
+            Insert references
+          </button>
+          <span className="text-[10px] leading-[1.5] tracking-[-0.02em] text-body" aria-live="polite">
+            {refsNote && <span className="mr-2 text-[#B42318]">{refsNote}</span>}
+            {readOnly && "Read-only · "}
+            {tracking && "Tracking changes · "}
+            {statusText}
+          </span>
+        </div>
       </div>
       {aiDrafted && <div role="note" className="mx-4 mb-2 rounded-[12px] border border-blue/20 bg-blue/[0.03] p-3 text-xs text-[#344054] sm:mx-6 lg:mx-10">
         <span className="mr-2 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI suggested · review</span>

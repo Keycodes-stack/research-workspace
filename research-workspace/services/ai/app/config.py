@@ -57,6 +57,10 @@ class Settings(BaseSettings):
     llm_context_token_budget: int = 4000
     # Output tokens reserved per model call (0 = provider default, which may exceed small per-minute caps).
     llm_max_output_tokens: int = 2048
+    # Evidence library (work package research): the top papers, read by both models. Separate from /ask so the
+    # Q&A budget does not change. Sized for ~10 papers x 1 passage with a 8,000-token provider cap.
+    evidence_context_token_budget: int = 5200
+    evidence_passages_per_source: int = 1
 
     # Shared secret between the Go gateway and this service. Requests without it
     # are rejected, so user identity headers can only come from the gateway.
@@ -69,6 +73,9 @@ class Settings(BaseSettings):
     max_pdf_mb: int = 50
     embedding_dim: int = 768
     similarity_threshold: float = 0.76
+    # Cross-check: True shows findings from different papers (or differing only in conditions) as differences
+    # with citations instead of a disagreement. False restores the strict behaviour.
+    judge_lenient: bool = True
     # Citation verifier (app/verification)
     fuzzy_threshold: float = 0.9
     min_quote_tokens: int = 3

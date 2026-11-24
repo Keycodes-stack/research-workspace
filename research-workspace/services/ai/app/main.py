@@ -21,6 +21,7 @@ from .routes_tasks import router as tasks_router
 from .routes_attachments import router as attachments_router
 from .routes_people import router as people_router
 from .routes_roles import router as roles_router
+from .evidence import router as evidence_router, sweep_stale
 
 
 @asynccontextmanager
@@ -29,6 +30,10 @@ async def lifespan(app: FastAPI):
     try:
         await asyncio.to_thread(get_embedder)
     except Exception:  # the endpoints report a clear 503 if it is truly unavailable
+        pass
+    try:  # research runs that were interrupted by a restart are marked failed, never left 'running'
+        await sweep_stale(await get_pool())
+    except Exception:
         pass
     yield
     await close_all()
@@ -53,6 +58,7 @@ app.include_router(pipeline_router)
 app.include_router(admin_router)
 app.include_router(collab_router)
 app.include_router(approvals_router)
+app.include_router(evidence_router)
 
 
 @app.get("/health")
