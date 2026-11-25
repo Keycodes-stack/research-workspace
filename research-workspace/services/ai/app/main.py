@@ -22,6 +22,7 @@ from .routes_attachments import router as attachments_router
 from .routes_people import router as people_router
 from .routes_roles import router as roles_router
 from .evidence import router as evidence_router, sweep_stale
+from .refine import router as refine_router
 
 
 @asynccontextmanager
@@ -59,6 +60,7 @@ app.include_router(admin_router)
 app.include_router(collab_router)
 app.include_router(approvals_router)
 app.include_router(evidence_router)
+app.include_router(refine_router)
 
 
 @app.get("/health")

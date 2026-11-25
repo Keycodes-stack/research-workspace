@@ -1,5 +1,5 @@
 import type {
-  AskResult, AuditEntry, EvidenceDetail, EvidenceFilter, EvidenceItem, EvidenceLibrary, EvidenceRun, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
+  AskResult, AuditEntry, EvidenceDetail, EvidenceFilter, EvidenceItem, GateReport, RefineChange, RefineProposal, EvidenceLibrary, EvidenceRun, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
 } from "./types";
 import type { IntakeResponse, ProjectDraft, ProjectInsights } from "./projectIntake";
 
@@ -234,6 +234,14 @@ export const api = {
   taskEvidence: (tid: string) => call<{ run: EvidenceRun | null; items: EvidenceItem[] }>(`/tasks/${tid}/evidence`),
   /** The references block as rich text, for the Workspace's "Insert references" action. */
   taskReferences: (tid: string) => call<{ heading: string; doc: unknown }>(`/tasks/${tid}/evidence/references`),
+  /** The gate report for a work package: research, evidence, sources, measurements and audit trail. */
+  taskReport: (tid: string) => call<GateReport>(`/tasks/${tid}/evidence/report`),
+  /** Refinement bar: suggests field changes for a request. Writes nothing. */
+  refinePropose: (pid: string, instruction: string) =>
+    call<RefineProposal>(`/projects/${pid}/refine/propose`, json({ instruction })),
+  /** Refinement bar: writes the changes the user confirmed. */
+  refineApply: (pid: string, changes: RefineChange[]) =>
+    call<{ applied: number }>(`/projects/${pid}/refine/apply`, json({ changes })),
   /** Run (or run again) the research for one work package. */
   runTaskEvidence: (tid: string) => call<{ task_id: string; status: string }>(`/tasks/${tid}/evidence/run`, { method: "POST" }),
   evidenceDetail: (tid: string, itemId: string) => call<EvidenceDetail>(`/tasks/${tid}/evidence/${itemId}`),

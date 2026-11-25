@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useProjects } from "@/components/v2/V2Frame";
 import { ModelLogo } from "@/components/v2/knowledge/ModelLogos";
+import { reportToMarkdown } from "@/lib/evidenceReport";
 import type { EvidenceDetail, EvidenceFilter, EvidenceItem, EvidenceLibrary as Library, EvidenceRun } from "@/lib/types";
 
 const ORIGIN_LABEL: Record<string, string> = {
@@ -63,6 +64,21 @@ export default function EvidenceLibrary({ id }: { id: string }) {
     return () => { live = false; };
   }, [open]);
 
+  /* The gate report for one work package, saved as a Markdown file. Built in the browser from the report data. */
+  const downloadReport = async (taskId: string, code?: string | null) => {
+    try {
+      const report = await api.taskReport(taskId);
+      const url = URL.createObjectURL(new Blob([reportToMarkdown(report)], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gate-report-${(code ?? "work-package").toLowerCase()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not build the gate report.");
+    }
+  };
+
   const runAgain = async (taskId: string) => {
     setBusy(taskId);
     try {
@@ -78,6 +94,7 @@ export default function EvidenceLibrary({ id }: { id: string }) {
   const summary = data?.summary;
   const models = data?.models ?? {};
   const runs = data?.runs ?? [];
+  const measurements = data?.measurements ?? [];
   const items = data?.items ?? [];
 
   return (
@@ -115,6 +132,16 @@ export default function EvidenceLibrary({ id }: { id: string }) {
                   </div>
                   <Chip cls={chip.cls}>{chip.label}</Chip>
                   <span className="text-xs text-body">{r.papers_read ?? 0} papers read</span>
+                  {r.sources && (
+                    <span className="text-xs text-body">{r.sources.papers} papers · {r.sources.uploads} uploads</span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void downloadReport(r.task_id, r.code)}
+                    className="rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-1.5 text-xs font-semibold text-[#344054] hover:border-[#D0D5DD]"
+                  >
+                    Gate report
+                  </button>
                   {!isActive(r) && (
                     <button
                       type="button"
@@ -161,6 +188,26 @@ export default function EvidenceLibrary({ id }: { id: string }) {
           </select>
         </div>
       </section>
+
+      {measurements.length > 0 && (
+        <section aria-label="Measurements" className="rounded-[20px] border border-[#EDEDF0] bg-[#FAFAFA] p-5">
+          <h3 className="text-sm font-semibold text-[#101D37]">Measurements with units ({measurements.length})</h3>
+          <table className="mt-3 w-full text-left text-sm">
+            <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]">
+              <th className="py-2 font-medium">Value</th><th className="py-2 font-medium">Work package</th>
+              <th className="py-2 font-medium">Evidence</th><th className="py-2 font-medium">Source</th>
+            </tr></thead>
+            <tbody>{measurements.map((m, i) => (
+              <tr key={`${m.evidence_id}-${m.text}-${i}`} className="border-b border-[#EDEDF0] last:border-0">
+                <td className="py-2 font-medium text-[#101D37]">{m.text}</td>
+                <td className="py-2 text-[#344054]">{m.work_package_code ?? "—"}</td>
+                <td className="py-2 text-[#344054]">{m.evidence_id ?? "—"}</td>
+                <td className="py-2 text-[#344054]">{m.source_title ?? "Untitled"}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </section>
+      )}
 
       <section aria-label="Evidence records" className="rounded-[20px] border border-[#EDEDF0] bg-[#FAFAFA] p-5">
         <h3 className="text-sm font-semibold text-[#101D37]">Evidence records</h3>

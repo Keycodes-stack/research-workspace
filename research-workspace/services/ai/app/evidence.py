@@ -20,6 +20,7 @@ from .config import get_settings
 from .deps import get_embedder, get_llms, get_tokenizer
 from .governance import Meter, check_budget, audit
 from .ingest import store
+from .measurements import measurements_for
 from .orchestration.engine import CrossCheckFailed, run_dual
 from .orchestration.prompts import fit_to_budget
 from .orchestration.schema import ContextChunk
@@ -414,6 +415,11 @@ async def project_evidence(q: str | None = None, work_package: str | None = None
         clauses.append(f"i.status = ${len(args)}")
     rows = await pool.fetch(f"{_ITEM_SQL} WHERE {' AND '.join(clauses)} ORDER BY i.seq", *args)
     everything = await pool.fetch("SELECT status FROM evidence_items WHERE project_id=$1", pid)
+    counts = await _source_counts(pool, pid)
+    runs_out = [_run_out(r) for r in runs]
+    for run in runs_out:
+        run["sources"] = counts.get(run["task_id"], {"papers": 0, "uploads": 0})
+    items_out = [_item_out(r) for r in rows]
     return {
         "summary": {
             "total_sources": sources,
@@ -421,9 +427,23 @@ async def project_evidence(q: str | None = None, work_package: str | None = None
             "need_verification": sum(r["status"] == "pending" for r in everything),
         },
         "models": configured_models(),
-        "runs": [_run_out(r) for r in runs],
-        "items": [_item_out(r) for r in rows],
+        "runs": runs_out,
+        "items": items_out,
+        "measurements": measurements_for(items_out),
     }
+
+
+async def _source_counts(pool, project_id: UUID) -> dict[str, dict[str, int]]:
+    """Per work package: the papers it selected, and the documents uploaded to it (the source register counts)."""
+    rows = await pool.fetch(
+        """SELECT ts.task_id, s.origin::text AS origin, count(*) AS n
+           FROM task_sources ts JOIN sources s ON s.id = ts.source_id JOIN tasks t ON t.id = ts.task_id
+           WHERE t.project_id=$1 GROUP BY ts.task_id, s.origin""", project_id)
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        counts = out.setdefault(str(r["task_id"]), {"papers": 0, "uploads": 0})
+        counts["uploads" if r["origin"] == "user_upload" else "papers"] += r["n"]
+    return out
 
 
 @router.get("/tasks/{task_id}/evidence")
@@ -454,6 +474,46 @@ async def task_references(task_id: UUID, user: UUID = Depends(require_user), poo
     rows = await pool.fetch(f"{_ITEM_SQL} WHERE i.task_id=$1 ORDER BY i.seq", task_id)
     return {"heading": REFERENCES_HEADING,
             "doc": {"type": "doc", "content": references_block([dict(r) for r in rows])}}
+
+
+@router.get("/tasks/{task_id}/evidence/report")
+async def task_report(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """The gate report for one work package: research outcome, evidence, sources, measurements and the audit trail.
+    Approval is shown as not recorded: this app has no approval step to report on."""
+    await task_for_user(pool, task_id, user, "viewer")
+    wp = await pool.fetchrow(
+        """SELECT w.code, w.title, w.stage, w.due_date FROM tasks t
+           LEFT JOIN work_packages w ON w.id = t.work_package_id WHERE t.id=$1""", task_id)
+    run = await pool.fetchrow(
+        """SELECT status, statement, papers_read, error, started_at, finished_at FROM evidence_runs WHERE task_id=$1""",
+        task_id)
+    items = [_item_out(r) for r in await pool.fetch(f"{_ITEM_SQL} WHERE i.task_id=$1 ORDER BY i.seq", task_id)]
+    sources = await pool.fetch(
+        """SELECT s.title, s.doi, s.origin::text AS origin, s.year, s.source_url
+           FROM task_sources ts JOIN sources s ON s.id = ts.source_id WHERE ts.task_id=$1 ORDER BY s.title""", task_id)
+    audit_rows = await pool.fetch(
+        """SELECT created_at, action, detail FROM audit_log
+           WHERE target_type='task' AND target_id=$1 AND action LIKE 'evidence.%' ORDER BY id""", str(task_id))
+
+    def iso(value):
+        return value.isoformat() if value else None
+
+    verified = sum(i["status"] == "verified" for i in items)
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "work_package": {"code": wp["code"] if wp else None, "title": wp["title"] if wp else None,
+                         "stage": wp["stage"] if wp else None, "due_date": iso(wp["due_date"]) if wp else None},
+        "research": {"status": run["status"] if run else "not_started", "statement": run["statement"] if run else None,
+                     "papers_read": run["papers_read"] if run else 0, "error": run["error"] if run else None,
+                     "started_at": iso(run["started_at"]) if run else None,
+                     "finished_at": iso(run["finished_at"]) if run else None},
+        "approval": {"status": "not_recorded", "note": "No approval has been recorded for this work package."},
+        "evidence": {"total": len(items), "verified": verified, "pending": len(items) - verified, "items": items},
+        "measurements": measurements_for(items),
+        "sources": [{"title": s["title"], "doi": s["doi"], "origin": s["origin"], "year": s["year"],
+                     "url": s["source_url"]} for s in sources],
+        "audit": [{"at": iso(a["created_at"]), "action": a["action"]} for a in audit_rows],
+    }
 
 
 @router.get("/tasks/{task_id}/evidence/{item_id}")

@@ -8,6 +8,7 @@ import { useProjects } from "@/components/v2/V2Frame";
 import AssessmentCard from "@/components/v2/projects/AssessmentCard";
 import AttachmentGallery from "@/components/v2/projects/AttachmentGallery";
 import NewWorkPackage from "@/components/v2/projects/NewWorkPackage";
+import RefinementBar from "@/components/v2/projects/RefinementBar";
 import { api } from "@/lib/api";
 import { asInsights } from "@/lib/projectIntake";
 import { workPackage, type WorkPackage } from "@/lib/workPackages";
@@ -49,6 +50,22 @@ export default function ProjectOverview({ id }: { id: string }) {
   const project: Project | undefined = projects.find((p) => p.id === id || p.slug === id);
   const [downloadError, setDownloadError] = useState("");
   const download = () => { setDownloadError(""); api.downloadProjectDocument(id).catch((e) => setDownloadError(e instanceof Error ? e.message : "Could not create the Word document.")); };
+
+  // Source register counts per work package (papers selected, documents uploaded), shown in the table below.
+  const [sourceCounts, setSourceCounts] = useState<Record<string, { papers: number; uploads: number }>>({});
+  useEffect(() => {
+    let live = true;
+    // The counts are extra: any failure leaves the table working, with dashes in the Sources column.
+    (async () => {
+      try {
+        const d = await api.projectEvidence(id);
+        if (live) setSourceCounts(Object.fromEntries(d.runs.filter((r) => r.sources).map((r) => [r.task_id, r.sources!])));
+      } catch {
+        if (live) setSourceCounts({});
+      }
+    })();
+    return () => { live = false; };
+  }, [id, tasks]);
 
   const reloadTasks = () => {
     api.tasks(id).then(setTasks).catch((e) => setTasksError(e instanceof Error ? e.message : "Could not load work packages."));
@@ -119,11 +136,12 @@ export default function ProjectOverview({ id }: { id: string }) {
               <NewWorkPackage projectId={id} onCreated={reloadTasks} />
             </div>
             {tasksError ? <p role="alert" className="mt-4 text-sm text-[#B42318]">Could not load work packages: {tasksError}</p> : packages.length === 0 ? <p className="mt-4 text-sm text-[#667085]">No work packages yet.</p> : <table className="mt-4 w-full text-left text-sm">
-              <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]"><th className="py-2 font-medium">Work Package</th><th className="py-2 font-medium">Responsible</th><th className="py-2 font-medium">Status</th></tr></thead>
+              <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]"><th className="py-2 font-medium">Work Package</th><th className="py-2 font-medium">Responsible</th><th className="py-2 font-medium">Status</th><th className="py-2 font-medium">Sources</th></tr></thead>
               <tbody>{packages.map((wp) => <tr key={wp.id} className="border-b border-[#EDEDF0] last:border-0">
                 <td className="py-3"><Link href={`${V2}/projects/${id}/workspace/${wp.id}`} className="font-medium text-[#101D37] hover:text-blue">{wp.title}</Link>{wp.output && <p className="mt-0.5 text-xs text-[#667085]">{project.name} · {wp.output}</p>}</td>
                 <td className="py-3"><p className="text-[#344054]">{wp.owner}</p>{wp.department && <p className="mt-0.5 text-xs text-[#667085]">{wp.department}</p>}</td>
                 <td className="py-3"><span className={`rounded-md px-2 py-1 text-xs font-medium ${STATUS_CLS[wp.status] ?? "bg-[#F2F4F7] text-[#475467]"}`}>{wp.status}</span></td>
+                <td className="py-3 text-xs text-[#344054]">{sourceCounts[wp.id] ? `${sourceCounts[wp.id].papers} papers · ${sourceCounts[wp.id].uploads} uploads` : "—"}</td>
               </tr>)}</tbody>
             </table>}
           </section>
@@ -134,6 +152,7 @@ export default function ProjectOverview({ id }: { id: string }) {
           </dl></section>
           {insights && <AssessmentCard insights={insights} />}
         </>}
+        <RefinementBar projectId={id} onApplied={reloadTasks} />
       </main>
     </div>
   </div>;

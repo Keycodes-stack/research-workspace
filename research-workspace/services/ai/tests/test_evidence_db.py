@@ -151,3 +151,33 @@ def test_research_inputs_load_against_the_real_schema(api, db_url):
     assert row["title"] == "Pilot study"
     assert row["stage"] == "Discovery"
     assert row["name"] == "Heat recovery"
+
+
+def test_gate_report_says_approval_is_not_recorded(api):
+    p = make_project(api, [{"title": "Reported"}])
+    (tid, _), = runs_by_task(api, p["id"]).items()
+    r = api.get(f"/tasks/{tid}/evidence/report", headers=hdr())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["work_package"]["code"] == "WP-1"
+    assert body["research"]["status"] == "queued"
+    assert body["approval"]["status"] == "not_recorded"
+    assert body["evidence"]["total"] == 0 and body["measurements"] == []
+
+
+def test_refinement_writes_nothing_until_it_is_applied(api):
+    from tests.fakes import ScriptedLLM
+    p = make_project(api, [])
+    proposal = '{"changes":[{"target":"project","field":"lead","value":"Sara Chen"}],"reply":"Sara Chen is the lead."}'
+    api.llms = (ScriptedLLM("A", proposal), ScriptedLLM("B", proposal))
+
+    r = api.post(f"/projects/{p['id']}/refine/propose", headers=hdr(), json={"instruction": "make Sara Chen the lead"})
+    assert r.status_code == 200
+    assert r.json()["changes"][0]["value"] == "Sara Chen"
+    listed = api.get("/projects", headers=hdr()).json()["projects"]
+    assert next(x for x in listed if x["id"] == p["id"])["meta"].get("lead") != "Sara Chen"
+
+    applied = api.post(f"/projects/{p['id']}/refine/apply", headers=hdr(), json={"changes": r.json()["changes"]})
+    assert applied.status_code == 200 and applied.json()["applied"] == 1
+    listed = api.get("/projects", headers=hdr()).json()["projects"]
+    assert next(x for x in listed if x["id"] == p["id"])["meta"]["lead"] == "Sara Chen"

@@ -176,6 +176,7 @@ export type EvidenceRun = {
   finished_at: string | null;
   code?: string | null;
   work_package_title?: string | null;
+  sources?: { papers: number; uploads: number };   // source register counts for this work package
 };
 
 export type EvidenceItem = {
@@ -199,12 +200,45 @@ export type EvidenceItem = {
   created_at: string | null;
 };
 
+export type EvidenceMeasurement = {
+  text: string;                   // as written in the source: "480 °C", "$142k"
+  value: number;
+  unit: string;
+  evidence_id: string | null;     // the evidence record it was found in
+  work_package_code: string | null;
+  source_title: string | null;
+};
+
 export type EvidenceLibrary = {
   summary: { total_sources: number; claims_supported: number; need_verification: number };
   models: EvidenceModels;
   runs: EvidenceRun[];
   items: EvidenceItem[];
+  measurements?: EvidenceMeasurement[];
 };
+
+/* Gate report for one work package (GET /tasks/{id}/evidence/report) */
+export type GateReport = {
+  generated_at: string;
+  work_package: { code: string | null; title: string | null; stage: string | null; due_date: string | null };
+  research: { status: EvidenceRunStatus; statement: string | null; papers_read: number; error: string | null;
+              started_at: string | null; finished_at: string | null };
+  approval: { status: "not_recorded"; note: string };
+  evidence: { total: number; verified: number; pending: number; items: EvidenceItem[] };
+  measurements: EvidenceMeasurement[];
+  sources: { title: string | null; doi: string | null; origin: string | null; year: number | null; url: string | null }[];
+  audit: { at: string | null; action: string }[];
+};
+
+/* Refinement bar: proposed field changes, shown before anything is written */
+export type RefineChange = {
+  target: "project" | "work_package";
+  work_package_id: string | null;
+  field: string;
+  value: string;
+  from?: string;
+};
+export type RefineProposal = { reply: string; changes: RefineChange[] };
 
 export type EvidenceFilter = { q?: string; work_package?: string; model?: string; status?: string };
 

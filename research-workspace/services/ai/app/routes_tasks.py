@@ -1134,6 +1134,9 @@ def render_content(r: DualResult) -> str:
     if r.reason == "below_similarity_threshold":
         return ("INSUFFICIENT_SOURCE_EVIDENCE: none of the selected sources is similar enough "
                 "to the question to answer it.")
+    if r.reason == "models_unavailable":
+        return ("The answer models did not respond, so no answer was produced this time. "
+                "Your question is kept: ask it again in a moment.")
     if r.kind == "insufficient_evidence":
         # Say why: the models' own reason (e.g. "the sources discuss management of Down syndrome but give no cure")
         # tells the reader what the papers do cover, instead of a bare refusal.
@@ -1354,13 +1357,12 @@ async def ask(
         try:
             result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg,  # the stronger model matches claims; it never decides who is right
                                     lenient=cfg.judge_lenient)
-        except CrossCheckFailed as e:
+        except Exception as e:
+            # A failed or slow model never turns into an error page: the question gets an answer that says so.
             await meter.record(pool, th["project_id"], user, "ask")
-            log.warning("ask cross-check unavailable: %s", e)
-            raise HTTPException(503, {
-                "error": "cross_check_unavailable", "detail": str(e),
-                "note": _cross_check_note(str(e)),
-            })
+            log.warning("ask models unavailable (%s): %s", e.__class__.__name__, str(e)[:300])
+            result = DualResult("insufficient_evidence", "models_unavailable")
+            progress(thread_id, "The answer models did not respond. The question is kept, so you can ask again.")
 
     t_models = time.monotonic()
     answered = any(c.verified for cs in result.checks.values() for c in cs)
