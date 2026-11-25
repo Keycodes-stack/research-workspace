@@ -212,19 +212,32 @@ async def complete_json_with_fallback(llms, system: str, prompt: str) -> dict:
     cfg = get_settings()
     failures: list[str] = []
 
+    async def ask_one(llm, rnd: int) -> dict:
+        started = time.monotonic()
+        name = getattr(llm, "name", "model")
+        try:
+            result = extract_json(await _complete_fast(llm, system, prompt, cfg.intake_model_timeout_s))
+        except (LLMError, ParseError) as exc:
+            failures.append(f"round {rnd + 1} {str(exc)[:160]}")
+            log.warning("intake timing: %s failed after %.1fs (round %d): %s", name,
+                        time.monotonic() - started, rnd + 1, str(exc)[:200])
+            raise
+        log.info("intake timing: %s answered in %.1fs (round %d)", name, time.monotonic() - started, rnd + 1)
+        return result
+
     async def attempts() -> dict:
+        # Both models are asked at the same time; the first valid reply wins and the other request is cancelled.
         for rnd in range(cfg.intake_rounds):
-            for llm in llms:
-                started = time.monotonic()
-                name = getattr(llm, "name", "model")
-                try:
-                    result = extract_json(await _complete_fast(llm, system, prompt, cfg.intake_model_timeout_s))
-                    log.info("intake timing: %s answered in %.1fs (round %d)", name, time.monotonic() - started, rnd + 1)
-                    return result
-                except (LLMError, ParseError) as exc:
-                    failures.append(f"round {rnd + 1} {str(exc)[:160]}")
-                    log.warning("intake timing: %s failed after %.1fs (round %d): %s", name,
-                                time.monotonic() - started, rnd + 1, str(exc)[:200])
+            tasks = [asyncio.ensure_future(ask_one(llm, rnd)) for llm in llms]
+            try:
+                for done in asyncio.as_completed(tasks):
+                    try:
+                        return await done
+                    except (LLMError, ParseError):
+                        continue
+            finally:
+                for t in tasks:
+                    t.cancel()
             if rnd + 1 < cfg.intake_rounds:
                 await asyncio.sleep(5 * (rnd + 1))
         raise LLMError("; ".join(failures) or "no model answered")

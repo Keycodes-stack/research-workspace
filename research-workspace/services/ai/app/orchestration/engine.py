@@ -370,9 +370,18 @@ async def run_dual(
         )
         return result("disagreement", reason, disagreement=_summary(reason, [conflict], pa, pb))
 
-    verdict, raws_j = await _call(
-        judge or llm_b, SYSTEM_JUDGE, build_judge_prompt(question, pa.claims, pb.claims), parse_verdict
-    )
+    # The judge is model A. If it cannot answer, model B judges instead, so one provider's outage never stops the check.
+    judge_prompt = build_judge_prompt(question, pa.claims, pb.claims)
+    judges = [judge or llm_b] + ([llm_b] if (judge or llm_b) is not llm_b else [])
+    verdict, raws_j, last_error = None, [], None
+    for j in judges:
+        try:
+            verdict, raws_j = await _call(j, SYSTEM_JUDGE, judge_prompt, parse_verdict)
+            break
+        except CrossCheckFailed as exc:
+            last_error = exc
+    if verdict is None:
+        raise last_error
     kind, reason, claims, disagreement, differences = decide_full(
         pa, pb, verdict, numeric_conflicts(pa.claims, pb.claims), {c.chunk_id: c.label for c in chunks}, lenient=lenient)
     return result(kind, reason, claims, disagreement, {"verdict": verdict.model_dump(), "raw": raws_j},
