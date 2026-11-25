@@ -204,6 +204,19 @@ def test_loose_matches_still_go_to_the_models(api, monkeypatch):
     assert msgs[-1]["top_similarity"] < 0.99
 
 
+def test_strict_gate_refuses_without_calling_any_model(api, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "similarity_threshold", 0.99)
+    monkeypatch.setattr(get_settings(), "similarity_gate", "strict")
+    api.llms = models()
+    th = _closed(api)
+    body = ask(api, th).json()
+    assert body["kind"] == "insufficient_evidence" and body["reason"] == "below_similarity_threshold"
+    assert body["gate"]["passed"] is False and body["gate"]["threshold"] == 0.99
+    assert "similar enough" in body["content"]
+    assert api.llms[0].calls == [] and api.llms[1].calls == []
+
+
 def test_gate_passes_when_similarity_is_high_enough(api, monkeypatch):
     from app.config import get_settings
     monkeypatch.setattr(get_settings(), "similarity_threshold", 0.01)
@@ -323,7 +336,7 @@ def _ask(api, th, **body):
 
 def _strict(monkeypatch):
     import app.routes_tasks as rt
-    strict = rt.get_settings().model_copy(update={"similarity_threshold": 1.01})
+    strict = rt.get_settings().model_copy(update={"similarity_threshold": 1.01, "similarity_gate": "strict"})
     monkeypatch.setattr(rt, "get_settings", lambda: strict)
 
 
@@ -370,13 +383,15 @@ def test_online_mode_searches_first_then_answers_followups_from_stored_papers(ap
     # uploads are never shown to the models in Online mode
     assert all("Confidential assay protocol" not in prompt for _, prompt in api.llms[0].calls)
 
-    # loosely matching stored papers are never refused: the models read them; nothing is searched, the answer is stored
+    # strict gate: stored papers that do not answer tell the user first; nothing is searched or saved ...
     _strict(monkeypatch)
     before = _user_msgs(db_url, th)
     r = _ask(api, th, scope="api")
-    assert r["kind"] != "not_in_saved_sources" and r["gate"]["below_threshold"] is True
-    assert r["gate"]["evidence_from"] == "saved_sources" and len(calls) == 2
-    assert _user_msgs(db_url, th) == before + 1
+    assert r["kind"] == "not_in_saved_sources" and r["saved_sources"] == 10
+    assert len(calls) == 2 and _user_msgs(db_url, th) == before
+    # ... then the client asks again online; the question is stored once
+    r = _ask(api, th, scope="api", evidence="online")
+    assert len(calls) == 3 and r["gate"]["evidence_from"] == "online_search" and _user_msgs(db_url, th) == before + 1
 
 
 def test_uploads_and_online_combines_uploads_and_papers_then_answers_followups_from_them(api, db_url, monkeypatch):
@@ -395,12 +410,13 @@ def test_uploads_and_online_combines_uploads_and_papers_then_answers_followups_f
     # follow-up: uploads + stored papers answer it, no search
     r = _ask(api, th, scope="both")
     assert len(calls) == 1 and r["gate"]["evidence_from"] == "saved_sources" and r["gate"]["saved_sources"] == 11
-    # loosely matching sources are never refused: the models read them; nothing new is searched
+    # strict gate: they do not answer, so the user is told first, then the confirmed search runs again
     _strict(monkeypatch)
     before = _user_msgs(db_url, th)
     r = _ask(api, th, scope="both")
-    assert r["kind"] != "not_in_saved_sources" and r["gate"]["below_threshold"] is True
-    assert len(calls) == 1 and _user_msgs(db_url, th) == before + 1
+    assert r["kind"] == "not_in_saved_sources" and len(calls) == 1 and _user_msgs(db_url, th) == before
+    r = _ask(api, th, scope="both", evidence="online")
+    assert len(calls) == 2 and r["gate"]["evidence_from"] == "online_search" and _user_msgs(db_url, th) == before + 1
 
 
 def test_uploads_and_online_without_uploads_goes_straight_online(api, monkeypatch):

@@ -6,6 +6,7 @@ import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import AskComposer from "@/components/v2/ask/AskComposer";
 import AnswerCard from "@/components/v2/ask/AnswerCard";
+import AnswerError from "@/components/v2/ask/AnswerError";
 import { useProjects } from "@/components/v2/V2Frame";
 import { api } from "@/lib/api";
 import type { AskResult, EvidenceScope, Message } from "@/lib/types";
@@ -21,7 +22,7 @@ type Turn =
   | { kind: "question"; id: string; text: string }
   | { kind: "answer"; id: string; result: AskResult }
   | { kind: "note"; id: string; text: string }          // an older answer saved without its details
-  | { kind: "error"; id: string; text: string };
+  | { kind: "error"; id: string; text: string; question: string };
 
 const toTurns = (messages: Message[]): Turn[] =>
   messages.map((m) =>
@@ -58,7 +59,7 @@ export default function ChatPage() {
       const result = await runAsk(chatId, question, s, setSteps);
       setTurns((t) => [...t, { kind: "answer", id: result.message_id ?? `a${key}`, result }]);
     } catch (e) {
-      setTurns((t) => [...t, { kind: "error", id: `e${key}`, text: e instanceof Error ? e.message : "The question could not be answered." }]);
+      setTurns((t) => [...t, { kind: "error", id: `e${key}`, question, text: e instanceof Error ? e.message : "The question could not be answered." }]);
     } finally {
       setSteps(null);
     }
@@ -110,7 +111,7 @@ export default function ChatPage() {
                 t.kind === "question" ? <Bubble key={t.id} mine>{t.text}</Bubble>
                   : t.kind === "answer" ? <AnswerCard key={t.id} result={t.result} />
                     : t.kind === "note" ? <Bubble key={t.id}>{t.text}</Bubble>
-                      : <p key={t.id} role="alert" className="self-start rounded-xl border border-[#FDA29B] bg-[#FEF3F2] px-2.5 py-2 text-sm text-[#B42318]">{t.text}</p>)}
+                      : <AnswerError key={t.id} message={t.text} onRetry={() => void ask(t.question, scope)} />)}
               {steps != null && (
                 <div className="self-start rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] px-2.5 py-2" role="status">
                   <p className="text-xs font-medium text-[#101D37]">Working on it…</p>

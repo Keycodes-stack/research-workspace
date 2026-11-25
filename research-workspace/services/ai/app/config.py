@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -76,6 +77,9 @@ class Settings(BaseSettings):
     # Cross-check: True shows findings from different papers (or differing only in conditions) as differences
     # with citations instead of a disagreement. False restores the strict behaviour.
     judge_lenient: bool = True
+    # Similarity gate for passages below similarity_threshold. "lenient" (default): the models still read them and
+    # the quote check removes what the sources do not support. "strict": refused before any model is called.
+    similarity_gate: Literal["strict", "lenient"] = "lenient"
     # Citation verifier (app/verification)
     fuzzy_threshold: float = 0.9
     min_quote_tokens: int = 3

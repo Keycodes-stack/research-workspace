@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import AskComposer from "@/components/v2/ask/AskComposer";
 import AnswerCard from "@/components/v2/ask/AnswerCard";
+import AnswerError from "@/components/v2/ask/AnswerError";
 import { useProjects } from "@/components/v2/V2Frame";
 import { api } from "@/lib/api";
 import type { AskResult, ChatRow, EvidenceScope, SourceRow } from "@/lib/types";
@@ -162,7 +163,7 @@ export default function HomePage() {
                   </div>
                   {t.result && <AnswerCard result={t.result} />}
                   {t.error && (
-                    <p role="alert" className="rounded-xl border border-[#FDA29B] bg-[#FEF3F2] px-2.5 py-2 text-sm text-[#B42318]">{t.error}</p>
+                    <AnswerError message={t.error} onRetry={() => void ask(t.question)} />
                   )}
                 </div>
               ))}

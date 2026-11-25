@@ -73,6 +73,7 @@ export interface AskResult {
   claims: FinalClaim[]; disagreement: Disagreement | null; top_similarity: number | null;
   verification: { status: string; verified: number; purged: number };
   gate: Gate; chunks: Record<string, ChunkMeta>;
+  related?: string[];   // closest passages when nothing could be verified (shown as unverified evidence)
   timings?: { total_s?: number };
   /** Each model's own claims and verdict. Absent on answers saved before the side-by-side view. */
   models?: Partial<Record<"model_a" | "model_b", ModelBreakdown>> | null;

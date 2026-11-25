@@ -1134,9 +1134,6 @@ def render_content(r: DualResult) -> str:
     if r.reason == "below_similarity_threshold":
         return ("INSUFFICIENT_SOURCE_EVIDENCE: none of the selected sources is similar enough "
                 "to the question to answer it.")
-    if r.reason == "models_unavailable":
-        return ("The answer models did not respond, so no answer was produced this time. "
-                "Your question is kept: ask it again in a moment.")
     if r.kind == "insufficient_evidence":
         # Say why: the models' own reason (e.g. "the sources discuss management of Down syndrome but give no cure")
         # tells the reader what the papers do cover, instead of a bare refusal.
@@ -1298,7 +1295,8 @@ async def ask(
     else:
         stored = await search_saved() if search_ids else []
     best = max((h.similarity for h in stored if h.intact()), default=None)
-    if plan.must_cover and best is None:
+    weak = best is not None and best < cfg.similarity_threshold and cfg.similarity_gate == "strict"
+    if plan.must_cover and (best is None or weak):
         # The saved sources gave no passage at all: search online; the client then asks again with evidence="online".
         # Passages that match only loosely still go to the models (see below).
         note = (f"No relevant information in this project's {len(search_ids)} saved sources. "
@@ -1330,9 +1328,13 @@ async def ask(
         else:
             reason = "no_source_chunks"
         result = DualResult("insufficient_evidence", reason)
+    elif top < cfg.similarity_threshold and cfg.similarity_gate == "strict":
+        # Strict gate: refuse without calling any model.
+        result = DualResult("insufficient_evidence", "below_similarity_threshold")
+        progress(thread_id, "No passage is close enough to the question, so no model was asked.")
     else:
         gate["passed"] = True
-        # Passages that match only loosely still go to the models; every quote is checked against the source text.
+        # Lenient gate: passages that match only loosely still go to the models; every quote is checked against the source.
         gate["below_threshold"] = top < cfg.similarity_threshold
         if gate["below_threshold"]:
             progress(thread_id, "The closest passages match the question only loosely. The models will read them, "
@@ -1357,15 +1359,19 @@ async def ask(
         try:
             result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg,  # the stronger model matches claims; it never decides who is right
                                     lenient=cfg.judge_lenient)
-        except Exception as e:
-            # A failed or slow model never turns into an error page: the question gets an answer that says so.
+        except CrossCheckFailed as e:
+            # The cross-check could not run: nothing is stored as an answer; the client shows the note and Try again.
             await meter.record(pool, th["project_id"], user, "ask")
-            log.warning("ask models unavailable (%s): %s", e.__class__.__name__, str(e)[:300])
-            result = DualResult("insufficient_evidence", "models_unavailable")
-            progress(thread_id, "The answer models did not respond. The question is kept, so you can ask again.")
+            log.warning("ask cross-check unavailable: %s", e)
+            raise HTTPException(503, {
+                "error": "cross_check_unavailable", "detail": str(e),
+                "note": _cross_check_note(str(e)),
+            })
 
     t_models = time.monotonic()
     answered = any(c.verified for cs in result.checks.values() for c in cs)
+    # No verified answer, but the sources were searched: the closest passages are still shown, as unverified evidence.
+    related = related_passages(hits) if hits and not answered else []
     if plan.must_cover and gate["passed"] and (result.kind == "insufficient_evidence" or not answered):
         # On topic but no answer in them (e.g. "storage temperature" asked of papers that never give one):
         # search online, as when nothing was close. The question is withdrawn so the online answer stores it once.
@@ -1418,7 +1424,8 @@ async def ask(
         "models": _model_breakdown(result),
         "statement": result.statement,
         "differences": result.differences,
-        "chunks": await _chunk_meta(pool, result),
+        "related": [str(c) for c in related],
+        "chunks": await _chunk_meta(pool, result, extra_ids=related),
         # Measured, so the UI shows real numbers: passages read and seconds spent per step.
         "timings": {"retrieve_s": round(t_retrieved - t0, 1), "models_s": round(t_models - t_retrieved, 1),
                     "total_s": round(time.monotonic() - t0, 1), "passages_used": len(hits),
@@ -1513,9 +1520,18 @@ def _model_breakdown(result: DualResult) -> dict:
     }
 
 
-async def _chunk_meta(pool, result: DualResult) -> dict:
-    """Source label, pages and passage text for every chunk the answer cites (for the UI)."""
-    rows = await store.fetch_chunks(pool, list(_chunk_ids(result)))
+def related_passages(hits, limit: int = 6) -> list[UUID]:
+    """The closest stored passages, one per source. Shown as evidence when no claim could be verified, so the
+    user always sees what the research found, labelled as unverified."""
+    best: dict = {}
+    for h in sorted(hits, key=lambda h: -h.similarity):
+        best.setdefault(h.source_id, h)
+    return [h.chunk_id for h in list(best.values())[:limit]]
+
+
+async def _chunk_meta(pool, result: DualResult, extra_ids=()) -> dict:
+    """Source label, pages and passage text for every chunk the answer cites (for the UI), plus extra_ids."""
+    rows = await store.fetch_chunks(pool, list(_chunk_ids(result) | set(extra_ids)))
     return {
         str(cid): {
             "label": (r["title"] or r["filename"] or "untitled") + (f", doi:{r['doi']}" if r["doi"] else ""),

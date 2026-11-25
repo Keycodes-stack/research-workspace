@@ -17,7 +17,8 @@ from .auth import require_user
 from .clients import get_pool
 from .deps import get_llms
 from .governance import Meter, audit
-from .orchestration.schema import extract_json
+from .orchestration.llm import LLMError
+from .orchestration.schema import ParseError, extract_json
 from .routes_tasks import _complete_fast
 
 router = APIRouter(tags=["refine"])
@@ -109,7 +110,7 @@ async def refine_propose(body: RefineProposeIn, project=Depends(project_with("re
     try:
         raw = await _complete_fast(llm, SYSTEM, prompt)
         result = extract_json(raw)
-    except Exception as exc:   # the assistant being down or answering badly must not break the bar
+    except (LLMError, ParseError) as exc:   # the assistant being down or answering badly must not break the bar
         log.warning("refine model unavailable (%s): %s", exc.__class__.__name__, str(exc)[:240])
         return {"reply": "The assistant did not respond, so nothing was changed. Try again, or edit the field directly.",
                 "changes": []}

@@ -203,7 +203,11 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
                       models=configured_models())
         await _add_references(pool, task_id, [])
         return
-    # Loose matches still go to the models; the quote check removes whatever the sources do not support.
+    if best < cfg.similarity_threshold and cfg.similarity_gate == "strict":
+        await _finish(pool, task_id, "complete", models=configured_models(),
+                      statement="No passage is close enough to the work package, so no model was asked.")
+        return
+    # Lenient gate: loose matches go to the models; the quote check removes whatever the sources do not support.
     ordered = reading_order(hits, cfg.evidence_passages_per_source)
     meta = await store.fetch_chunks(pool, [h.chunk_id for h in ordered])
     chunks = []
@@ -232,6 +236,10 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
     # 4. Evidence items: one per claim the judge kept, numbered per project.
     progress(task_id, "Saving the evidence...")
     items = await _build_items(pool, result)
+    # Nothing verified, but papers were read: keep the closest passages as pending items, so the library shows them.
+    fallback = not items and bool(ordered)
+    if fallback:
+        items = fallback_items(_fallback_passages(ordered, meta))
     async with pool.acquire() as conn, conn.transaction():
         await conn.execute("DELETE FROM evidence_items WHERE task_id=$1", task_id)
         run_id = await conn.fetchval("SELECT id FROM evidence_runs WHERE task_id=$1", task_id)
@@ -246,10 +254,43 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
                 item["found_by"], item["confirmed"], item["chunk_ids"], item["source_id"], item["source_title"],
                 item["doi"], item["source_url"], item["origin"], item["pub_year"], item["accessed_on"])
     models = configured_models()
-    await _finish(pool, task_id, "complete", statement=result.statement, papers_read=papers_read, models=models)
+    await _finish(pool, task_id, "complete", statement=result.statement or (UNVERIFIED_NOTE if fallback else None),
+                  papers_read=papers_read, models=models)
     await _add_references(pool, task_id, items)
     await audit(pool, project_id, requested_by or project_id, "evidence.run", "task", task_id,
                 items=len(items), papers_read=papers_read)
+
+
+UNVERIFIED_NOTE = "No claim could be verified against the sources. The closest passages are listed as unverified evidence."
+
+
+def _fallback_passages(hits, meta) -> list[dict[str, Any]]:
+    """The passages a run read, with the source fields the library shows."""
+    rows = []
+    for h in hits:
+        m = meta.get(h.chunk_id)
+        if m is None:
+            continue
+        rows.append({"chunk_id": h.chunk_id, "text": h.text, "source_id": m["source_id"],
+                     "source_title": m["title"] or m["filename"] or "untitled",
+                     "doi": m["doi"], "source_url": (f"https://doi.org/{m['doi']}" if m["doi"] else m["source_url"]),
+                     "origin": str(m["origin"]) if m["origin"] is not None else None})
+    return rows
+
+
+def fallback_items(passages: list[dict[str, Any]], limit: int = 6) -> list[dict[str, Any]]:
+    """The closest passages as PENDING evidence items: visible, labelled, never presented as verified claims."""
+    today = datetime.now(timezone.utc).date()
+    out = []
+    for p in passages[:limit]:
+        text = " ".join(str(p.get("text") or "").split())
+        out.append({
+            "claim_text": f"Closest passage, not verified: {text[:240]}", "quote": "", "status": "pending",
+            "found_by": [], "confirmed": False, "chunk_ids": [p["chunk_id"]], "source_id": p.get("source_id"),
+            "source_title": p.get("source_title"), "doi": p.get("doi"), "source_url": p.get("source_url"),
+            "origin": p.get("origin"), "pub_year": p.get("pub_year"), "accessed_on": today,
+        })
+    return out
 
 
 async def _build_items(pool, result) -> list[dict[str, Any]]:

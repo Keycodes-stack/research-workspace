@@ -17,7 +17,6 @@ export function explainReason(r: Pick<AskResult, "kind" | "reason" | "gate">): s
       const top = g?.top_similarity != null ? g.top_similarity.toFixed(2) : "n/a";
       return `No passage in the selected sources is similar enough to the question (best match ${top}, required ${g?.threshold.toFixed(2)}). The models were not asked.`;
     }
-    case "models_unavailable": return "The answer models did not respond, so no answer was produced this time. Your question is kept: ask it again in a moment.";
     case "integrity_failure": return "The stored source text no longer matches its checksum, so it was not used. Re-upload the affected documents.";
     case "no_source_chunks": return "The selected sources contain no searchable text.";
     default: return r.reason.replace(/_/g, " ");

@@ -43,7 +43,9 @@ function SourceList({ sources }: { sources: CitedSource[] }) {
             {s.passages.map((p) => (
               <details key={`${p.chunkId}-${p.quote}`} className="mt-1.5">
                 <summary className="cursor-pointer text-[11px] leading-[1.5] text-[#242C2C]">
-                  {p.pages ? `${p.pages}: ` : ""}“{p.quote}”
+                  {p.quote
+                    ? <>{p.pages ? `${p.pages}: ` : ""}“{p.quote}”</>
+                    : <>{p.pages ? `${p.pages}: ` : ""}{p.text.slice(0, 200)}{p.text.length > 200 ? "…" : ""}</>}
                 </summary>
                 <p className="mt-1 rounded-lg border border-[#EDEDF0] bg-white p-2 text-[11px] leading-[1.6] whitespace-pre-wrap text-[#344054]">
                   <Marked text={p.text} quote={p.quote} />
@@ -60,6 +62,12 @@ function SourceList({ sources }: { sources: CitedSource[] }) {
 export default function AnswerCard({ result }: { result: AskResult }) {
   const k = KIND[result.kind];
   const { refs, sources } = citeSources(result.chunks ?? {});
+  // Closest passages when no claim could be verified: numbered on their own, always labelled unverified by the UI.
+  const relatedSources = (() => {
+    const cited = citeSources(result.chunks ?? {});
+    for (const id of result.related ?? []) cited.refs([id], "");
+    return cited.sources();
+  })();
 
   // Numbers are given in reading order, so the findings are built before the source list.
   const claims = (result.claims ?? []).map((c) => ({ ...c, ns: refs(c.chunk_ids, c.quote) }));
@@ -138,6 +146,14 @@ export default function AnswerCard({ result }: { result: AskResult }) {
         <p className="text-sm leading-[1.5] whitespace-pre-wrap text-[#101D37]">
           {plainContent(result.content) || explainReason(result)}
         </p>
+      )}
+
+      {relatedSources.length > 0 && (
+        <section aria-label="Closest evidence found" className="flex flex-col gap-2 rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] p-3">
+          <h3 className="text-sm font-semibold text-[#101D37]">Closest evidence found</h3>
+          <p className="text-xs leading-[1.5] text-body">Not a verified answer. These are the closest passages in your sources.</p>
+          <SourceList sources={relatedSources} />
+        </section>
       )}
 
       {diffs.length > 0 && (

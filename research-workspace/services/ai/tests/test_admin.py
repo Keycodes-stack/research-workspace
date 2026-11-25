@@ -141,3 +141,13 @@ def test_loose_match_answers_are_metered(api, monkeypatch):
     api.llms = models()
     assert ask(api, th).status_code == 200
     assert api.get(f"/projects/{p}/usage", headers=hdr(USER_A)).json()["month_calls"] > 0
+
+
+def test_strict_gate_refusal_costs_nothing(api, monkeypatch):
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "similarity_threshold", 0.99)
+    monkeypatch.setattr(get_settings(), "similarity_gate", "strict")
+    p, s1, s2, t, th = setup(api, mode="open_discovery")
+    api.llms = models()
+    assert ask(api, th).status_code == 200
+    assert api.get(f"/projects/{p}/usage", headers=hdr(USER_A)).json()["month_calls"] == 0

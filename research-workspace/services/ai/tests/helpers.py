@@ -1,11 +1,27 @@
 import asyncio
+import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import asyncpg
 import pymupdf
 from pgvector.asyncpg import register_vector
 
 MIGRATIONS = Path(__file__).resolve().parents[3] / "db" / "migrations"
+
+
+def guard_test_url(url: str) -> None:
+    """The tests DROP the public schema. Refuse anything that is not clearly a throwaway database: a local host, or a
+    database whose name says it is for tests. A live database (for example a hosted one with a normal name) is refused
+    unless ALLOW_REMOTE_TEST_DB=1 is set on purpose."""
+    parsed = urlparse(url)
+    local = parsed.hostname in ("localhost", "127.0.0.1")
+    named_for_tests = "test" in (parsed.path or "/").lower()
+    if local or named_for_tests or os.environ.get("ALLOW_REMOTE_TEST_DB") == "1":
+        return
+    raise RuntimeError(
+        f"Refusing to reset {parsed.hostname}/{(parsed.path or '').lstrip('/')}: it is not local and its name does not "
+        "say it is a test database. Use a local or *test* database, or set ALLOW_REMOTE_TEST_DB=1 on purpose.")
 
 
 def make_pdf(pages: list[list[str]], *, user_pw: str | None = None) -> bytes:
@@ -35,6 +51,7 @@ async def make_pool(url: str) -> asyncpg.Pool:
 
 def reset_schema(url: str) -> None:
     """Fresh public schema with all migrations applied."""
+    guard_test_url(url)
 
     async def go():
         conn = await asyncpg.connect(url)
@@ -50,6 +67,7 @@ def reset_schema(url: str) -> None:
 
 def run_db(url: str, fn):
     """Run `async fn(pool)` on a fresh pool with empty tables."""
+    guard_test_url(url)
 
     async def go():
         pool = await make_pool(url)
