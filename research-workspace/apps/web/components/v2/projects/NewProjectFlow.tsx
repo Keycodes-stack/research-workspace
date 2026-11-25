@@ -337,11 +337,21 @@ export default function NewProjectFlow() {
     e.target.value = "";
   };
 
-  // Which card (0 Charter, 1 Organization, 2 Delivery) holds the field a missing-item message is about.
-  const sectionOfProblem = (text: string) => /workstream|gate|risk/i.test(text) ? 2 : /team|department|lead/i.test(text) ? 1 : 0;
-  const jumpTo = (i: number) => {
-    setSection(i);
-    document.getElementById(`project-section-${i}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Each missing-item message points at the field it is about (matched by the field's label on the page).
+  // Order matters: "team" comes before "department" (one message says both), "gate" before "workstream".
+  const FIELD_LABELS: [RegExp, string][] = [
+    [/project type/i, "Project type"], [/project name/i, "Project name"], [/objective/i, "Business objective"],
+    [/target completion/i, "Target completion"], [/team/i, "Participating teams"], [/department/i, "Participating departments"],
+    [/gate|approver/i, "Decision gates"], [/workstream/i, "Workstreams"], [/risk/i, "Risk register"], [/lead/i, "Accountable project lead"],
+  ];
+  const jumpTo = (message: string) => {
+    const label = FIELD_LABELS.find(([re]) => re.test(message))?.[1];
+    if (!label) return;
+    const target = Array.from(document.querySelectorAll<HTMLElement>("h2, h3, label, span, p"))
+      .find((el) => el.offsetParent !== null && el.textContent?.trim().startsWith(label));
+    if (!target) return;
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    target.closest<HTMLElement>("div")?.querySelector<HTMLElement>("input, select, textarea, button")?.focus({ preventScroll: true });
   };
   const missing: string[] = [];
   for (const problem of charterOverLimits(draft)) missing.push(`Shorten ${problem}.`);
@@ -529,7 +539,7 @@ export default function NewProjectFlow() {
       <div className="grid gap-4 md:grid-cols-2"><div><h3 className="mb-2 font-semibold">Organization</h3><p className="text-sm text-[#667085]">Sponsor: {draft.sponsor || "Not assigned"}<br />Lead: {draft.lead || "Not assigned"}<br />Departments: {draft.departments.join(", ") || "Not selected"}</p></div><div><h3 className="mb-2 font-semibold">Delivery</h3><p className="text-sm text-[#667085]">{draft.workstreams.length} workstreams · {draft.gates.length} gates · {draft.risks.length} risks</p><ul className="mt-1 list-inside list-disc text-sm text-[#667085]">{draft.workstreams.map((w, i) => <li key={i}>{w.name || "Unnamed workstream"} → {w.output || "Output to define"}</li>)}</ul></div></div>
       <div className="rounded-[14px] border border-[#EDEDF0] bg-white p-4"><h3 className="mb-1 font-semibold text-[#101D37]">Access permissions preview</h3><p className="mb-3 text-xs text-[#667085]">Generated from the charter above. People named in the charter receive access when they have an account.</p><dl className="grid gap-3 sm:grid-cols-2">{([["Visibility", draft.visibility], ["Information classification", draft.classification], ["Who can edit the plan", draft.plan_editing], ["Who manages access", draft.manage_access], ["Research approvals", draft.approvals], ["Change authorization", draft.change_authority], ["External partners can submit evidence", draft.external_partner_ingestion ? "Yes" : "No"], ["Sponsor and project lead", [draft.sponsor, draft.lead].filter(Boolean).join(" and ") || "Not assigned"]] as [string, string][]).map(([label, value]) => <div key={label}><dt className="text-xs font-medium text-[#667085]">{label}</dt><dd className="text-sm text-[#344054]">{value || "Not set"}</dd></div>)}</dl></div>
       <div className="rounded-[12px] border border-[#F79009]/30 bg-[#FFFAEB] p-3 text-sm text-[#7A2E0E]">AI suggestions are drafts. Confirm names, dates, owners, budgets, risks, approvals, and regulatory controls before creating the project.</div>
-      {!ready && <div className="rounded-[12px] border border-[#FDA29B] bg-[#FEF3F2] p-3 text-sm text-[#B42318]"><p className="font-semibold">Complete these items before creating:</p><ul className="mt-1 list-inside list-disc">{missing.map((item) => <li key={item}><button type="button" onClick={() => jumpTo(sectionOfProblem(item))} className="text-left font-medium underline underline-offset-2">{item}</button></li>)}</ul></div>}
+      {!ready && <div className="rounded-[12px] border border-[#FDA29B] bg-[#FEF3F2] p-3 text-sm text-[#B42318]"><p className="font-semibold">Complete these items before creating:</p><ul className="mt-1 list-inside list-disc">{missing.map((item) => <li key={item}><button type="button" onClick={() => jumpTo(item)} className="text-left font-medium underline underline-offset-2">{item}</button></li>)}</ul></div>}
     </div>;
   };
 
