@@ -42,7 +42,7 @@ const asText = (v: unknown) => (Array.isArray(v) ? v.join(", ") : String(v ?? ""
 const labelOf = (key: string) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 /** Red asterisk after the label of a field the project cannot be created without. */
-const RequiredMark = () => <span aria-hidden="true" className="ml-0.5 text-[#B42318]">*</span>;
+const RequiredMark = () => <span aria-hidden="true" className="ml-1 text-lg font-bold leading-none text-[#B42318]">*</span>;
 /** Fields that are always required (conditional ones are decided where they are shown). */
 const REQUIRED_FIELDS = new Set<keyof ProjectDraft>(["name", "type", "objective", "lead", "departments"]);
 
