@@ -109,7 +109,7 @@ export default function ChatPage() {
               )}
               {turns.map((t) =>
                 t.kind === "question" ? <Bubble key={t.id} mine>{t.text}</Bubble>
-                  : t.kind === "answer" ? <AnswerCard key={t.id} result={t.result} />
+                  : t.kind === "answer" ? <AnswerCard key={t.id} result={t.result} projectId={projectId} />
                     : t.kind === "note" ? <Bubble key={t.id}>{t.text}</Bubble>
                       : <AnswerError key={t.id} message={t.text} onRetry={() => void ask(t.question, scope)} />)}
               {steps != null && (

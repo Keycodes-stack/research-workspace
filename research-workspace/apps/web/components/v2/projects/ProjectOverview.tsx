@@ -67,6 +67,11 @@ export default function ProjectOverview({ id }: { id: string }) {
     return () => { live = false; };
   }, [id, tasks]);
 
+  const [onlyWp, setOnlyWp] = useState<string | null>(null);
+  useEffect(() => {
+    setOnlyWp(new URLSearchParams(window.location.search).get("work_package"));
+  }, []);
+
   const reloadTasks = () => {
     api.tasks(id).then(setTasks).catch((e) => setTasksError(e instanceof Error ? e.message : "Could not load work packages."));
   };
@@ -87,7 +92,8 @@ export default function ProjectOverview({ id }: { id: string }) {
   const gates = (Array.isArray(charter.gates) ? charter.gates as Gate[] : [])
     .filter((g) => g.name?.trim())
     .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
-  const packages: WorkPackage[] = tasks.map(workPackage);
+  // Opened from one work package's sidebar (?work_package=<task id>): only that package is shown.
+  const packages: WorkPackage[] = tasks.filter((t) => !onlyWp || t.id === onlyWp).map(workPackage);
   const priority = priorityChip(text("priority"));
 
   return <div className="flex min-w-0 flex-1">

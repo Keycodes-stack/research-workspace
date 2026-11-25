@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { explainReason } from "@/lib/explain";
 import type { AskResult, Position } from "@/lib/types";
 import { answerFacts, citeSources, plainContent, type CitedSource } from "@/lib/v2/answer";
+import { V2 } from "@/lib/v2/routes";
 import JudgeStatement, { statusChip } from "./JudgeStatement";
 import ModelsPanel from "./ModelsPanel";
 
@@ -59,7 +61,7 @@ function SourceList({ sources }: { sources: CitedSource[] }) {
   );
 }
 
-export default function AnswerCard({ result }: { result: AskResult }) {
+export default function AnswerCard({ result, projectId }: { result: AskResult; projectId?: string }) {
   const k = KIND[result.kind];
   const { refs, sources } = citeSources(result.chunks ?? {});
   // Closest passages when no claim could be verified: numbered on their own, always labelled unverified by the UI.
@@ -184,6 +186,14 @@ export default function AnswerCard({ result }: { result: AskResult }) {
         ? <JudgeStatement text={result.statement} chip={chip} />
         : result.kind === "consensus" && <p className="text-xs text-body">{explainReason(result)}</p>}
       <SourceList sources={sources()} />
+      {result.work_package && projectId && (
+        <p className="text-xs text-body">
+          Saved as <span className="font-semibold text-[#101D37]">{result.work_package.code}</span> in this project ·{" "}
+          <Link href={`${V2}/projects/${projectId}/workspace/${result.work_package.task_id}`} className="font-medium text-blue">
+            Open work package
+          </Link>
+        </p>
+      )}
     </article>
   );
 }

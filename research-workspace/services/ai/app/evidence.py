@@ -241,24 +241,43 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
     if fallback:
         items = fallback_items(_fallback_passages(ordered, meta))
     async with pool.acquire() as conn, conn.transaction():
-        await conn.execute("DELETE FROM evidence_items WHERE task_id=$1", task_id)
         run_id = await conn.fetchval("SELECT id FROM evidence_runs WHERE task_id=$1", task_id)
-        offset = await conn.fetchval(
-            "SELECT COALESCE(max(seq), 0) FROM evidence_items WHERE project_id=$1 AND task_id<>$2", project_id, task_id)
-        for seq, item in enumerate(items, start=offset + 1):
+        await store_items(conn, run_id, task_id, project_id, items)
+        # The papers the run read belong to this work package, so the source register counts them.
+        for source_id in read_source_ids(ordered, meta):
             await conn.execute(
-                """INSERT INTO evidence_items (run_id, task_id, project_id, seq, claim_text, quote, status, found_by,
-                       confirmed, chunk_ids, source_id, source_title, doi, source_url, origin, pub_year, accessed_on)
-                   VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)""",
-                run_id, task_id, project_id, seq, item["claim_text"], item["quote"], item["status"],
-                item["found_by"], item["confirmed"], item["chunk_ids"], item["source_id"], item["source_title"],
-                item["doi"], item["source_url"], item["origin"], item["pub_year"], item["accessed_on"])
+                "INSERT INTO task_sources (task_id, source_id) VALUES ($1, $2) ON CONFLICT DO NOTHING", task_id, source_id)
     models = configured_models()
     await _finish(pool, task_id, "complete", statement=result.statement or (UNVERIFIED_NOTE if fallback else None),
                   papers_read=papers_read, models=models)
     await _add_references(pool, task_id, items)
     await audit(pool, project_id, requested_by or project_id, "evidence.run", "task", task_id,
                 items=len(items), papers_read=papers_read)
+
+
+def read_source_ids(hits, meta) -> list[UUID]:
+    """The distinct sources (papers, documents) the run read, in reading order."""
+    out: list[UUID] = []
+    for h in hits:
+        m = meta.get(h.chunk_id)
+        if m is not None and m["source_id"] not in out:
+            out.append(m["source_id"])
+    return out
+
+
+async def store_items(conn, run_id, task_id: UUID, project_id: UUID, items: list[dict[str, Any]]) -> None:
+    """Replace a work package's evidence items. Numbers continue the project's sequence ("Evidence 007")."""
+    await conn.execute("DELETE FROM evidence_items WHERE task_id=$1", task_id)
+    offset = await conn.fetchval(
+        "SELECT COALESCE(max(seq), 0) FROM evidence_items WHERE project_id=$1 AND task_id<>$2", project_id, task_id)
+    for seq, item in enumerate(items, start=offset + 1):
+        await conn.execute(
+            """INSERT INTO evidence_items (run_id, task_id, project_id, seq, claim_text, quote, status, found_by,
+                   confirmed, chunk_ids, source_id, source_title, doi, source_url, origin, pub_year, accessed_on)
+               VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)""",
+            run_id, task_id, project_id, seq, item["claim_text"], item["quote"], item["status"],
+            item["found_by"], item["confirmed"], item["chunk_ids"], item["source_id"], item["source_title"],
+            item["doi"], item["source_url"], item["origin"], item["pub_year"], item["accessed_on"])
 
 
 UNVERIFIED_NOTE = "No claim could be verified against the sources. The closest passages are listed as unverified evidence."
@@ -330,11 +349,64 @@ def _text_block(kind: str, text: str, level: int | None = None) -> dict[str, Any
     return node
 
 
+FINDINGS_HEADING = "Findings"
+
+
+def _source_key(item: dict[str, Any]) -> str:
+    """One key per source: findings and the reference list number sources with the same key, so [n] always matches."""
+    return str(item.get("source_id") or item.get("source_title"))
+
+
+def findings_block(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The Findings section: each claim with the [n] number of its source (numbered in order of first appearance)."""
+    heading = _text_block("heading", FINDINGS_HEADING, level=2)
+    if not items:
+        return [heading, _text_block("paragraph", "No findings yet.")]
+    numbers: dict[str, int] = {}
+    for it in items:
+        numbers.setdefault(_source_key(it), len(numbers) + 1)
+    entries = []
+    for it in items:
+        note = "" if it.get("confirmed") else " (one model only)"
+        text = f"{it['claim_text']} [{numbers[_source_key(it)]}]{note}"
+        entries.append({"type": "listItem", "content": [_text_block("paragraph", text)]})
+    return [heading, {"type": "bulletList", "content": entries}]
+
+
+def _section_end(content: list[dict[str, Any]], start: int) -> int:
+    """Index just after the section that starts at `start` (a heading): up to the next heading of the same or higher level."""
+    level = (content[start].get("attrs") or {}).get("level", 2)
+    for j in range(start + 1, len(content)):
+        node = content[j]
+        if node.get("type") == "heading" and (node.get("attrs") or {}).get("level", 2) <= level:
+            return j
+    return len(content)
+
+
+def sync_sections(content: list[dict[str, Any]], findings: list[dict[str, Any]],
+                  references: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace only the generated sections (Findings, Evidence references). Everything the user wrote is kept, in
+    place. Findings go where the old Findings section was (or before the references, when there is none); the
+    references go at the end."""
+    out = list(content)
+    at = None
+    for title in (REFERENCES_HEADING, FINDINGS_HEADING):     # references first, so the findings position is read after it
+        start = next((k for k, n in enumerate(out)
+                      if n.get("type") == "heading" and _plain(n).strip() == title), None)
+        if start is None:
+            continue
+        if title == FINDINGS_HEADING:
+            at = start
+        del out[start:_section_end(out, start)]
+    pos = len(out) if at is None else at
+    return out[:pos] + findings + out[pos:] + references
+
+
 def references_block(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """A heading and one numbered entry per source the evidence cites."""
     seen: dict[str, dict[str, Any]] = {}
     for it in items:
-        key = str(it.get("source_id") or it.get("source_title"))
+        key = _source_key(it)
         entry = seen.setdefault(key, {"title": it.get("source_title") or "untitled", "year": it.get("pub_year"),
                                       "ref": it.get("doi") or it.get("source_url") or "",
                                       "accessed": it.get("accessed_on"), "both": False})
@@ -370,9 +442,7 @@ async def _add_references(pool, task_id: UUID, items: list[dict[str, Any]]) -> N
         except (ValueError, AttributeError):
             await pool.execute("UPDATE evidence_runs SET references_added=false WHERE task_id=$1", task_id)
             return
-        cut = next((i for i, n in enumerate(content)
-                    if n.get("type") == "heading" and _plain(n) == REFERENCES_HEADING), len(content))
-        new_body = json.dumps({"type": "doc", "content": content[:cut] + block})
+        new_body = json.dumps({"type": "doc", "content": sync_sections(content, findings_block(items), block)})
         try:
             validate_rich_document(new_body)
         except ValueError:

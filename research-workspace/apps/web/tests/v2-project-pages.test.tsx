@@ -61,7 +61,7 @@ describe("project pages from the design (sample content, real projects)", () => 
   it("opens Evidence and the Workspace document from the work packages", async () => {
     render(<V2Frame>{await EvidencePage(params("p1"))}</V2Frame>);
     expect(await screen.findByRole("heading", { name: "Evidence Library" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/projects/p1/evidence");
+    expect(screen.getByRole("link", { name: "Evidence" })).toHaveAttribute("href", "/projects/p1/evidence?work_package=t1");
     expect(screen.getByRole("link", { name: "Workspace" })).toHaveAttribute("href", "/projects/p1/workspace/t1");
   });
 

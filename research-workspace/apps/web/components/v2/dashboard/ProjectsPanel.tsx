@@ -149,11 +149,11 @@ export default function ProjectsPanel({
                     {WP_SECTIONS.map((sec, j) => {
                       const href =
                         sec.key === "overview"
-                          ? `${V2}/projects/${activeId}`
+                          ? `${V2}/projects/${activeId}?work_package=${wp.id}`
                           : sec.key === "workspace" && wp.id
                               ? `${V2}/projects/${activeId}/workspace/${wp.id}`
                               : sec.key === "evidence"
-                            ? `${V2}/projects/${activeId}/${sec.key}`
+                            ? `${V2}/projects/${activeId}/${sec.key}?work_package=${wp.id}`
                             : "#";
                       const on = sec.key === activeSection;
                       return (

@@ -111,6 +111,41 @@ export default function HomePage() {
     setError(null);
   };
 
+  // The conversation lives inside the question box: the box grows with the answers, and the thread scrolls.
+  const thread = turns.length > 0 ? (
+    <section aria-label="This conversation" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
+        <span className="text-body">{chatId ? "Follow-up questions continue this chat." : "Starting a new chat."}</span>
+        <div className="flex items-center gap-4">
+          {/* shown only once the answer is saved: opening earlier shows an empty chat */}
+          {chatId && projectId && !busy && (
+            <Link href={`${V2}/projects/${projectId}/ask/${chatId}`} className="font-medium text-blue">Open chat</Link>
+          )}
+          <button type="button" onClick={newQuestion} className="font-medium text-[#101D37]">New question</button>
+        </div>
+      </div>
+      <div ref={conversation} className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto rounded-[16px] border border-[#EDEDF0] bg-[#FAFAFA] p-4">
+        {turns.map((t) => (
+          <div key={t.id} className="flex flex-col gap-3">
+            <div className="max-w-[85%] self-end rounded-xl border border-[#EDEDF0] bg-white px-2.5 py-2 text-sm leading-[1.5] text-[#101D37] break-words sm:max-w-[70%]">
+              {t.question}
+            </div>
+            {t.result && <AnswerCard result={t.result} projectId={projectId ?? undefined} />}
+            {t.error && <AnswerError message={t.error} onRetry={() => void ask(t.question)} />}
+          </div>
+        ))}
+        {steps != null && (
+          <div className="self-start rounded-xl border border-[#EDEDF0] bg-white px-2.5 py-2" role="status">
+            <p className="text-xs font-medium text-[#101D37]">Working on it…</p>
+            <ol className="mt-1 flex flex-col gap-0.5 text-xs leading-[1.5] text-body">
+              {(steps.length ? steps : ["Starting…"]).map((s, i) => <li key={i}>{s}</li>)}
+            </ol>
+          </div>
+        )}
+      </div>
+    </section>
+  ) : undefined;
+
   return (
     <div className="flex min-w-0 flex-1 flex-col">
       <TopBar current="Home" />
@@ -131,6 +166,7 @@ export default function HomePage() {
               onScopeChange={(s) => { setScope(s); prefs.setScope(s); }}
               busy={busy || loading}
               onAsk={(q) => void ask(q)}
+              thread={thread}
             />
             {(error || loadError) && (
               <p role="alert" className="text-sm text-[#B42318]">{error ?? `Could not load projects: ${loadError}`}</p>
@@ -142,42 +178,6 @@ export default function HomePage() {
               </p>
             )}
           </div>
-
-          {turns.length > 0 && (
-            <section aria-label="This conversation" className="flex flex-col gap-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
-                <span className="text-body">{chatId ? "Follow-up questions continue this chat." : "Starting a new chat."}</span>
-                <div className="flex items-center gap-4">
-                  {/* shown only once the answer is saved: opening earlier shows an empty chat */}
-                  {chatId && projectId && !busy && (
-                    <Link href={`${V2}/projects/${projectId}/ask/${chatId}`} className="font-medium text-blue">Open chat</Link>
-                  )}
-                  <button type="button" onClick={newQuestion} className="font-medium text-[#101D37]">New question</button>
-                </div>
-              </div>
-              <div ref={conversation} className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto rounded-[16px] border border-[#EDEDF0] bg-white p-4">
-              {turns.map((t) => (
-                <div key={t.id} className="flex flex-col gap-3">
-                  <div className="max-w-[85%] self-end rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] px-2.5 py-2 text-sm leading-[1.5] text-[#101D37] break-words sm:max-w-[70%]">
-                    {t.question}
-                  </div>
-                  {t.result && <AnswerCard result={t.result} />}
-                  {t.error && (
-                    <AnswerError message={t.error} onRetry={() => void ask(t.question)} />
-                  )}
-                </div>
-              ))}
-              {steps != null && (
-                <div className="self-start rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] px-2.5 py-2" role="status">
-                  <p className="text-xs font-medium text-[#101D37]">Working on it…</p>
-                  <ol className="mt-1 flex flex-col gap-0.5 text-xs leading-[1.5] text-body">
-                    {(steps.length ? steps : ["Starting…"]).map((s, i) => <li key={i}>{s}</li>)}
-                  </ol>
-                </div>
-              )}
-              </div>
-            </section>
-          )}
 
           <div className="grid grid-cols-1 gap-[30px] md:grid-cols-3">
             <section className="flex flex-col gap-4">

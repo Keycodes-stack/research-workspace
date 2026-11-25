@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Folder, Send03 } from "@untitledui/icons";
 import { Add01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import Icon, { huge, untitled } from "@/components/v2/dashboard/Icon";
@@ -20,7 +20,10 @@ type Upload = { key: string; name: string; state: "uploading" | "added" | "faile
 export default function AskComposer({
   projectId, projects, onProjectChange, onCreateProject, scope, onScopeChange, busy, onAsk,
   placeholder = "Describe a question, research objective or decision to make..",
+  thread,
 }: {
+  /** the conversation, shown inside this box above the input (Home): the box grows and its thread scrolls */
+  thread?: ReactNode;
   projectId: string | null;
   /** when given, a project picker is shown (Home); the chat page passes none */
   projects?: PickerOption<string>[];
@@ -67,6 +70,7 @@ export default function AskComposer({
       }}
       className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 shadow-[0_14px_30px_0_rgba(40,92,224,0.10)]"
     >
+      {thread}
       {projects && onProjectChange && (
         <div className="flex flex-wrap items-center gap-2">
           <Picker

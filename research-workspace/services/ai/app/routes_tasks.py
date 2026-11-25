@@ -756,6 +756,27 @@ class WorkPackageIn(BaseModel):
     due: str | None = Field(default=None, max_length=10)
 
 
+async def insert_work_package(conn, project_id: UUID, title: str, brief: str | None, lead: str | None, due,
+                              doc_body: str) -> tuple[UUID, UUID, str]:
+    """One work package with its code (WP-n), its research task and its starting document. Returns (task id,
+    work package id, code). The caller runs it inside a transaction; it starts no research by itself."""
+    last = await conn.fetchval(
+        "SELECT COALESCE(max(CAST(substring(code FROM 'WP-([0-9]+)$') AS INT)), 0) FROM work_packages WHERE project_id=$1",
+        project_id)
+    code = f"WP-{last + 1}"
+    wp_id = await conn.fetchval(
+        """INSERT INTO work_packages (project_id, code, title, lead_id, due_date)
+           VALUES ($1, $2, $3, $4, $5) RETURNING id""",
+        project_id, code, title, lead or None, due)
+    tid = await conn.fetchval(
+        "INSERT INTO tasks (project_id, title, brief, work_package_id) VALUES ($1, $2, $3, $4) RETURNING id",
+        project_id, title, brief, wp_id)
+    await conn.execute(
+        "INSERT INTO work_package_documents (task_id, body, format, version, ai_drafted) VALUES ($1, $2, 'tiptap', 0, false)",
+        tid, doc_body)
+    return tid, wp_id, code
+
+
 @router.post("/projects/{project_id}/work-packages", status_code=201)
 async def create_work_package(body: WorkPackageIn, project=Depends(project_with("researcher")),
                               user: UUID = Depends(require_user), pool=Depends(get_pool)):
@@ -764,20 +785,9 @@ async def create_work_package(body: WorkPackageIn, project=Depends(project_with(
     pid = project["id"]
     title = body.title.strip()
     async with pool.acquire() as conn, conn.transaction():
-        last = await conn.fetchval(
-            "SELECT COALESCE(max(CAST(substring(code FROM 'WP-([0-9]+)$') AS INT)), 0) FROM work_packages WHERE project_id=$1",
-            pid)
-        code = f"WP-{last + 1}"
-        wp_id = await conn.fetchval(
-            """INSERT INTO work_packages (project_id, code, title, lead_id, due_date)
-               VALUES ($1, $2, $3, $4, $5) RETURNING id""",
-            pid, code, title, body.lead or None, _date_or_none(body.due, "Work package due date"))
-        tid = await conn.fetchval(
-            "INSERT INTO tasks (project_id, title, brief, work_package_id) VALUES ($1, $2, $3, $4) RETURNING id",
-            pid, title, body.brief, wp_id)
-        await conn.execute(
-            "INSERT INTO work_package_documents (task_id, body, format, version, ai_drafted) VALUES ($1, $2, 'tiptap', 0, false)",
-            tid, work_package_template(body.brief, title))
+        tid, wp_id, code = await insert_work_package(
+            conn, pid, title, body.brief, body.lead, _date_or_none(body.due, "Work package due date"),
+            work_package_template(body.brief, title))
     await audit(pool, pid, user, "task.create", "task", tid, title=title, source="work_package")
     try:
         from .evidence import schedule_runs
@@ -1437,6 +1447,15 @@ async def ask(
     await pool.execute(
         "UPDATE messages SET model_b_raw = model_b_raw || jsonb_build_object('final', $2::jsonb) WHERE id=$1",
         mid, json.dumps(payload))
+    # The chat is saved to the project as its work package (evidence + overview). Never blocks or breaks the answer.
+    if cfg.chat_work_packages:
+        from .chat_work_package import save_chat_work_package
+        wp = await save_chat_work_package(pool, th["project_id"], thread_id, user)
+        if wp:
+            payload["work_package"] = wp
+            await pool.execute(
+                "UPDATE messages SET model_b_raw = jsonb_set(model_b_raw, '{final,work_package}', $2::jsonb) WHERE id=$1",
+                mid, json.dumps(wp))
     return payload
 
 

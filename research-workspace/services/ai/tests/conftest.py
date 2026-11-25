@@ -9,6 +9,9 @@ os.environ.setdefault("ROLE_RESTRICTIONS", "true")
 # The app loads its embedding model at startup, and the tests replace it with the hash embedder anyway. Without this a
 # test run downloads a large model, and a slow download stalls the app's shutdown (the test client waits for it).
 os.environ.setdefault("EMBEDDER", "hash")
+# Chat work packages add rows to the project. Off in the test defaults so the existing ask tests keep their counts;
+# the chat work package tests switch it on.
+os.environ.setdefault("CHAT_WORK_PACKAGES", "false")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

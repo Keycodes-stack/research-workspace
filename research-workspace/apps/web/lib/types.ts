@@ -74,6 +74,7 @@ export interface AskResult {
   verification: { status: string; verified: number; purged: number };
   gate: Gate; chunks: Record<string, ChunkMeta>;
   related?: string[];   // closest passages when nothing could be verified (shown as unverified evidence)
+  work_package?: { task_id: string; code: string; title: string };   // the chat's work package in this project
   timings?: { total_s?: number };
   /** Each model's own claims and verdict. Absent on answers saved before the side-by-side view. */
   models?: Partial<Record<"model_a" | "model_b", ModelBreakdown>> | null;

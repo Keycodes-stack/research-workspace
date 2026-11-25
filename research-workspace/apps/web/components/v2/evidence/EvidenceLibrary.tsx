@@ -33,6 +33,11 @@ export default function EvidenceLibrary({ id }: { id: string }) {
   const { projects } = useProjects();
   const project = projects.find((p) => p.id === id || p.slug === id);
   const [filter, setFilter] = useState<EvidenceFilter>({});
+  const [onlyWp, setOnlyWp] = useState<string | null>(null);
+  useEffect(() => {
+    // read the sidebar's choice after mount (keeps server and browser markup the same)
+    setOnlyWp(new URLSearchParams(window.location.search).get("work_package"));
+  }, []);
   const [data, setData] = useState<Library | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<EvidenceItem | null>(null);
@@ -91,11 +96,19 @@ export default function EvidenceLibrary({ id }: { id: string }) {
     }
   };
 
-  const summary = data?.summary;
+  // Opened from one work package's sidebar (?work_package=<task id>): everything below is that package only.
+  const scoped = onlyWp !== null;
+  const allRuns = data?.runs ?? [];
+  const runs = scoped ? allRuns.filter((r) => r.task_id === onlyWp) : allRuns;
+  const selectedCode = scoped ? allRuns.find((r) => r.task_id === onlyWp)?.code : undefined;
   const models = data?.models ?? {};
-  const runs = data?.runs ?? [];
-  const measurements = data?.measurements ?? [];
-  const items = data?.items ?? [];
+  const measurements = (data?.measurements ?? []).filter((m) => !scoped || m.work_package_code === selectedCode);
+  const items = scoped ? (data?.items ?? []).filter((it) => it.task_id === onlyWp) : (data?.items ?? []);
+  const summary = scoped
+    ? { total_sources: runs[0]?.sources ? runs[0].sources.papers + runs[0].sources.uploads : 0,
+        claims_supported: items.filter((it) => it.status === "verified").length,
+        need_verification: items.filter((it) => it.status === "pending").length }
+    : data?.summary;
 
   return (
     <div className="flex flex-col gap-5">

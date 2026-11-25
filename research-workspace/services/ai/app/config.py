@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     # Similarity gate for passages below similarity_threshold. "lenient" (default): the models still read them and
     # the quote check removes what the sources do not support. "strict": refused before any model is called.
     similarity_gate: Literal["strict", "lenient"] = "lenient"
+    # Every completed chat is saved to the project as a work package (its evidence and overview). Off switch for ops.
+    chat_work_packages: bool = True
     # Citation verifier (app/verification)
     fuzzy_threshold: float = 0.9
     min_quote_tokens: int = 3
