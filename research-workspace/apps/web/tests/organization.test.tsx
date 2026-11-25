@@ -10,7 +10,7 @@ vi.mock("@/lib/api", () => ({
   },
   ApiError: class extends Error { status = 0; },
 }));
-vi.mock("next/navigation", () => ({ usePathname: () => "/organization" }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(),  usePathname: () => "/organization" }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));

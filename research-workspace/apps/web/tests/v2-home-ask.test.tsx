@@ -30,7 +30,7 @@ const answer: AskResult = {
 };
 
 const push = vi.fn();
-vi.mock("next/navigation", () => ({
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), 
   usePathname: () => "/home",
   useRouter: () => ({ push }),
   useParams: () => ({ id: "p1", chatId: "chat1" }),

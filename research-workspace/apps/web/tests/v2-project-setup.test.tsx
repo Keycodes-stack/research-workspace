@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }) }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(),  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }) }));
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -14,7 +14,7 @@ vi.mock("@/lib/api", () => ({
   },
   getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
-vi.mock("next/navigation", () => ({ usePathname: () => "/projects/new", useRouter: () => ({ push: () => {} }) }));
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(),  usePathname: () => "/projects/new", useRouter: () => ({ push: () => {} }) }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));

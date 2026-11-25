@@ -6,7 +6,7 @@ const projects = [
   { id: "p2", name: "Battery recycling", mode: "closed_repository", meta: {} },
 ];
 
-vi.mock("next/navigation", () => ({
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(), 
   usePathname: () => "/projects/p1/departments",
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
   useParams: () => ({ id: "p1" }),

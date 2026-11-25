@@ -46,6 +46,43 @@ const RequiredMark = () => <span aria-hidden="true" className="ml-0.5 text-[#B42
 /** Fields that are always required (conditional ones are decided where they are shown). */
 const REQUIRED_FIELDS = new Set<keyof ProjectDraft>(["name", "type", "objective", "lead", "departments"]);
 
+/* A dropdown of known choices. With onAddOption it also lets the user add a new one (a text box opens after
+   "+ Add new…"), and the new choice is passed up so it joins the known list. Without it, the dropdown is fixed. */
+function ChoiceInput({ label, value, options, onChange, onAddOption, addLabel = "+ Add new…" }: {
+  label: string; value: string; options: string[]; onChange: (v: string) => void;
+  onAddOption?: (v: string) => void; addLabel?: string;
+}) {
+  const NEW = "__new__";
+  const [adding, setAdding] = useState(false);
+  const [typed, setTyped] = useState("");
+  const shown = value && !options.includes(value) ? [...options, value] : options;
+  const commit = () => {
+    const name = typed.trim();
+    if (name && onAddOption) { onAddOption(name); onChange(name); }
+    setAdding(false); setTyped("");
+  };
+  return (
+    <div className="flex flex-col gap-2">
+      <select aria-label={label} className={inputClass} value={adding ? NEW : value}
+        onChange={(e) => {
+          if (e.target.value === NEW) { setAdding(true); setTyped(""); }
+          else { setAdding(false); onChange(e.target.value); }
+        }}>
+        <option value="">Choose…</option>
+        {shown.map((o) => <option key={o} value={o}>{o}</option>)}
+        {onAddOption && <option value={NEW}>{addLabel}</option>}
+      </select>
+      {adding && (
+        <input aria-label={`${label}: new name`} autoFocus className={inputClass} value={typed}
+          placeholder="Type the new name, then press Enter"
+          onChange={(e) => setTyped(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); commit(); } }}
+          onBlur={commit} />
+      )}
+    </div>
+  );
+}
+
 function Field({ label, suggested, required, children }: { label: string; suggested?: boolean; required?: boolean; children: ReactNode }) {
   return <div className="block"><span className={labelClass}>{label}{required && <RequiredMark />}{suggested && <span className="ml-2 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI Suggested · review</span>}</span>{children}</div>;
 }
@@ -457,10 +494,17 @@ export default function NewProjectFlow() {
     if (section === 2) return <div className="flex flex-col gap-6">
       <div className="grid gap-4 md:grid-cols-2"><Field label="Research mode" suggested><p aria-label="Research mode" className={`${inputClass} bg-[#FAFAFA] text-[#475467]`}>{draft.mode === "closed_repository" ? "Closed repository · uses approved sources only" : "Open discovery · searches scholarly sources"}</p></Field>{selectField("approach", "Delivery approach", SPEC_OPTIONS.approach)}{selectField("reporting", "Reporting frequency", SPEC_OPTIONS.reporting)}{field("budget", "Indicative budget", false, "number")}{selectField("currency", "Currency", SPEC_OPTIONS.currency)}{field("resources", "Resource assumptions", true)}</div>
       <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Workstreams</h3><p className="text-xs text-[#667085]">Each workstream becomes a draft research package.</p></div><button type="button" onClick={() => update("workstreams", [...draft.workstreams, { name: "", department: "", team: "", output: "", owner: "", reviewer: "", start: "", due: "", dependencies: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add workstream</button></div>
-        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer", "start", "due", "dependencies"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k === "start" ? "start date" : k === "due" ? "due date" : k}`; return <Field key={k} label={label} suggested={aiTagged("workstreams") && !isBlankValue(w[k])} required={k === "name" || k === "owner" || k === "output"}><input aria-label={label} type={k === "start" || k === "due" ? "date" : "text"} maxLength={ROW_LIMITS.workstreams.fields[k]} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>; })}<RemoveButton onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} /></div>)}
+        {draft.workstreams.map((w, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "department", "team", "output", "owner", "reviewer", "start", "due", "dependencies"] as const).map((k) => { const label = k === "name" ? `Workstream ${i + 1}` : `Workstream ${i + 1} ${k === "start" ? "start date" : k === "due" ? "due date" : k}`; return <Field key={k} label={label} suggested={aiTagged("workstreams") && !isBlankValue(w[k])} required={k === "name" || k === "owner" || k === "output"}>{k === "team"
+  ? <ChoiceInput label={label} value={w[k]} options={draft.teams} addLabel="+ Add new team…"
+      onChange={(v) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, team: v } : x))}
+      onAddOption={(name) => update("teams", [...draft.teams.filter((t) => t !== name), name])} />
+  : <input aria-label={label} type={k === "start" || k === "due" ? "date" : "text"} maxLength={ROW_LIMITS.workstreams.fields[k]} className={inputClass} value={w[k]} onChange={(e) => update("workstreams", draft.workstreams.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} />}</Field>; })}<RemoveButton onClick={() => update("workstreams", draft.workstreams.filter((_, j) => j !== i))} /></div>)}
       </div>
       <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Decision gates</h3><p className="text-xs text-[#667085]">Add the checks needed before decisions.</p></div><button type="button" onClick={() => update("gates", [...draft.gates, { name: "", owner: "", approver: "", date: "", criteria: "", workstreams: [] }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add gate</button></div>{draft.gates.map((g, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["name", "owner", "approver", "date", "criteria"] as const).map((k) => <Field key={k} label={`Gate ${i + 1} · ${k}`} suggested={aiTagged("gates") && !isBlankValue(g[k])} required={k === "name" || k === "criteria" || k === "approver"}><input aria-label={`Gate ${i + 1} ${k}`} type={k === "date" ? "date" : "text"} maxLength={ROW_LIMITS.gates.fields[k]} className={inputClass} value={g[k]} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<fieldset className="flex flex-col gap-2"><legend className="text-sm font-medium">Workstreams covered<RequiredMark /></legend>{draft.workstreams.map((w, wi) => <label key={wi} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={g.workstreams.includes(w.name)} onChange={(e) => update("gates", draft.gates.map((x, j) => j === i ? { ...x, workstreams: e.target.checked ? [...x.workstreams, w.name] : x.workstreams.filter((n) => n !== w.name) } : x))} />{w.name || `Workstream ${wi + 1}`}</label>)}</fieldset><RemoveButton onClick={() => update("gates", draft.gates.filter((_, j) => j !== i))} /></div>)}</div>
-      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={aiTagged("risks") && !isBlankValue(r[k])}><input aria-label={`Risk ${i + 1} ${k}`} maxLength={ROW_LIMITS.risks.fields[k]} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} /></Field>)}<RemoveButton onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} /></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
+      <div className="rounded-[14px] border border-[#EDEDF0] p-4"><div className="mb-3 flex items-center justify-between"><div><h3 className="font-semibold text-[#101D37]">Risk register</h3><p className="text-xs text-[#667085]">Risks remain proposals until your team reviews them.</p></div><button type="button" onClick={() => update("risks", [...draft.risks, { risk: "", owner: "", severity: "Medium", response: "" }])} className="rounded-lg border border-[#EDEDF0] px-3 py-2 text-sm font-medium">+ Add risk</button></div>{draft.risks.map((r, i) => <div key={i} className="mb-4 grid gap-3 border-t border-[#EDEDF0] pt-4 md:grid-cols-2">{(["risk", "owner", "severity", "response"] as const).map((k) => <Field key={k} label={`Risk ${i + 1} · ${k}`} suggested={aiTagged("risks") && !isBlankValue(r[k])}>{k === "severity"
+  ? <ChoiceInput label={`Risk ${i + 1} ${k}`} value={r[k]} options={["Low", "Medium", "High", "Critical"]}
+      onChange={(v) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, severity: v } : x))} />
+  : <input aria-label={`Risk ${i + 1} ${k}`} maxLength={ROW_LIMITS.risks.fields[k]} className={inputClass} value={r[k]} onChange={(e) => update("risks", draft.risks.map((x, j) => j === i ? { ...x, [k]: e.target.value } : x))} />}</Field>)}<RemoveButton onClick={() => update("risks", draft.risks.filter((_, j) => j !== i))} /></div>)}{field("no_risk_reason", "If none, explain why this project has no significant risks", true)}</div>
     </div>;
     if (section === 3) return <div className="grid gap-4 md:grid-cols-2">
       {selectField("governance", "Governance level", SPEC_OPTIONS.governance)}{field("controls_mode", "Controls profile")}
