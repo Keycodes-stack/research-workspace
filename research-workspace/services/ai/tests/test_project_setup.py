@@ -50,29 +50,37 @@ def test_non_finite_feasibility_falls_back_to_neutral():
 
 # ---- routes (need the Postgres fixture; CI runs them) -----------------------
 
-def test_intake_asks_first_then_finishes_without_more_questions(api):
+def test_intake_asks_the_four_fixed_questions_first_then_the_ai_fills_the_charter(api):
     api.llms = pair(json.dumps({
         "patch": {"type": "Engineering & Validation", "objective": "Recover waste heat"},
         "reply": "Two quick questions.",
-        "questions": [{"header": "Scope", "question": "Which sites?", "multi_select": False,
+        "questions": [{"header": "Sites", "question": "Which sites?", "multi_select": False,
                        "options": [{"label": "Plant A"}, {"label": "Plant B"}]}],
         "done": False,
     }))
+    # 1. the four fixed questions, with no AI drafting yet
     first = api.post("/projects/intake", headers=hdr(), json={"mode": "start", "text": "Recover heat", "draft": {}})
     assert first.status_code == 200
     body = first.json()
-    assert body["patch"]["objective"] == "Recover waste heat"
-    # the assistant's own question is asked, along with the core questions (timeline, budget, outcome)
-    questions = [q["question"] for q in body["questions"]]
-    assert "Which sites?" in questions and body["done"] is False
-    assert {q["header"] for q in body["questions"]} - {"Timeline", "Budget", "Expected outcome", "Scope", "Deliverable"} == set()
+    assert body["patch"] == {} and body["done"] is False
+    assert [q["header"] for q in body["questions"]] == ["Timeline", "Budget", "Scope", "Deliverable"]
 
-    api.llms = pair(json.dumps({"patch": {"lead": "Sara"}, "reply": "Done.", "questions": [{"question": "more?"}], "done": False}))
+    # 2. after the answers the AI fills the charter; a value it cannot fill is asked about, not guessed
     second = api.post("/projects/intake", headers=hdr(), json={
-        "mode": "answer", "text": "Plant A", "draft": body["patch"], "asked": ["Which sites?"], "round": 1,
+        "mode": "answer", "text": "Q: Timeline\nA: Jan 2027 - Jun 2027", "draft": body["patch"],
+        "asked": [q["question"] for q in body["questions"]], "round": 1,
     })
     assert second.status_code == 200
-    assert second.json()["questions"] == [] and second.json()["done"] is True
+    assert second.json()["patch"]["objective"] == "Recover waste heat"
+    assert "Which sites?" in [q["question"] for q in second.json()["questions"]] and second.json()["done"] is False
+
+    # 3. nothing left to ask: the charter is done
+    api.llms = pair(json.dumps({"patch": {"lead": "Sara"}, "reply": "Done.", "questions": [], "done": True}))
+    third = api.post("/projects/intake", headers=hdr(), json={
+        "mode": "answer", "text": "Plant A", "draft": second.json()["patch"], "asked": ["Which sites?"], "round": 2,
+    })
+    assert third.status_code == 200
+    assert third.json()["questions"] == [] and third.json()["done"] is True
 
 
 def test_insights_endpoint_returns_the_cleaned_assessment(api):

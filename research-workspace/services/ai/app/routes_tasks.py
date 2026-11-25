@@ -289,7 +289,10 @@ non-empty draft value unless the user clearly asks to change it. Use ISO YYYY-MM
 exact date. Keep all proposals editable and label them in reply as suggestions, not decisions."""
 
 
-PROJECT_INTAKE_GUIDE = """Fields:
+PROJECT_INTAKE_GUIDE = """Rules: fill every required field the answers support (team, numbers, dates, owners, budget, risks, approvers).
+If a required value cannot be taken from the answers or the description, leave it empty and ask one short question for it.
+Never guess a name, number, date or team.
+Fields:
 name, type, objective, background, governance, priority, programme, business_unit, start, target, in_scope, out_scope,
 deliverable, measures, assumptions, dependencies, sponsor, lead, departments, team_mode, teams, stakeholders,
 decision_notes, external_orgs, workstreams[{name,department,team,output,owner,reviewer,start,due,dependencies}],
@@ -304,27 +307,23 @@ def _core_questions(draft: dict[str, Any]) -> list[dict[str, Any]]:
     """Questions that are always asked when the answer is missing: the timeline, the budget and the expected outcome."""
     year = date.today().year + 1
     questions = []
-    if not draft.get("start") or not draft.get("target"):
-        questions.append({"header": "Timeline", "question": "When would you like the project to start and finish?", "multi_select": False, "options": [
-            {"label": f"Jan – Jun {year} (6 months)", "description": f"Start Jan {year}, finish Jun {year}"},
-            {"label": f"Jul – Dec {year} (6 months)", "description": f"Start Jul {year}, finish Dec {year}"},
-            {"label": f"Jan – Dec {year} (12 months)", "description": f"Full year {year}"}]})
-    if not draft.get("budget"):
-        questions.append({"header": "Budget", "question": "What budget range are you planning for?", "multi_select": False, "options": [
-            {"label": "Under $50k", "description": "Small-scale study"},
-            {"label": "$50k – $100k", "description": "Focused study and pilot"},
-            {"label": "$100k – $200k", "description": "Broader feasibility work"},
-            {"label": "Over $200k", "description": "Comprehensive programme"}]})
-    if not draft.get("in_scope"):
-        questions.append({"header": "Scope", "question": "What should this project cover?", "multi_select": False, "options": [
-            {"label": "Technical feasibility only", "description": "Test whether the approach works"},
-            {"label": "Feasibility plus a pilot", "description": "Test it and trial it in one site"},
-            {"label": "Full programme", "description": "Feasibility, pilot and commercial rollout"}]})
-    if not draft.get("deliverable"):
-        questions.append({"header": "Deliverable", "question": "What deliverable do you expect at the end of the project?", "multi_select": False, "options": [
-            {"label": "A feasibility report with a recommendation", "description": "Go or no-go with evidence"},
-            {"label": "A pilot with measured results", "description": "Tested on site before scaling"},
-            {"label": "An operating procedure or standard", "description": "Ready for day-to-day use"}]})
+    questions.append({"header": "Timeline", "question": "When would you like the project to start and finish?", "multi_select": False, "options": [
+        {"label": f"Jan – Jun {year} (6 months)", "description": f"Start Jan {year}, finish Jun {year}"},
+        {"label": f"Jul – Dec {year} (6 months)", "description": f"Start Jul {year}, finish Dec {year}"},
+        {"label": f"Jan – Dec {year} (12 months)", "description": f"Full year {year}"}]})
+    questions.append({"header": "Budget", "question": "What budget range are you planning for?", "multi_select": False, "options": [
+        {"label": "Under $50k", "description": "Small-scale study"},
+        {"label": "$50k – $100k", "description": "Focused study and pilot"},
+        {"label": "$100k – $200k", "description": "Broader feasibility work"},
+        {"label": "Over $200k", "description": "Comprehensive programme"}]})
+    questions.append({"header": "Scope", "question": "What should this project cover?", "multi_select": False, "options": [
+        {"label": "Technical feasibility only", "description": "Test whether the approach works"},
+        {"label": "Feasibility plus a pilot", "description": "Test it and trial it in one site"},
+        {"label": "Full programme", "description": "Feasibility, pilot and commercial rollout"}]})
+    questions.append({"header": "Deliverable", "question": "What deliverable do you expect at the end of the project?", "multi_select": False, "options": [
+        {"label": "A feasibility report with a recommendation", "description": "Go or no-go with evidence"},
+        {"label": "A pilot with measured results", "description": "Tested on site before scaling"},
+        {"label": "An operating procedure or standard", "description": "Ready for day-to-day use"}]})
     return questions
 
 
@@ -372,6 +371,10 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
         "For mode start, extract confirmed facts and ask up to three high-value clarifying questions if needed. For mode answer, apply the answers and finish the draft. For mode finish, draft useful fields from context without questions. For mode edit, apply only the requested changes and do not ask questions.",
         'Return JSON: {"patch":{},"reply":"short response","questions":[],"done":false}',
     ]))
+    if body.mode == "start" and body.round == 0:
+        # The four fixed questions come first, before any AI drafting. The AI fills the charter after the answers.
+        return {"patch": {}, "reply": "Answer these four questions, then I will fill in the charter.",
+                "questions": _core_questions({}), "done": False, "model": llm.name}
     try:
         result = await complete_json_with_fallback(meter.llms, PROJECT_INTAKE_SYSTEM, prompt)
     except (LLMError, ParseError) as exc:
@@ -400,9 +403,10 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
         if any("scope" in (q["header"] + " " + q["question"]).lower() for q in extra):
             core = [q for q in core if q["header"] != "Scope"]
         questions = (core + extra)[:6]
-    if body.mode in ("finish", "edit") or body.round >= 1:
+    if body.mode in ("finish", "edit"):
         questions = []
-    done = body.mode in ("finish", "edit") or body.round >= 1 or result.get("done") is True or not questions
+    # After the answers the AI may still ask about a required value it could not fill (never guessing it).
+    done = body.mode in ("finish", "edit") or result.get("done") is True or not questions
     await audit(pool, None, user, "project.intake", "project", None, mode=body.mode, model=llm.name,
                 model_calls=meter.calls, chars_in=meter.chars_in, chars_out=meter.chars_out, outcome="complete")
     return {
