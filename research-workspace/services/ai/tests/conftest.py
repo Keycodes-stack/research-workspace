@@ -6,6 +6,9 @@ os.environ.setdefault("INTERNAL_TOKEN", "test-internal-token")
 os.environ.setdefault("SIMILARITY_THRESHOLD", "0.0")
 # The permission tests check the role rules, so the suite runs with them on (the app ships with them off).
 os.environ.setdefault("ROLE_RESTRICTIONS", "true")
+# The app loads its embedding model at startup, and the tests replace it with the hash embedder anyway. Without this a
+# test run downloads a large model, and a slow download stalls the app's shutdown (the test client waits for it).
+os.environ.setdefault("EMBEDDER", "hash")
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

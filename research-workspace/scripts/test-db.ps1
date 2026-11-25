@@ -23,7 +23,7 @@ $image = 'pgvector/pgvector:pg16'
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker is not installed or not on PATH. Install Docker Desktop, start it, and run this again.'
 }
-docker info *> $null
+cmd /c "docker info >nul 2>&1"
 if ($LASTEXITCODE -ne 0) { throw 'Docker is installed but not running. Start Docker Desktop and try again.' }
 
 $exists = (docker ps -a --filter "name=^$name$" --format '{{.Names}}') -eq $name
@@ -38,7 +38,7 @@ switch ($Action) {
                 -p 5432:5432 $image | Out-Null
         }
         for ($i = 0; $i -lt 30; $i++) {
-            docker exec $name pg_isready -U rw *> $null
+            cmd /c "docker exec $name pg_isready -U rw >nul 2>&1"
             if ($LASTEXITCODE -eq 0) { break }
             Start-Sleep -Seconds 1
         }
