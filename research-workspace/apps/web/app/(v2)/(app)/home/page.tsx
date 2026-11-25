@@ -39,6 +39,13 @@ export default function HomePage() {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [sideError, setSideError] = useState<string | null>(null);
   const nextId = useRef(0);
+  const conversation = useRef<HTMLDivElement>(null);
+
+  // the chat box grows as turns arrive and keeps the newest message in view
+  useEffect(() => {
+    const el = conversation.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns, steps]);
 
   useEffect(() => setScope(prefs.scope()), []);
   useEffect(() => {
@@ -140,12 +147,14 @@ export default function HomePage() {
               <div className="flex flex-wrap items-center justify-between gap-3 text-sm">
                 <span className="text-body">{chatId ? "Follow-up questions continue this chat." : "Starting a new chat."}</span>
                 <div className="flex items-center gap-4">
-                  {chatId && projectId && (
+                  {/* shown only once the answer is saved: opening earlier shows an empty chat */}
+                  {chatId && projectId && !busy && (
                     <Link href={`${V2}/projects/${projectId}/ask/${chatId}`} className="font-medium text-blue">Open chat</Link>
                   )}
                   <button type="button" onClick={newQuestion} className="font-medium text-[#101D37]">New question</button>
                 </div>
               </div>
+              <div ref={conversation} className="flex max-h-[60vh] flex-col gap-4 overflow-y-auto rounded-[16px] border border-[#EDEDF0] bg-white p-4">
               {turns.map((t) => (
                 <div key={t.id} className="flex flex-col gap-3">
                   <div className="max-w-[85%] self-end rounded-xl border border-[#EDEDF0] bg-[#FAFAFA] px-2.5 py-2 text-sm leading-[1.5] text-[#101D37] break-words sm:max-w-[70%]">
@@ -165,6 +174,7 @@ export default function HomePage() {
                   </ol>
                 </div>
               )}
+              </div>
             </section>
           )}
 

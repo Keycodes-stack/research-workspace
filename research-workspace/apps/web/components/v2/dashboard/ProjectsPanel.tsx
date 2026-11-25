@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Folder } from "@untitledui/icons";
 import {
@@ -57,6 +58,12 @@ export default function ProjectsPanel({
 }) {
   const [query, setQuery] = useState("");
   const [packages, setPackages] = useState<{ id: string; title: string }[]>([]);
+  // The work package whose sections are shown: the one clicked, else the one open in the URL, else the first.
+  const [clickedWp, setClickedWp] = useState<string | null>(null);
+  const pathname = usePathname();
+  const routeWp = pathname.match(/\/workspace\/([^/]+)/)?.[1] ?? null;
+  const ownClick = packages.some((p) => p.id === clickedWp) ? clickedWp : null; // ignore a pick from another project
+  const expandedWp = ownClick ?? routeWp ?? packages[0]?.id ?? null;
   const { projects: all } = useProjects();
   useEffect(() => {
     if (!showWorkPackages || !activeId) return;
@@ -130,13 +137,14 @@ export default function ProjectsPanel({
                 {i > 0 && <div className="h-px w-full bg-[#EDEDF0]" />}
                 <Link
                   href={activeId ? `${V2}/projects/${activeId}/workspace/${wp.id}` : "#"}
+                  onClick={() => setClickedWp(wp.id)}
                   className="flex items-center gap-2 text-xs leading-[1.5] tracking-[-0.02em] text-body hover:text-[#101D37]"
                 >
                   <Icon icon={untitled(Folder)} size={13} stroke={1.1} className="shrink-0" />
                   <span className="truncate">{wp.title}</span>
                 </Link>
                 {/* Figma Frame 2147232168: 164 wide at x 298, gap 10, dividers */}
-                {i === 0 && activeSection && activeId && (
+                {wp.id === expandedWp && activeSection && activeId && (
                   <ul className="mt-[10px] ml-[22px] flex w-[164px] flex-col gap-[10px]">
                     {WP_SECTIONS.map((sec, j) => {
                       const href =

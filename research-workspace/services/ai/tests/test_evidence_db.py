@@ -141,3 +141,13 @@ def test_references_endpoint_is_served_before_the_item_route(api):
     body = r.json()
     assert body["heading"] == "Evidence references"
     assert body["doc"]["type"] == "doc"
+
+
+def test_research_inputs_load_against_the_real_schema(api, db_url):
+    # The research question is built from this row; a wrong column name here stopped every run in production.
+    p = make_project(api, [{"title": "Pilot study", "brief": "Test the pilot"}])
+    (tid, _), = runs_by_task(api, p["id"]).items()
+    row = on_db(db_url, lambda pool: evidence._research_row(pool, UUID(tid)))
+    assert row["title"] == "Pilot study"
+    assert row["stage"] == "Discovery"
+    assert row["name"] == "Heat recovery"

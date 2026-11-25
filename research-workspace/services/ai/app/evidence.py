@@ -151,16 +151,21 @@ async def _finish(pool, task_id: UUID, status: str, *, statement: str | None = N
 
 # ---- the research itself --------------------------------------------------------------------------------------
 
-async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
-    pool = await get_pool()
-    cfg = get_settings()
-    row = await pool.fetchrow(
+async def _research_row(pool, task_id: UUID):
+    """The project and work package fields the research question is built from. The brief lives on the task."""
+    return await pool.fetchrow(
         """SELECT t.id AS task_id, t.project_id, p.mode::text AS mode, p.name, p.business_objective,
                   p.business_case, p.expected_outcome, p.in_scope, p.out_of_scope,
-                  w.title, w.brief, w.stage, w.due_date
+                  w.title, t.brief, w.stage, w.due_date
            FROM tasks t JOIN projects p ON p.id = t.project_id
            LEFT JOIN work_packages w ON w.id = t.work_package_id
            WHERE t.id = $1""", task_id)
+
+
+async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
+    pool = await get_pool()
+    cfg = get_settings()
+    row = await _research_row(pool, task_id)
     if row is None:
         return
     project_id = row["project_id"]
