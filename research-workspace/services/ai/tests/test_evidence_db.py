@@ -41,6 +41,11 @@ def make_project(api, packages):
     return r.json()
 
 
+def start_research(api, tid):
+    """What the Start research button does."""
+    assert api.post(f"/tasks/{tid}/evidence/run", headers=hdr()).status_code == 202
+
+
 def runs_by_task(api, pid):
     runs = api.get(f"/projects/{pid}/evidence", headers=hdr()).json()["runs"]
     return {r["task_id"]: r for r in runs}
@@ -83,6 +88,7 @@ def test_work_package_with_no_run_is_listed_as_not_started_and_can_be_run(api, d
 def test_run_again_is_refused_while_a_run_is_queued(api):
     p = make_project(api, [{"title": "Busy"}])
     (tid, _), = runs_by_task(api, p["id"]).items()
+    start_research(api, tid)
     r = api.post(f"/tasks/{tid}/evidence/run", headers=hdr())
     assert r.status_code == 409
 
@@ -107,6 +113,8 @@ def test_sweep_fails_only_runs_that_started_long_ago(api, db_url):
     p = make_project(api, [{"title": "Old"}, {"title": "Fresh"}])
     runs = runs_by_task(api, p["id"])
     old_tid, fresh_tid = sorted(runs)  # order is irrelevant; we only need two distinct tasks
+    start_research(api, old_tid)
+    start_research(api, fresh_tid)
     on_db(db_url, lambda pool: pool.execute(
         "UPDATE evidence_runs SET started_at = now() - interval '2 hours' WHERE task_id=$1", UUID(old_tid)))
 
@@ -160,7 +168,7 @@ def test_gate_report_says_approval_is_not_recorded(api):
     assert r.status_code == 200
     body = r.json()
     assert body["work_package"]["code"] == "WP-1"
-    assert body["research"]["status"] == "queued"
+    assert body["research"]["status"] == "not_started"
     assert body["approval"]["status"] == "not_recorded"
     assert body["evidence"]["total"] == 0 and body["measurements"] == []
 
