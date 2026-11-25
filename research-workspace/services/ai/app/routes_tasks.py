@@ -203,6 +203,34 @@ async def _complete_fast(llm, system: str, prompt: str, seconds: float = 45) -> 
         return await backup.complete(system, prompt)
 
 
+async def complete_json_with_fallback(llms, system: str, prompt: str) -> dict:
+    """Ask the pair of models for JSON: model A, then model B, repeated for a few rounds with a short pause between
+    rounds. The first valid reply wins. The whole call is capped (the gateway waits about 5 minutes), and it raises
+    only when every attempt failed, naming each failure."""
+    from .orchestration.llm import LLMError
+
+    cfg = get_settings()
+    failures: list[str] = []
+
+    async def attempts() -> dict:
+        for rnd in range(cfg.intake_rounds):
+            for llm in llms:
+                try:
+                    return extract_json(await _complete_fast(llm, system, prompt, cfg.intake_model_timeout_s))
+                except (LLMError, ParseError) as exc:
+                    failures.append(f"round {rnd + 1} {str(exc)[:160]}")
+                    log.warning("%s failed (round %d), trying the next: %s", getattr(llm, "name", "model"),
+                                rnd + 1, str(exc)[:200])
+            if rnd + 1 < cfg.intake_rounds:
+                await asyncio.sleep(5 * (rnd + 1))
+        raise LLMError("; ".join(failures) or "no model answered")
+
+    try:
+        return await asyncio.wait_for(attempts(), cfg.intake_total_timeout_s)
+    except asyncio.TimeoutError as exc:
+        raise LLMError(f"no model answered within {cfg.intake_total_timeout_s:.0f}s; " + "; ".join(failures)) from exc
+
+
 CLOSED_REPOSITORY_SIGNALS = (
     "approved source", "only approved", "closed repository", "internal data", "confidential",
     "proprietary", "restricted", "air-gapped", "no external",
@@ -336,13 +364,16 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
         'Return JSON: {"patch":{},"reply":"short response","questions":[],"done":false}',
     ]))
     try:
-        raw = await _complete_fast(llm, PROJECT_INTAKE_SYSTEM, prompt)
-        result = extract_json(raw)
+        result = await complete_json_with_fallback(meter.llms, PROJECT_INTAKE_SYSTEM, prompt)
     except (LLMError, ParseError) as exc:
-        log.warning("project intake model failed: %s", str(exc)[:240])
+        log.warning("project intake: both models failed: %s", str(exc)[:240])
         await audit(pool, None, user, "project.intake", "project", None, mode=body.mode, model=llm.name,
                     model_calls=meter.calls, chars_in=meter.chars_in, chars_out=meter.chars_out, outcome="failed")
-        raise HTTPException(503, "Project suggestions are temporarily unavailable. You can continue with a blank charter.") from exc
+        raise HTTPException(503, {
+            "error": "setup_assistant_unavailable", "detail": str(exc),
+            "note": "Both AI models are busy or did not answer in time. Your draft is kept: try again in a minute, "
+                    "or fill the sections yourself.",
+        }) from exc
     patch = _clean_intake_patch(result.get("patch"))
     # Sponsor and lead are chosen from the people directory, never written by the AI as free text.
     patch.pop("sponsor", None)

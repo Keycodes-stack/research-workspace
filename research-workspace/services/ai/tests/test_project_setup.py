@@ -156,3 +156,23 @@ def test_project_setup_uses_backup_when_main_model_is_slow():
 
     out = asyncio.run(_complete_fast(FallbackLLM(Slow(), Quick()), "sys", "user", seconds=0.05))
     assert out == '{"ok": true}'
+
+
+def test_intake_uses_model_b_when_model_a_does_not_answer(api):
+    from app.orchestration.llm import LLMError
+    reply = json.dumps({"patch": {"objective": "Recover heat"}, "reply": "Drafted.", "questions": [], "done": True})
+    api.llms = (ScriptedLLM("A", "", error=LLMError("A: no answer in 45s")), ScriptedLLM("B", reply))
+    r = api.post("/projects/intake", headers=hdr(), json={"mode": "finish", "text": "Recover heat", "draft": {}})
+    assert r.status_code == 200 and r.json()["patch"]["objective"] == "Recover heat"
+
+
+def test_intake_says_what_happened_when_both_models_fail(api, monkeypatch):
+    from app.config import get_settings
+    from app.orchestration.llm import LLMError
+    monkeypatch.setattr(get_settings(), "intake_rounds", 1)     # one round keeps the test quick
+    api.llms = (ScriptedLLM("A", "", error=LLMError("A: no answer in 45s")),
+                ScriptedLLM("B", "", error=LLMError("B: HTTP 429")))
+    r = api.post("/projects/intake", headers=hdr(), json={"mode": "finish", "text": "Recover heat", "draft": {}})
+    assert r.status_code == 503
+    assert r.json()["error"]["code"] == "setup_assistant_unavailable"
+    assert "did not answer in time" in r.json()["error"]["message"]

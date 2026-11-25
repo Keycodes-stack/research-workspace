@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # Similarity gate for passages below similarity_threshold. "lenient" (default): the models still read them and
     # the quote check removes what the sources do not support. "strict": refused before any model is called.
     similarity_gate: Literal["strict", "lenient"] = "lenient"
+    # Project setup assistant: each model gets this long per attempt; the rounds of A-then-B attempts are capped in total
+    # (the gateway waits about 5 minutes for a response).
+    intake_model_timeout_s: float = 120.0
+    intake_total_timeout_s: float = 240.0
+    intake_rounds: int = 2
     # Every completed chat is saved to the project as a work package (its evidence and overview). Off switch for ops.
     chat_work_packages: bool = True
     # Citation verifier (app/verification)
