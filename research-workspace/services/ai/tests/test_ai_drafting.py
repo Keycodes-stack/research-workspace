@@ -2,13 +2,15 @@ from app.routes_tasks import _core_questions
 from app.word_export import drafted_document, validate_rich_document
 
 
-def test_timeline_budget_and_outcome_are_asked_when_missing():
+def test_timeline_budget_scope_and_deliverable_are_always_asked_first():
     headers = [q["header"] for q in _core_questions({})]
-    assert headers == ["Timeline", "Budget", "Expected outcome"]
+    assert headers == ["Timeline", "Budget", "Scope", "Deliverable"]
 
 
-def test_answered_topics_are_not_asked_again():
-    assert _core_questions({"start": "2027-01-01", "target": "2027-06-30", "budget": "$50k", "deliverable": "Report"}) == []
+def test_the_four_questions_are_asked_even_when_the_draft_has_answers():
+    # The four fixed questions come first, before the AI fills the charter, so they are always asked.
+    headers = [q["header"] for q in _core_questions({"start": "2027-01-01", "target": "2027-06-30", "budget": "$50k", "deliverable": "Report"})]
+    assert headers == ["Timeline", "Budget", "Scope", "Deliverable"]
 
 
 def test_ai_sections_become_a_valid_document():
