@@ -161,7 +161,8 @@ export default function AnswerCard({ result }: { result: AskResult }) {
         </section>
       )}
 
-      {models && <ModelsPanel models={models} claimNs={claimNs} />}
+      {/* no model panel when the sources were refused before any model was asked */}
+      {models && result.gate?.passed !== false && <ModelsPanel models={models} claimNs={claimNs} />}
 
       {result.statement
         ? <JudgeStatement text={result.statement} chip={chip} />

@@ -202,10 +202,7 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
                       models=configured_models())
         await _add_references(pool, task_id, [])
         return
-    if best < cfg.similarity_threshold:
-        await _finish(pool, task_id, "complete", models=configured_models(),
-                      statement="No passage is close enough to the work package, so no model was asked.")
-        return
+    # Loose matches still go to the models; the quote check removes whatever the sources do not support.
     ordered = reading_order(hits, cfg.evidence_passages_per_source)
     meta = await store.fetch_chunks(pool, [h.chunk_id for h in ordered])
     chunks = []

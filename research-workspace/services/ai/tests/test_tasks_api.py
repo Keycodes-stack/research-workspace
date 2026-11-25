@@ -190,18 +190,18 @@ def _closed(api):
     return th
 
 
-def test_similarity_gate_refuses_without_calling_any_model(api, monkeypatch):
+def test_loose_matches_still_go_to_the_models(api, monkeypatch):
+    # Passages below the usual match level are never refused: both models read them, and the quote check decides.
     from app.config import get_settings
     monkeypatch.setattr(get_settings(), "similarity_threshold", 0.99)
     api.llms = models()
     th = _closed(api)
     body = ask(api, th).json()
-    assert body["kind"] == "insufficient_evidence" and body["reason"] == "below_similarity_threshold"
-    assert body["gate"]["passed"] is False and body["gate"]["threshold"] == 0.99
-    assert "similar enough" in body["content"]
-    assert api.llms[0].calls == [] and api.llms[1].calls == []
+    assert body["gate"]["passed"] is True and body["gate"]["below_threshold"] is True
+    assert body["reason"] != "below_similarity_threshold"
+    assert api.llms[0].calls and api.llms[1].calls
     msgs = api.get(f"/threads/{th}/messages", headers=hdr()).json()["messages"]
-    assert msgs[-1]["answer_kind"] == "insufficient_evidence" and msgs[-1]["top_similarity"] < 0.99
+    assert msgs[-1]["top_similarity"] < 0.99
 
 
 def test_gate_passes_when_similarity_is_high_enough(api, monkeypatch):

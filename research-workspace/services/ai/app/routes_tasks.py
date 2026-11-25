@@ -1295,13 +1295,14 @@ async def ask(
     else:
         stored = await search_saved() if search_ids else []
     best = max((h.similarity for h in stored if h.intact()), default=None)
-    if plan.must_cover and (best is None or best < cfg.similarity_threshold):
-        # Saved sources exist but none answers: say so first; the client then asks again with evidence="online".
+    if plan.must_cover and best is None:
+        # The saved sources gave no passage at all: search online; the client then asks again with evidence="online".
+        # Passages that match only loosely still go to the models (see below).
         note = (f"No relevant information in this project's {len(search_ids)} saved sources. "
                 "Searching OpenAlex and Europe PMC for new papers...")
         progress(thread_id, note)
         return {"kind": "not_in_saved_sources", "thread_id": str(thread_id), "saved_sources": len(search_ids),
-                "top_similarity": best, "threshold": cfg.similarity_threshold, "note": note}
+                "top_similarity": None, "threshold": cfg.similarity_threshold, "note": note}
     all_hits = reading_order(stored)
 
     question_id = await pool.fetchval(
@@ -1326,12 +1327,13 @@ async def ask(
         else:
             reason = "no_source_chunks"
         result = DualResult("insufficient_evidence", reason)
-    elif top < cfg.similarity_threshold:
-        # Refuse without calling any model.
-        result = DualResult("insufficient_evidence", "below_similarity_threshold")
-        progress(thread_id, "No passage is close enough to the question, so no model was asked.")
     else:
         gate["passed"] = True
+        # Passages that match only loosely still go to the models; every quote is checked against the source text.
+        gate["below_threshold"] = top < cfg.similarity_threshold
+        if gate["below_threshold"]:
+            progress(thread_id, "The closest passages match the question only loosely. The models will read them, "
+                                "and every quote is checked against the source.")
         meta = await store.fetch_chunks(pool, [h.chunk_id for h in hits])
         chunks = []
         for h in hits:

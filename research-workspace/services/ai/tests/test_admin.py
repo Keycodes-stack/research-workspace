@@ -134,10 +134,10 @@ def test_budget_blocks_before_any_model_call_and_usage_is_metered(api):
     assert api.get(f"/projects/{p}/usage", headers=h).json()["by_user"][0]["model_calls"] == 6
 
 
-def test_gate_refusal_costs_nothing(api, monkeypatch):
+def test_loose_match_answers_are_metered(api, monkeypatch):
     from app.config import get_settings
     monkeypatch.setattr(get_settings(), "similarity_threshold", 0.99)
     p, s1, s2, t, th = setup(api, mode="open_discovery")
     api.llms = models()
     assert ask(api, th).status_code == 200
-    assert api.get(f"/projects/{p}/usage", headers=hdr(USER_A)).json()["month_calls"] == 0
+    assert api.get(f"/projects/{p}/usage", headers=hdr(USER_A)).json()["month_calls"] > 0
