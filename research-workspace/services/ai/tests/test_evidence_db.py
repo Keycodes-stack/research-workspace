@@ -96,6 +96,7 @@ def test_run_again_is_refused_while_a_run_is_queued(api):
 def test_retry_after_failure_requeues_and_keeps_the_error_until_then(api, db_url):
     p = make_project(api, [{"title": "Flaky"}])
     (tid, _), = runs_by_task(api, p["id"]).items()
+    start_research(api, tid)                 # the run must exist before it can fail
     on_db(db_url, lambda pool: pool.execute(
         "UPDATE evidence_runs SET status='failed', error='provider down', finished_at=now() WHERE task_id=$1", UUID(tid)))
 
