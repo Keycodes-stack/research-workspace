@@ -65,7 +65,7 @@ def test_intake_asks_first_then_finishes_without_more_questions(api):
     # the assistant's own question is asked, along with the core questions (timeline, budget, outcome)
     questions = [q["question"] for q in body["questions"]]
     assert "Which sites?" in questions and body["done"] is False
-    assert {q["header"] for q in body["questions"]} - {"Timeline", "Budget", "Expected outcome", "Scope"} == set()
+    assert {q["header"] for q in body["questions"]} - {"Timeline", "Budget", "Expected outcome", "Scope", "Deliverable"} == set()
 
     api.llms = pair(json.dumps({"patch": {"lead": "Sara"}, "reply": "Done.", "questions": [{"question": "more?"}], "done": False}))
     second = api.post("/projects/intake", headers=hdr(), json={

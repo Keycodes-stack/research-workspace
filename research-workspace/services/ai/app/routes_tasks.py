@@ -315,8 +315,13 @@ def _core_questions(draft: dict[str, Any]) -> list[dict[str, Any]]:
             {"label": "$50k – $100k", "description": "Focused study and pilot"},
             {"label": "$100k – $200k", "description": "Broader feasibility work"},
             {"label": "Over $200k", "description": "Comprehensive programme"}]})
+    if not draft.get("in_scope"):
+        questions.append({"header": "Scope", "question": "What should this project cover?", "multi_select": False, "options": [
+            {"label": "Technical feasibility only", "description": "Test whether the approach works"},
+            {"label": "Feasibility plus a pilot", "description": "Test it and trial it in one site"},
+            {"label": "Full programme", "description": "Feasibility, pilot and commercial rollout"}]})
     if not draft.get("deliverable"):
-        questions.append({"header": "Expected outcome", "question": "What main outcome do you expect at the end of the project?", "multi_select": False, "options": [
+        questions.append({"header": "Deliverable", "question": "What deliverable do you expect at the end of the project?", "multi_select": False, "options": [
             {"label": "A feasibility report with a recommendation", "description": "Go or no-go with evidence"},
             {"label": "A pilot with measured results", "description": "Tested on site before scaling"},
             {"label": "An operating procedure or standard", "description": "Ready for day-to-day use"}]})
@@ -391,6 +396,9 @@ async def project_intake(body: ProjectIntakeIn, user: UUID = Depends(require_use
         core = _core_questions({**body.draft, **patch})
         covered = ("start", "finish", "timeline", "budget", "outcome", "deliverable", "result")
         extra = [q for q in questions if not any(k in (q["header"] + " " + q["question"]).lower() for k in covered)]
+        # The model's own scope question is more specific than our generic one, so it replaces it.
+        if any("scope" in (q["header"] + " " + q["question"]).lower() for q in extra):
+            core = [q for q in core if q["header"] != "Scope"]
         questions = (core + extra)[:6]
     if body.mode in ("finish", "edit") or body.round >= 1:
         questions = []
