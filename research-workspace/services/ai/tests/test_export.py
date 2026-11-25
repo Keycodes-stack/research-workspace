@@ -53,8 +53,9 @@ def test_report_contains_verified_content_citations_approval_and_fingerprint(api
         {"topic": "Storage duration", "a_id": 1, "b_id": 1, "explanation": "twelve weeks versus no longer"}]})
     api.llms = models("Stable at 4 C", "Stable for twelve weeks of refrigerated storage", judge=judge)
     ask(api, th)                                                           # disagreement
-    monkeypatch.setattr(get_settings(), "similarity_threshold", 0.99)
-    ask(api, th)                                                           # refused by the gate
+    no_answer = answer_json("n/a", QUOTE, status="insufficient_source_evidence")
+    api.llms = (ScriptedLLM("A", no_answer, judge=AGREED), ScriptedLLM("B", no_answer, judge=AGREED))
+    ask(api, th)                                                           # insufficient: the models find no answer
 
     r = export(api, th, {"title": "Injection stability case", "prepared_by": "J. Akbar", "organization": "Keycodes"})
     assert r.status_code == 200 and r.headers["content-type"] == "application/pdf"

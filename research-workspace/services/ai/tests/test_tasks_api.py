@@ -370,15 +370,13 @@ def test_online_mode_searches_first_then_answers_followups_from_stored_papers(ap
     # uploads are never shown to the models in Online mode
     assert all("Confidential assay protocol" not in prompt for _, prompt in api.llms[0].calls)
 
-    # stored papers do not answer: the user is told first, nothing is searched or saved ...
+    # loosely matching stored papers are never refused: the models read them; nothing is searched, the answer is stored
     _strict(monkeypatch)
     before = _user_msgs(db_url, th)
     r = _ask(api, th, scope="api")
-    assert r["kind"] == "not_in_saved_sources" and r["saved_sources"] == 10
-    assert len(calls) == 2 and _user_msgs(db_url, th) == before
-    # ... then the client asks again online; the question is stored once
-    r = _ask(api, th, scope="api", evidence="online")
-    assert len(calls) == 3 and r["gate"]["evidence_from"] == "online_search" and _user_msgs(db_url, th) == before + 1
+    assert r["kind"] != "not_in_saved_sources" and r["gate"]["below_threshold"] is True
+    assert r["gate"]["evidence_from"] == "saved_sources" and len(calls) == 2
+    assert _user_msgs(db_url, th) == before + 1
 
 
 def test_uploads_and_online_combines_uploads_and_papers_then_answers_followups_from_them(api, db_url, monkeypatch):
@@ -397,13 +395,12 @@ def test_uploads_and_online_combines_uploads_and_papers_then_answers_followups_f
     # follow-up: uploads + stored papers answer it, no search
     r = _ask(api, th, scope="both")
     assert len(calls) == 1 and r["gate"]["evidence_from"] == "saved_sources" and r["gate"]["saved_sources"] == 11
-    # they do not answer: the user is told first, then the confirmed search combines uploads and new papers again
+    # loosely matching sources are never refused: the models read them; nothing new is searched
     _strict(monkeypatch)
     before = _user_msgs(db_url, th)
     r = _ask(api, th, scope="both")
-    assert r["kind"] == "not_in_saved_sources" and len(calls) == 1 and _user_msgs(db_url, th) == before
-    r = _ask(api, th, scope="both", evidence="online")
-    assert len(calls) == 2 and r["gate"]["evidence_from"] == "online_search" and _user_msgs(db_url, th) == before + 1
+    assert r["kind"] != "not_in_saved_sources" and r["gate"]["below_threshold"] is True
+    assert len(calls) == 1 and _user_msgs(db_url, th) == before + 1
 
 
 def test_uploads_and_online_without_uploads_goes_straight_online(api, monkeypatch):
