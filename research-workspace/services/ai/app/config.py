@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     similarity_gate: Literal["strict", "lenient"] = "lenient"
     # Project setup assistant: each model gets this long per attempt; the rounds of A-then-B attempts are capped in total
     # (the gateway waits about 5 minutes for a response).
-    intake_model_timeout_s: float = 120.0
+    intake_model_timeout_s: float = 60.0
     intake_total_timeout_s: float = 240.0
     intake_rounds: int = 2
     # Every completed chat is saved to the project as a work package (its evidence and overview). Off switch for ops.
