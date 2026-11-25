@@ -141,16 +141,21 @@ async def sync_chat_work_package(pool, project_id: UUID, thread_id: UUID, user: 
                 await conn.execute(
                     "UPDATE work_package_documents SET body=$2, updated_at=now() WHERE task_id=$1",
                     tid, chat_overview_doc(title, questions, statement, items))
+        papers = len({i["source_id"] for i in items if i.get("source_id")})
+        # Honest status: "complete" only when something was read. A question that found no sources is "failed"
+        # with the reason, so the Retry button shows and nobody reads it as an empty success.
+        status = "complete" if papers or items else "failed"
+        error = None if status == "complete" else (
+            "No sources were found for this question. Ask again with other words, or add sources to the project.")
         run_id = await conn.fetchval(
             """INSERT INTO evidence_runs (task_id, project_id, status, question, statement, papers_read, models,
                                           requested_by, started_at, finished_at, error)
-               VALUES ($1, $2, 'complete', $3, $4, $5, $6::jsonb, $7, now(), now(), NULL)
-               ON CONFLICT (task_id) DO UPDATE SET status='complete', question=EXCLUDED.question,
+               VALUES ($1, $2, $8, $3, $4, $5, $6::jsonb, $7, now(), now(), $9)
+               ON CONFLICT (task_id) DO UPDATE SET status=EXCLUDED.status, question=EXCLUDED.question,
                  statement=EXCLUDED.statement, papers_read=EXCLUDED.papers_read, models=EXCLUDED.models,
-                 finished_at=now(), error=NULL
+                 finished_at=now(), error=EXCLUDED.error
                RETURNING id""",
-            tid, project_id, questions[0], statement,
-            len({i["source_id"] for i in items if i.get("source_id")}), json.dumps(configured_models()), user)
+            tid, project_id, questions[0], statement, papers, json.dumps(configured_models()), user, status, error)
         await store_items(conn, run_id, tid, project_id, items)
         for source_id in {i["source_id"] for i in items if i.get("source_id")}:
             await conn.execute(

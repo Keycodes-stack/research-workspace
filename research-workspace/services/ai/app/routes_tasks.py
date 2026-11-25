@@ -494,13 +494,16 @@ async def project_insights(body: ProjectInsightsIn, user: UUID = Depends(require
         "Return JSON exactly in this shape:\n" + PROJECT_INSIGHTS_SHAPE,
     ])
     try:
-        raw = await _complete_fast(llm, PROJECT_INSIGHTS_SYSTEM, prompt)
-        result = extract_json(raw)
+        result = await complete_json_with_fallback(meter.llms, PROJECT_INSIGHTS_SYSTEM, prompt)
     except (LLMError, ParseError) as exc:
-        log.warning("project insights model failed: %s", str(exc)[:240])
+        log.warning("project insights: both models failed: %s", str(exc)[:240])
         await audit(pool, None, user, "project.insights", "project", None, model=llm.name,
                     model_calls=meter.calls, chars_in=meter.chars_in, chars_out=meter.chars_out, outcome="failed")
-        raise HTTPException(503, "The project assessment is temporarily unavailable.") from exc
+        raise HTTPException(503, {
+            "error": "setup_assistant_unavailable", "detail": str(exc),
+            "note": "The project assessment could not be made: both AI models are busy or did not answer in time. "
+                    "Your charter is kept; try again in a minute.",
+        }) from exc
     await audit(pool, None, user, "project.insights", "project", None, model=llm.name,
                 model_calls=meter.calls, chars_in=meter.chars_in, chars_out=meter.chars_out, outcome="complete")
     return _clean_insights(result, llm.name)
