@@ -215,12 +215,16 @@ async def complete_json_with_fallback(llms, system: str, prompt: str) -> dict:
     async def attempts() -> dict:
         for rnd in range(cfg.intake_rounds):
             for llm in llms:
+                started = time.monotonic()
+                name = getattr(llm, "name", "model")
                 try:
-                    return extract_json(await _complete_fast(llm, system, prompt, cfg.intake_model_timeout_s))
+                    result = extract_json(await _complete_fast(llm, system, prompt, cfg.intake_model_timeout_s))
+                    log.info("intake timing: %s answered in %.1fs (round %d)", name, time.monotonic() - started, rnd + 1)
+                    return result
                 except (LLMError, ParseError) as exc:
                     failures.append(f"round {rnd + 1} {str(exc)[:160]}")
-                    log.warning("%s failed (round %d), trying the next: %s", getattr(llm, "name", "model"),
-                                rnd + 1, str(exc)[:200])
+                    log.warning("intake timing: %s failed after %.1fs (round %d): %s", name,
+                                time.monotonic() - started, rnd + 1, str(exc)[:200])
             if rnd + 1 < cfg.intake_rounds:
                 await asyncio.sleep(5 * (rnd + 1))
         raise LLMError("; ".join(failures) or "no model answered")
