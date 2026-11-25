@@ -24,7 +24,7 @@ from .measurements import measurements_for
 from .orchestration.engine import CrossCheckFailed, run_dual
 from .orchestration.prompts import fit_to_budget
 from .orchestration.schema import ContextChunk
-from .routes_tasks import MAX_PASSAGES_PER_SOURCE, progress, reading_order, search_and_store
+from .routes_tasks import MAX_PASSAGES_PER_SOURCE, _cross_check_note, progress, reading_order, search_and_store
 from .verification.verifier import VerifyConfig
 from .word_export import validate_rich_document
 
@@ -131,14 +131,32 @@ async def sweep_stale(pool) -> None:
         STALE_AFTER_MINUTES)
 
 
+RETRY_PAUSES_S = (60, 180)     # the models are often busy for a minute; wait before the next attempts
+
+
 async def _run_guarded(task_id: UUID, requested_by: UUID | None) -> None:
-    async with _limit():
+    """Run the research, retrying automatically when the models are busy. Only after every attempt fails is the work
+    package marked failed, with a plain reason. A row is never left stuck in 'running'."""
+    pool = await get_pool()
+    last: Exception | None = None
+    for attempt in range(len(RETRY_PAUSES_S) + 1):
         try:
-            await run_evidence(task_id, requested_by)
-        except Exception as exc:                       # never leave the row stuck in 'running'
+            async with _limit():                       # the slot is held only while a run is actually working
+                await run_evidence(task_id, requested_by)
+            return
+        except CrossCheckFailed as exc:
+            last = exc
+            log.warning("evidence run for task %s: models busy (attempt %d): %s", task_id, attempt + 1, str(exc)[:200])
+        except Exception as exc:
             log.exception("evidence run failed for task %s", task_id)
-            pool = await get_pool()
             await _finish(pool, task_id, "failed", error=str(exc)[:500] or exc.__class__.__name__)
+            return
+        if attempt < len(RETRY_PAUSES_S):
+            progress(task_id, f"The models are busy. Trying again in {RETRY_PAUSES_S[attempt]} seconds...")
+            await asyncio.sleep(RETRY_PAUSES_S[attempt])
+    reason = _cross_check_note(str(last)) if last else "The research did not finish."
+    await _finish(pool, task_id, "failed", error=f"{reason} It was tried {len(RETRY_PAUSES_S) + 1} times. "
+                                                  "Press Retry to start it again.")
 
 
 async def _finish(pool, task_id: UUID, status: str, *, statement: str | None = None, papers_read: int = 0,
@@ -226,11 +244,10 @@ async def run_evidence(task_id: UUID, requested_by: UUID | None) -> None:
     vcfg = VerifyConfig(cfg.fuzzy_threshold, cfg.min_quote_tokens, cfg.min_support, cfg.strict_numbers)
     try:
         result = await run_dual(question, chunks, a, b, judge=a, verify=vcfg, lenient=cfg.judge_lenient)
-    except CrossCheckFailed as exc:
+    except CrossCheckFailed:
+        # Handed up to _run_guarded, which retries the whole run after a pause (models are often busy for a minute).
         await meter.record(pool, project_id, requested_by, "evidence")
-        await _finish(pool, task_id, "failed", papers_read=papers_read, models=configured_models(),
-                      error=f"The models could not finish the check: {str(exc)[:300]}")
-        return
+        raise
     await meter.record(pool, project_id, requested_by, "evidence")
 
     # 4. Evidence items: one per claim the judge kept, numbered per project.
