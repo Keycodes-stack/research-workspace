@@ -53,19 +53,37 @@ export default function ProjectOverview({ id }: { id: string }) {
 
   // Source register counts per work package (papers selected, documents uploaded), shown in the table below.
   const [sourceCounts, setSourceCounts] = useState<Record<string, { papers: number; uploads: number }>>({});
+  // Research status per work package, and the source counts. Failures leave the table working (dashes).
+  const [runStatus, setRunStatus] = useState<Record<string, string>>({});
+  const [researchError, setResearchError] = useState("");
+  const loadRuns = async () => {
+    try {
+      const d = await api.projectEvidence(id);
+      setSourceCounts(Object.fromEntries(d.runs.filter((r) => r.sources).map((r) => [r.task_id, r.sources!])));
+      setRunStatus(Object.fromEntries(d.runs.map((r) => [r.task_id, r.status])));
+    } catch {
+      setSourceCounts({});
+    }
+  };
+  useEffect(() => { void loadRuns(); }, [id, tasks]);
+  const researching = Object.values(runStatus).some((s) => s === "queued" || s === "running");
   useEffect(() => {
-    let live = true;
-    // The counts are extra: any failure leaves the table working, with dashes in the Sources column.
-    (async () => {
-      try {
-        const d = await api.projectEvidence(id);
-        if (live) setSourceCounts(Object.fromEntries(d.runs.filter((r) => r.sources).map((r) => [r.task_id, r.sources!])));
-      } catch {
-        if (live) setSourceCounts({});
-      }
-    })();
-    return () => { live = false; };
-  }, [id, tasks]);
+    if (!researching) return;
+    const timer = setInterval(() => void loadRuns(), 4000);
+    return () => clearInterval(timer);
+  }, [researching]);
+  const startResearch = async (taskId: string) => {
+    setResearchError("");
+    try {
+      await api.runTaskEvidence(taskId);
+    } catch (e) {
+      setResearchError(e instanceof Error ? e.message : "The research could not be started.");
+    }
+    await loadRuns();
+  };
+  const researchLabel = (status: string | undefined) =>
+    status === "queued" || status === "running" ? "Researching…"
+      : status === "complete" ? "Run again" : status === "failed" ? "Retry" : "Start research";
 
   const [onlyWp, setOnlyWp] = useState<string | null>(null);
   useEffect(() => {
@@ -142,14 +160,19 @@ export default function ProjectOverview({ id }: { id: string }) {
               <NewWorkPackage projectId={id} onCreated={reloadTasks} />
             </div>
             {tasksError ? <p role="alert" className="mt-4 text-sm text-[#B42318]">Could not load work packages: {tasksError}</p> : packages.length === 0 ? <p className="mt-4 text-sm text-[#667085]">No work packages yet.</p> : <table className="mt-4 w-full text-left text-sm">
-              <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]"><th className="py-2 font-medium">Work Package</th><th className="py-2 font-medium">Responsible</th><th className="py-2 font-medium">Status</th><th className="py-2 font-medium">Sources</th></tr></thead>
+              <thead><tr className="border-b border-[#EDEDF0] text-xs text-[#667085]"><th className="py-2 font-medium">Work Package</th><th className="py-2 font-medium">Responsible</th><th className="py-2 font-medium">Status</th><th className="py-2 font-medium">Sources</th><th className="py-2 font-medium">Research</th></tr></thead>
               <tbody>{packages.map((wp) => <tr key={wp.id} className="border-b border-[#EDEDF0] last:border-0">
                 <td className="py-3"><Link href={`${V2}/projects/${id}/workspace/${wp.id}`} className="font-medium text-[#101D37] hover:text-blue">{wp.title}</Link>{wp.output && <p className="mt-0.5 text-xs text-[#667085]">{project.name} · {wp.output}</p>}</td>
                 <td className="py-3"><p className="text-[#344054]">{wp.owner}</p>{wp.department && <p className="mt-0.5 text-xs text-[#667085]">{wp.department}</p>}</td>
                 <td className="py-3"><span className={`rounded-md px-2 py-1 text-xs font-medium ${STATUS_CLS[wp.status] ?? "bg-[#F2F4F7] text-[#475467]"}`}>{wp.status}</span></td>
                 <td className="py-3 text-xs text-[#344054]">{sourceCounts[wp.id] ? `${sourceCounts[wp.id].papers} papers · ${sourceCounts[wp.id].uploads} uploads` : "—"}</td>
+                <td className="py-3">
+                  <button type="button" onClick={() => void startResearch(wp.id)}
+                    disabled={runStatus[wp.id] === "queued" || runStatus[wp.id] === "running"}
+                    className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{researchLabel(runStatus[wp.id])}</button>
+                </td>
               </tr>)}</tbody>
-            </table>}
+            </table>}{researchError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{researchError}</p>}
           </section>
 
           <AttachmentGallery projectId={id} />

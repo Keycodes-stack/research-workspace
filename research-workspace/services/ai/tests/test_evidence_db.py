@@ -48,10 +48,10 @@ def runs_by_task(api, pid):
 
 # ---- scheduling on project create and add work package --------------------------------------------------------
 
-def test_new_project_queues_one_run_per_work_package(api):
+def test_new_project_leaves_research_to_the_user_to_start(api):
     p = make_project(api, [{"title": "Pilot study", "brief": "{}"}, {"title": "Costing"}])
     statuses = sorted(r["status"] for r in runs_by_task(api, p["id"]).values())
-    assert statuses == ["queued", "queued"]
+    assert statuses == ["not_started", "not_started"]
 
 
 def test_work_package_added_later_gets_next_code_and_a_queued_run(api):
@@ -61,7 +61,7 @@ def test_work_package_added_later_gets_next_code_and_a_queued_run(api):
     assert first.status_code == 201 and second.status_code == 201
     assert [first.json()["code"], second.json()["code"]] == ["WP-1", "WP-2"]
     runs = runs_by_task(api, p["id"])
-    assert sorted(r["status"] for r in runs.values()) == ["queued", "queued"]
+    assert sorted(r["status"] for r in runs.values()) == ["not_started", "not_started"]
 
 
 def test_work_package_with_no_run_is_listed_as_not_started_and_can_be_run(api, db_url):

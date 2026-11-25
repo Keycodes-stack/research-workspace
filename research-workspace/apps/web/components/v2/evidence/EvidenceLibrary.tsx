@@ -162,7 +162,7 @@ export default function EvidenceLibrary({ id }: { id: string }) {
                       disabled={busy === r.task_id}
                       className="rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-1.5 text-xs font-semibold text-[#344054] hover:border-[#D0D5DD] disabled:opacity-60"
                     >
-                      {r.status === "complete" ? "Run again" : r.status === "not_started" ? "Run" : "Retry"}
+                      {r.status === "complete" ? "Run again" : r.status === "not_started" ? "Start research" : "Retry"}
                     </button>
                   )}
                 </li>

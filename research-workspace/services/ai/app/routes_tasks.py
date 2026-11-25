@@ -789,12 +789,7 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
     await audit(pool, pid, user, "project.create", "project", pid, name=body.name.strip(), mode=body.mode)
     for item in packages:
         await audit(pool, pid, user, "task.create", "task", item["id"], title=item["title"], source="project_setup")
-    # Every work package starts its evidence research now. Best effort: the project exists either way.
-    try:
-        from .evidence import schedule_project_runs
-        await schedule_project_runs(pool, pid, user)
-    except Exception:
-        log.exception("could not start the evidence research for project %s", pid)
+    # The research is not started here: each work package shows "Start research" on its Evidence page.
     return {"id": pid, "slug": slug, "name": body.name.strip(), "mode": body.mode, "meta": meta,
             "work_packages": packages}
 
@@ -839,11 +834,7 @@ async def create_work_package(body: WorkPackageIn, project=Depends(project_with(
             conn, pid, title, body.brief, body.lead, _date_or_none(body.due, "Work package due date"),
             work_package_template(body.brief, title))
     await audit(pool, pid, user, "task.create", "task", tid, title=title, source="work_package")
-    try:
-        from .evidence import schedule_runs
-        await schedule_runs(pool, pid, [tid], user)
-    except Exception:
-        log.exception("could not start the evidence research for work package %s", tid)
+    # The research waits for the user's "Start research" button on the Evidence page.
     return {"id": tid, "work_package_id": wp_id, "code": code, "title": title, "status": "draft"}
 
 
