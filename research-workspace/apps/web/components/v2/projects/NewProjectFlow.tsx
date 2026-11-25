@@ -277,12 +277,14 @@ export default function NewProjectFlow() {
   const answerQuestions = (text: string) => {
     const user = { from: "user" as const, text };
     const next = [...messages, user]; setMessages(next); setAsked(questions.map((q) => q.question)); setQuestions([]);
-    void runIntake("answer", text, next, draft, round);
+    // The AI must fill every required value it can from the answers, and ask about the rest.
+    void runIntake("answer", `${text}${stillRequired()}`, next, draft, round);
   };
+  const stillRequired = () => missing.length ? `\n\nStill required (fill from the answers, or ask one question for each): ${missing.join(" ")}` : "";
   const skipQuestions = () => {
     const text = "Skip the questions and draft the rest for me to review.";
     const next = [...messages, { from: "user" as const, text }]; setMessages(next); setQuestions([]);
-    void runIntake("finish", text, next, draft, round);
+    void runIntake("finish", `${text}${stillRequired()}`, next, draft, round);
   };
   const update = <K extends keyof ProjectDraft>(key: K, value: ProjectDraft[K]) => {
     setDraft((old) => ({ ...old, [key]: value }));
@@ -580,7 +582,7 @@ export default function NewProjectFlow() {
           </div>
         </div>)}
       </div>}
-<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void saveDraft()} disabled={savingDraft} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054] disabled:opacity-50">{savingDraft ? "Saving draft…" : "Save Draft"}</button>{draftId && <button type="button" onClick={() => void deleteDraft()} className="rounded-[10px] border border-[#FDA29B] px-4 py-2 text-sm font-medium text-[#B42318]">Delete draft</button>}{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved.</span>}{section < 4 ? <button type="button" onClick={() => setSection(section + 1)} className="rounded-[10px] bg-blue px-4 py-2 text-sm font-semibold text-white">{section === 3 ? "Confirm & Review" : "Confirm & Continue"}</button> : <button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
+<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void saveDraft()} disabled={savingDraft} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054] disabled:opacity-50">{savingDraft ? "Saving draft…" : "Save Draft"}</button>{draftId && <button type="button" onClick={() => void deleteDraft()} className="rounded-[10px] border border-[#FDA29B] px-4 py-2 text-sm font-medium text-[#B42318]">Delete draft</button>}{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved.</span>}<button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button>}</div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
         <form onSubmit={editWithAi} aria-label="Ask for a change" className="sticky bottom-4 z-10 flex items-center gap-2 rounded-full border border-[#EDEDF0] bg-white py-2 pl-5 pr-2 shadow-[0_14px_30px_0_rgba(40,92,224,0.10)]"><input name="change" maxLength={1000} className="min-w-0 flex-1 bg-transparent text-sm text-[#101D37] outline-none placeholder:text-[#98A2B3]" placeholder="Ask for a change, e.g. “move the target date to June” or “add a Finance workstream”" /><button aria-label="Send change" disabled={busy} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-blue text-white disabled:opacity-50">{busy ? <span className="size-2 animate-pulse rounded-full bg-white" /> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M22 2 11 13" /><path d="m22 2-7 20-4-9-9-4z" /></svg>}</button></form>
         </>}
     </main></div></div>;
