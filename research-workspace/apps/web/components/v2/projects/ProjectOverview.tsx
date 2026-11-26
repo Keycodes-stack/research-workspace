@@ -49,12 +49,17 @@ export default function ProjectOverview({ id }: { id: string }) {
     const timer = setInterval(() => void loadRuns(), 4000);
     return () => clearInterval(timer);
   }, [researching]);
+  // Set from the click until the status refresh shows the run, so the button cannot be pressed twice.
+  const [starting, setStarting] = useState<Record<string, boolean>>({});
   const startResearch = async (taskId: string) => {
     setResearchError("");
+    setStarting((s) => ({ ...s, [taskId]: true }));
     try {
       await api.runTaskEvidence(taskId);
     } catch (e) {
       setResearchError(e instanceof Error ? e.message : "The research could not be started.");
+    } finally {
+      setStarting((s) => ({ ...s, [taskId]: false }));
     }
     await loadRuns();
   };
@@ -159,8 +164,8 @@ export default function ProjectOverview({ id }: { id: string }) {
                 <td className="py-3 text-xs text-[#344054]">{sourceCounts[wp.id] ? `${sourceCounts[wp.id].papers} papers · ${sourceCounts[wp.id].uploads} uploads` : "—"}</td>
                 <td className="py-3">
                   <button type="button" onClick={() => void startResearch(wp.id)}
-                    disabled={runStatus[wp.id] === "queued" || runStatus[wp.id] === "running"}
-                    className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{researchLabel(runStatus[wp.id])}</button>
+                    disabled={starting[wp.id] || runStatus[wp.id] === "queued" || runStatus[wp.id] === "running"}
+                    className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{starting[wp.id] ? "Starting…" : researchLabel(runStatus[wp.id])}</button>
                 </td>
               </tr>)}</tbody>
             </table>}{researchError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{researchError}</p>}

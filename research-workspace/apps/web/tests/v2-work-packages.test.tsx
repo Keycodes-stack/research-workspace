@@ -112,6 +112,22 @@ describe("work package overview", () => {
   });
 });
 
+describe("starting research", () => {
+  it("disables Start research as soon as it is pressed, so one click starts one run", async () => {
+    let finish!: () => void;
+    vi.mocked(api.runTaskEvidence).mockImplementationOnce(() => new Promise((resolve) => {
+      finish = () => resolve({ task_id: "t1", status: "queued" });
+    }));
+    render(<V2Frame><WorkPackageOverview projectId="p1" taskId="t1" /></V2Frame>);
+    fireEvent.click(await screen.findByRole("button", { name: "Start research" }));
+    const starting = await screen.findByRole("button", { name: "Starting…" });
+    expect(starting).toBeDisabled();
+    fireEvent.click(starting);                       // a second press does nothing while it is disabled
+    finish();
+    await vi.waitFor(() => expect(api.runTaskEvidence).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe("decision gate status on the project overview", () => {
   it("shows the stored gates and saves a status change", async () => {
     render(<V2Frame><ProjectOverview id="p1" /></V2Frame>);

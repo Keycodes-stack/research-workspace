@@ -55,9 +55,12 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
     return () => clearInterval(timer);
   }, [researching]);
 
+  const [starting, setStarting] = useState(false);
   const startResearch = async () => {
     setResearchError("");
+    setStarting(true);
     try { await api.runTaskEvidence(taskId); } catch (e) { setResearchError(e instanceof Error ? e.message : "The research could not be started."); }
+    finally { setStarting(false); }
     await loadResearch();
   };
   const download = () => {
@@ -182,8 +185,8 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
           <section className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-[#101D37]">Research</h2>
-              <button type="button" onClick={() => void startResearch()} disabled={researching}
-                className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{researchLabel}</button>
+              <button type="button" onClick={() => void startResearch()} disabled={starting || researching}
+                className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{starting ? "Starting…" : researchLabel}</button>
             </div>
             <p className="mt-3 text-sm text-[#344054]">
               {research?.status ? `Status: ${research.status}` : "Research has not been run for this work package."}
