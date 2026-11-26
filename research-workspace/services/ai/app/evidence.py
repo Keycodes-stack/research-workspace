@@ -32,7 +32,6 @@ log = logging.getLogger(__name__)
 router = APIRouter(tags=["evidence"])
 
 REFERENCES_HEADING = "Evidence references"
-STALE_AFTER_MINUTES = 15
 _PROVIDER_NAMES = {"mistral": "Mistral", "groq": "Groq", "gemini": "Gemini", "ollama": "Ollama", "compat": "Compat"}
 _background: set[asyncio.Task] = set()     # strong references, so running tasks are not garbage-collected
 _slots: asyncio.Semaphore | None = None    # at most two work packages researched at once (provider rate limits)
@@ -123,12 +122,12 @@ async def schedule_project_runs(pool, project_id: UUID, requested_by: UUID | Non
 
 
 async def sweep_stale(pool) -> None:
-    """At start-up: runs that were still going when the service stopped are marked failed, so none stays stuck."""
+    """At start-up: every run still marked queued or running is failed. Its background job lived in the previous
+    process, so no run can still be going, and none stays stuck (which would block 'Start research' with 409)."""
     await pool.execute(
         """UPDATE evidence_runs SET status='failed', error='The research was interrupted. Run it again.',
                   finished_at=now()
-           WHERE status IN ('queued', 'running') AND started_at < now() - make_interval(mins => $1)""",
-        STALE_AFTER_MINUTES)
+           WHERE status IN ('queued', 'running')""")
 
 
 RETRY_PAUSES_S = (60, 180)     # the models are often busy for a minute; wait before the next attempts

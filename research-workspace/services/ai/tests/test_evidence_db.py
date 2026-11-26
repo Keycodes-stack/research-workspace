@@ -110,7 +110,8 @@ def test_retry_after_failure_requeues_and_keeps_the_error_until_then(api, db_url
 
 # ---- start-up sweep -------------------------------------------------------------------------------------------
 
-def test_sweep_fails_only_runs_that_started_long_ago(api, db_url):
+def test_sweep_fails_every_unfinished_run_at_start_up(api, db_url):
+    # A run started a minute ago still cannot be running after a restart: its job died with the old process.
     p = make_project(api, [{"title": "Old"}, {"title": "Fresh"}])
     runs = runs_by_task(api, p["id"])
     old_tid, fresh_tid = sorted(runs)  # order is irrelevant; we only need two distinct tasks
@@ -124,7 +125,9 @@ def test_sweep_fails_only_runs_that_started_long_ago(api, db_url):
     after = runs_by_task(api, p["id"])
     assert after[old_tid]["status"] == "failed"
     assert "interrupted" in after[old_tid]["error"]
-    assert after[fresh_tid]["status"] == "queued"
+    assert after[fresh_tid]["status"] == "failed"
+    # so the next click on Start research is accepted
+    assert api.post(f"/tasks/{fresh_tid}/evidence/run", headers=hdr()).status_code == 202
 
 
 # ---- access and not-found -------------------------------------------------------------------------------------
