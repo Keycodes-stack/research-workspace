@@ -9,7 +9,7 @@ import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import AssessmentCard from "@/components/v2/projects/AssessmentCard";
 import DictateButton from "@/components/v2/projects/DictateButton";
 import RemoveButton from "@/components/v2/ui/RemoveButton";
-import { api, ApiError } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { Person } from "@/lib/types";
 import {
   EMPTY_PROJECT_DRAFT,
@@ -26,7 +26,6 @@ import {
   type ProjectInsights,
   type ProjectQuestion,
 } from "@/lib/projectIntake";
-import { clearProjectDraft, readProjectDraft, writeProjectDraft } from "@/lib/projectDraftStore";
 import { V2, projectHref } from "@/lib/v2/routes";
 
 type ChatMessage = { from: "ai" | "user"; text: string };
@@ -186,15 +185,12 @@ export default function NewProjectFlow() {
   const [files, setFiles] = useState<string[]>([]);
   const [insights, setInsights] = useState<ProjectInsights | null>(null);
   const [insightsMissing, setInsightsMissing] = useState(false);
-  const [hydrated, setHydrated] = useState(false);
-  const [draftNote, setDraftNote] = useState(false);
   useEffect(() => {
     let live = true;
     api.people().then((rows) => { if (live) setPeople(rows); }).catch(() => { if (live) setPeopleError("The people directory could not be loaded. Try again."); });
     return () => { live = false; };
   }, []);
   const router = useRouter();
-  const [draftId, setDraftId] = useState("");
   const [suggestions, setSuggestions] = useState<Record<string, string>>({});
   const [pdfs, setPdfs] = useState<File[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -204,38 +200,6 @@ export default function NewProjectFlow() {
   const [personError, setPersonError] = useState("");
   const [images, setImages] = useState<File[]>([]);
   const [uploadNote, setUploadNote] = useState("");
-  const [savingDraft, setSavingDraft] = useState(false);
-
-  // Resume an unfinished project after a refresh; autosave every change until it is created.
-  useEffect(() => {
-    const saved = readProjectDraft();
-    if (saved) {
-      setPhase(saved.phase);
-      setPrompt(saved.prompt);
-      setFiles(saved.files ?? []);
-      setDraft({ ...EMPTY_PROJECT_DRAFT, ...(saved.draft as Partial<ProjectDraft>) });
-      setSection(Math.min(Math.max(saved.section, 0), PROJECT_SECTIONS.length - 1));
-      setMessages(saved.messages);
-      setQuestions(saved.questions as ProjectQuestion[]);
-      setAsked(saved.asked);
-      setSuggested(saved.suggested);
-      setRound(saved.round);
-      setDraftId(saved.draftId ?? "");
-    }
-    setHydrated(true);
-  }, []);
-  useEffect(() => {
-    if (!hydrated || phase === "created") return;
-    if (phase === "prompt" && !prompt.trim() && files.length === 0) { clearProjectDraft(); return; }
-    writeProjectDraft({ v: 1, draftId, phase, prompt, files, draft, section, messages, questions, asked, suggested, round });
-  }, [hydrated, draftId, phase, prompt, files, draft, section, messages, questions, asked, suggested, round]);
-
-  const startOver = () => {
-    clearProjectDraft();
-    setDraftId(""); setSuggestions({}); setPdfs([]); setImages([]); setUploadNote("");
-    setPhase("prompt"); setPrompt(""); setFiles([]); setDraft(EMPTY_PROJECT_DRAFT); setSection(0);
-    setMessages([]); setQuestions([]); setRound(0); setAsked([]); setSuggested([]); setError(""); setSaveError("");
-  };
 
   // The last assistant request, kept so "Try again" can send exactly the same request.
   const lastIntake = useRef<{ mode: "start" | "answer" | "finish" | "edit"; text: string; history: ChatMessage[]; current: ProjectDraft; round: number } | null>(null);
@@ -307,22 +271,6 @@ export default function NewProjectFlow() {
 
   /** Asks the AI for the empty fields of the current step only. Values the user typed are never replaced. */
 
-  const saveDraft = async () => {
-    setSavingDraft(true); setSaveError("");
-    try {
-      const saved = await api.saveProjectDraft({ draft_id: draftId || undefined, name: draft.name, mode: draft.mode, charter: draft });
-      setDraftId(saved.id); setDraftNote(true);
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : "The draft could not be saved.");
-    } finally { setSavingDraft(false); }
-  };
-  const deleteDraft = async () => {
-    if (draftId) {
-      try { await api.deleteProject(draftId); }
-      catch (e) { if (!(e instanceof ApiError && e.status === 404)) { setSaveError(e instanceof Error ? e.message : "The draft could not be deleted."); return; } }
-    }
-    startOver();
-  };
   const dropSuggestion = (key: string) => setSuggestions((old) => { const next = { ...old }; delete next[key]; return next; });
   const useSuggestion = (key: string) => {
     const text = suggestions[key] ?? "";
@@ -370,11 +318,19 @@ export default function NewProjectFlow() {
   if (draft.gates.some((g) => !g.workstreams.length)) missing.push("Link each decision gate to at least one workstream.");
   if (!draft.risks.some((r) => r.risk.trim()) && !draft.no_risk_reason.trim()) missing.push("Add a risk or explain why there are none.");
   const ready = missing.length === 0;
+  /** Asks for the assessment of a saved project and stores it on that project. A failure leaves the project as it is. */
+  const prepareAssessment = async (projectId: string) => {
+    try {
+      const assessment = await api.projectInsights(draft);
+      await api.saveProjectInsights(projectId, assessment);
+      setInsights(assessment);
+    } catch {
+      setInsightsMissing(true);
+    }
+  };
+
   const create = async () => {
     setBusy(true); setSaveError(""); setInsightsMissing(false);
-    // The assessment is part of the project record; if it fails, the project is still created without it.
-    let assessment: ProjectInsights | null = null;
-    try { assessment = await api.projectInsights(draft); } catch { setInsightsMissing(true); }
     const meta = {
       type: draft.type, objective: draft.objective, priority: draft.priority, lead: draft.lead, sponsor: draft.sponsor,
       governance: draft.governance, start: draft.start, target: draft.target, background: draft.background,
@@ -389,13 +345,16 @@ export default function NewProjectFlow() {
       brief: JSON.stringify({ objective: draft.objective, workstream: w, approach: draft.approach, reporting: draft.reporting, dependencies: draft.dependencies }),
     }));
     try {
-      const project = await api.createProjectComplete({ name: draft.name, mode: draft.mode, meta, charter: draft, work_packages, insights: assessment ?? undefined }, draftId || undefined);
-      let failed = 0;
-      for (const file of pdfs) { try { await api.upload(project.id, file); } catch { failed += 1; } }
-      for (const file of images) { try { await api.uploadProjectAttachment(project.id, file); } catch { failed += 1; } }
-      const added = pdfs.length + images.length;
+      // The project is saved straight away; nothing here waits for the AI.
+      const project = await api.createProjectComplete({ name: draft.name, mode: draft.mode, meta, charter: draft, work_packages });
+      const uploads = [...pdfs.map((file) => api.upload(project.id, file)), ...images.map((file) => api.uploadProjectAttachment(project.id, file))];
+      const results = await Promise.allSettled(uploads);
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const added = uploads.length;
       setUploadNote(failed ? `${failed} file(s) could not be added to the project.` : added ? `${added} file(s) added to the project.` : "");
-      setInsights(assessment); setCreatedId(project.id); clearProjectDraft(); setPhase("created"); await reload();
+      setCreatedId(project.id); setPhase("created"); await reload();
+      // The AI assessment is prepared after the save and stored on the project; it appears on the overview when ready.
+      void prepareAssessment(project.id);
       setTimeout(() => router.push(projectHref(project)), 1500);
     } catch (e) { setSaveError(e instanceof Error ? e.message : "Could not create project."); }
     finally { setBusy(false); }
@@ -560,7 +519,7 @@ export default function NewProjectFlow() {
 
       {(phase === "chat" || phase === "setup") && <section className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 sm:p-7"><div><h2 className="font-semibold text-[#101D37]">Project setup assistant</h2><p className="text-xs text-[#667085]">It uses the configured research model. Suggestions stay editable until you create the project.</p></div><div className="flex max-h-[360px] flex-col gap-3 overflow-y-auto">{messages.map((m, i) => <div key={i} className={`max-w-[90%] whitespace-pre-line rounded-[16px] px-4 py-3 text-sm ${m.from === "user" ? "ml-auto bg-[#E8EEFC] text-[#101D37]" : "border border-[#EDEDF0] bg-white text-[#344054]"}`}>{m.text}</div>)}{busy && <div role="status" className="flex items-center gap-2 text-sm text-[#667085]"><span className="size-2 animate-pulse rounded-full bg-blue" />Thinking through your project…</div>}</div>{error && <div role="alert" className="flex flex-col gap-1 rounded-[12px] border border-[#FDA29B] bg-[#FEF3F2] p-3 text-sm text-[#B42318]"><p className="font-semibold">The setup assistant did not answer.</p><p>{error}</p><p className="text-xs text-[#B42318]/80">Your draft is kept. You can retry, or fill the sections yourself.</p></div>}{phase === "chat" && questions.length > 0 && <QuestionCard questions={questions} onAnswer={answerQuestions} onSkip={skipQuestions} busy={busy} />}{phase === "chat" && !busy && questions.length === 0 && <div className="flex flex-wrap justify-between gap-3"><button type="button" onClick={() => { setPhase("setup"); setSection(0); }} className="rounded-[10px] bg-blue px-4 py-2.5 text-sm font-semibold text-white">Review suggested charter →</button>{error && lastIntake.current && <button type="button" onClick={() => { const r = lastIntake.current; if (r) void runIntake(r.mode, r.text, r.history, r.current, r.round); }} className="rounded-[10px] bg-blue px-4 py-2.5 text-sm font-semibold text-white">Try again</button>}{error && <button type="button" onClick={() => { setPhase("setup"); setSection(0); }} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2.5 text-sm font-medium">Continue manually</button>}</div>}</section>}
 
-      {phase === "setup" && <><section className="flex flex-col gap-5"><Stepper active={section} onSelect={setSection} completed={Array.from({ length: 5 }, (_, i) => i).filter((i) => i < section)} /><div className="mb-5 mt-1 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[#667085]">Review and edit every suggestion before you continue. Your draft is saved in this browser.</p><button type="button" onClick={startOver} className="text-sm font-medium text-[#B42318]">Discard draft</button></div>{PROJECT_SECTIONS.map((name, i) => (
+      {phase === "setup" && <><section className="flex flex-col gap-5"><Stepper active={section} onSelect={setSection} completed={Array.from({ length: 5 }, (_, i) => i).filter((i) => i < section)} /><div className="mb-5 mt-1 flex flex-wrap items-center justify-between gap-2"><p className="text-sm text-[#667085]">Review and edit every suggestion before you continue.</p></div>{PROJECT_SECTIONS.map((name, i) => (
         <section key={name} id={`project-section-${i}`} className="flex flex-col gap-4 rounded-[20px] border border-[#EDEDF0] bg-white p-5 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="flex items-center gap-3 text-lg font-semibold text-[#101D37]"><span className="flex size-8 items-center justify-center rounded-full bg-blue/[0.08] text-sm font-semibold text-blue">{i + 1}</span>{name}</h2>
@@ -582,7 +541,7 @@ export default function NewProjectFlow() {
           </div>
         </div>)}
       </div>}
-<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void saveDraft()} disabled={savingDraft} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054] disabled:opacity-50">{savingDraft ? "Saving draft…" : "Save Draft"}</button>{draftId && <button type="button" onClick={() => void deleteDraft()} className="rounded-[10px] border border-[#FDA29B] px-4 py-2 text-sm font-medium text-[#B42318]">Delete draft</button>}{draftNote && <span role="status" className="text-xs text-[#667085]">Draft saved.</span>}<button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button></div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
+<div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-t border-[#EDEDF0] pt-4"><button type="button" onClick={() => section === 0 ? setPhase("chat") : setSection(section - 1)} className="rounded-[10px] border border-[#EDEDF0] px-4 py-2 text-sm font-medium text-[#344054]">{section === 0 ? "← Back to conversation" : "← Previous"}</button><div className="flex items-center gap-3"><button type="button" onClick={() => void create()} disabled={!ready || busy} className="rounded-[10px] bg-blue px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{busy ? "Creating project…" : "Create project"}</button></div></div>{saveError && <p role="alert" className="mt-3 text-sm text-[#B42318]">{saveError}</p>}</section>
         <form onSubmit={editWithAi} aria-label="Ask for a change" className="sticky bottom-4 z-10 flex items-center gap-2 rounded-full border border-[#EDEDF0] bg-white py-2 pl-5 pr-2 shadow-[0_14px_30px_0_rgba(40,92,224,0.10)]"><input name="change" maxLength={1000} className="min-w-0 flex-1 bg-transparent text-sm text-[#101D37] outline-none placeholder:text-[#98A2B3]" placeholder="Ask for a change, e.g. “move the target date to June” or “add a Finance workstream”" /><button aria-label="Send change" disabled={busy} className="flex size-10 shrink-0 items-center justify-center rounded-full bg-blue text-white disabled:opacity-50">{busy ? <span className="size-2 animate-pulse rounded-full bg-white" /> : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M22 2 11 13" /><path d="m22 2-7 20-4-9-9-4z" /></svg>}</button></form>
         </>}
     </main></div></div>;

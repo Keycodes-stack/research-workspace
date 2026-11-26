@@ -1,5 +1,5 @@
 import type {
-  AskResult, AuditEntry, EvidenceDetail, EvidenceFilter, EvidenceItem, GateReport, RefineChange, RefineProposal, EvidenceLibrary, EvidenceRun, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
+  AskResult, AuditEntry, DecisionGate, GateStatus, EvidenceDetail, EvidenceFilter, EvidenceItem, GateReport, RefineChange, RefineProposal, EvidenceLibrary, EvidenceRun, ChatRow, EvidenceScope, NotInSavedSources, CommentsResp, LockInfo, PresenceUser, Board, ConceptDetail, Decision, Gates, ConceptRow, Lenses, Members, Message, Mode, Project, ScanResult, Signal, SignalCategory, SignalDetail, SourceRow, TaskDetail, TaskRow, Usage, WorkPackageComment, AttachmentRow, Person, ProjectRole,
 } from "./types";
 import type { IntakeResponse, ProjectDraft, ProjectInsights } from "./projectIntake";
 
@@ -178,6 +178,9 @@ export const api = {
     round: number;
   }) => call<IntakeResponse>("/projects/intake", json(body)),
   projectInsights: (draft: ProjectDraft) => call<ProjectInsights>("/projects/insights", json({ draft })),
+  /** Store the AI assessment on a project that already exists. */
+  saveProjectInsights: (pid: string, insights: ProjectInsights) =>
+    call<{ ok: boolean }>(`/projects/${pid}/insights`, { ...json({ insights }), method: "PUT" }),
   createProjectComplete: (body: {
     name: string;
     mode: Mode;
@@ -185,13 +188,7 @@ export const api = {
     charter: ProjectDraft;
     work_packages: { title: string; brief: string; lead?: string; due?: string }[];
     insights?: ProjectInsights;
-  }, draftId?: string) => call<Project & { work_packages: { id: string; title: string }[] }>(
-    `/projects/complete${draftId ? `?draft_id=${encodeURIComponent(draftId)}` : ""}`, json(body)),
-  /** Save the wizard as a draft (status Draft). Pass draft_id to update the same draft. */
-  saveProjectDraft: (body: { draft_id?: string; name: string; mode: Mode; charter: ProjectDraft }) =>
-    call<{ id: string; slug: string; status: string }>("/projects/draft", json(body)),
-  /** Delete a draft. Created projects cannot be deleted (the server answers 409). */
-  deleteProject: (id: string) => call<null>(`/projects/${id}`, { method: "DELETE" }),
+  }) => call<Project & { work_packages: { id: string; title: string }[] }>("/projects/complete", json(body)),
   /** The people directory. Inactive people are included only when asked for. */
   people: (includeInactive = false) =>
     call<{ people: Person[] }>(`/people${includeInactive ? "?include_inactive=true" : ""}`).then((r) => r.people),
@@ -223,6 +220,16 @@ export const api = {
   /** Add one work package to a project (its code, research task, Workspace document and evidence research). */
   createWorkPackage: (pid: string, body: { title: string; brief?: string; lead?: string; due?: string }) =>
     call<{ id: string; code: string; title: string }>(`/projects/${pid}/work-packages`, json(body)),
+  /** Change a work package's stage, progress, lead or due date. Send null to clear lead or due. */
+  updateWorkPackage: (taskId: string, body: { stage?: string; progress?: number; lead?: string | null; due?: string | null }) =>
+    call<{ code: string; lead_id: string | null; due_date: string | null; stage: string; progress: number }>(
+      `/tasks/${taskId}/work-package`, { ...json(body), method: "PATCH" }),
+  /** The decision gates of a project, as stored (their status included). */
+  projectGates: (pid: string) => call<{ gates: DecisionGate[] }>(`/projects/${pid}/gates`).then((r) => r.gates),
+  /** Set a decision gate's sign-off status. */
+  setGateStatus: (pid: string, gateId: string, status: GateStatus) =>
+    call<{ id: string; gate_name: string; status: GateStatus; decided_at: string | null }>(
+      `/projects/${pid}/gates/${gateId}`, { ...json({ status }), method: "PATCH" }),
   createTask: (pid: string, title: string, brief?: string) =>
     call<{ id: string }>(`/projects/${pid}/tasks`, json({ title, brief: brief || null })),
   task: (id: string) => call<TaskDetail>(`/tasks/${id}`),

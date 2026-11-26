@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const projects = [
   { id: "p1", slug: "mrna-vaccine-stability-p1", code: "P-001", name: "mRNA Vaccine Stability", mode: "open_discovery", status: "In Progress",
     governance_stage: "Validation", project_lead: "Sarah Chen", work_packages: 2, progress: 42, meta: { lead: "Sarah Chen" } },
-  { id: "p2", slug: "perovskite-degradation-p2", code: "P-002", name: "Perovskite Degradation", mode: "open_discovery", status: "Draft",
+  { id: "p2", slug: "perovskite-degradation-p2", code: "P-002", name: "Perovskite Degradation", mode: "open_discovery", status: "Active",
     governance_stage: "Discovery", project_lead: null, work_packages: 0, progress: null, meta: {} },
 ];
 
@@ -52,9 +52,7 @@ describe("New UI: Projects list", () => {
 
     const r2 = await row("Perovskite Degradation");
     expect(within(r2).getAllByText("—").length).toBeGreaterThanOrEqual(2);   // no lead and no progress yet
-    expect(within(r2).getByText("Draft")).toBeInTheDocument();
-    expect(within(r2).getByRole("button", { name: "Delete draft" })).toBeInTheDocument();   // drafts can be deleted
-    expect(within(r1).queryByRole("button", { name: "Delete draft" })).toBeNull();     // created projects cannot
+    expect(within(r2).getByText("Active")).toBeInTheDocument();
 
     expect(screen.getByText("Total Projects").nextSibling?.textContent).toBe("2");  // side panel count
   });
@@ -63,7 +61,7 @@ describe("New UI: Projects list", () => {
     renderPage();
     await row("mRNA Vaccine Stability");
     fireEvent.click(screen.getByRole("button", { name: "Filter" }));
-    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "Draft" } });
+    fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "Active" } });
     expect(tableRows("mRNA Vaccine Stability")).toHaveLength(0);
     expect(tableRows("Perovskite Degradation")).toHaveLength(1);
     fireEvent.change(screen.getByLabelText("Status filter"), { target: { value: "All" } });

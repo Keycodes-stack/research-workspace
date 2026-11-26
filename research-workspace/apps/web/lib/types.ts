@@ -22,7 +22,19 @@ export interface SourceRow {
   id: string; title: string | null; doi: string | null; filename: string | null;
   origin: string; fulltext: string; year: number | null; page_count: number | null; chunks: number;
 }
-export interface TaskRow { id: string; title: string; brief: string | null; status: TaskStatus; created_at: string }
+/** A research task. The work package fields come from its work_packages row (null for a task without one). */
+export interface TaskRow {
+  id: string; title: string; brief: string | null; status: TaskStatus; created_at: string;
+  code?: string | null; lead_id?: string | null; due_date?: string | null; stage?: string | null; progress?: number | null;
+  /** Titles of the work packages this one depends on. */
+  depends_on?: string[];
+}
+export type GateStatus = "Pending" | "Approved" | "Changes Requested";
+/** A decision gate as stored for the project. */
+export interface DecisionGate {
+  id: string; gate_name: string; target_date: string | null; decision_owner: string | null; approver: string | null;
+  acceptance_criteria: string | null; gate_scope: string | null; status: GateStatus; decided_at: string | null;
+}
 /** A person in the organization's directory (sponsors, project leads and core team are chosen from it). */
 export interface Person { id: string; full_name: string; email: string | null; department: string | null; job_title: string | null; active: boolean }
 export interface AttachmentRow { id: string; filename: string; content_type: string; size_bytes: number; created_at: string }

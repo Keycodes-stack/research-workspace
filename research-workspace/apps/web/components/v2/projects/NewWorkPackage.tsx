@@ -8,10 +8,12 @@ export default function NewWorkPackage({ projectId, onCreated }: { projectId: st
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
+  const [lead, setLead] = useState("");
+  const [due, setDue] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const close = () => { setOpen(false); setTitle(""); setBrief(""); setError(null); };
+  const close = () => { setOpen(false); setTitle(""); setBrief(""); setLead(""); setDue(""); setError(null); };
 
   const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -19,7 +21,10 @@ export default function NewWorkPackage({ projectId, onCreated }: { projectId: st
     setBusy(true);
     setError(null);
     try {
-      await api.createWorkPackage(projectId, { title: title.trim(), brief: brief.trim() || undefined });
+      await api.createWorkPackage(projectId, {
+        title: title.trim(), brief: brief.trim() || undefined,
+        lead: lead.trim() || undefined, due: due || undefined,
+      });
       close();
       onCreated();
     } catch (err) {
@@ -46,6 +51,18 @@ export default function NewWorkPackage({ projectId, onCreated }: { projectId: st
         <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={300} required
           className="h-10 rounded-[10px] border border-[#EDEDF0] bg-white px-3 text-sm text-[#101D37] outline-none focus:border-blue" />
       </label>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1 text-sm text-[#344054]">
+          Lead (optional)
+          <input value={lead} onChange={(e) => setLead(e.target.value)} maxLength={120}
+            className="h-10 rounded-[10px] border border-[#EDEDF0] bg-white px-3 text-sm text-[#101D37] outline-none focus:border-blue" />
+        </label>
+        <label className="flex flex-col gap-1 text-sm text-[#344054]">
+          Due date (optional)
+          <input type="date" value={due} onChange={(e) => setDue(e.target.value)}
+            className="h-10 rounded-[10px] border border-[#EDEDF0] bg-white px-3 text-sm text-[#101D37] outline-none focus:border-blue" />
+        </label>
+      </div>
       <label className="flex flex-col gap-1 text-sm text-[#344054]">
         Brief (optional)
         <textarea value={brief} onChange={(e) => setBrief(e.target.value)} maxLength={10000} rows={3}

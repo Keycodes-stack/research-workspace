@@ -111,7 +111,7 @@ function ProjectsPanelInner({
       {/* Figma Frame 2147232135: top 147, 186 wide, gap 10, 1px #EDEDF0 line between items */}
       <ul className="mt-[25px] flex w-[186px] flex-col gap-[10px]">
         {list.map((p, i) => {
-          const active = p.id === activeId;
+          const active = p.id === activeId || p.slug === activeId;
           return (
             <li key={p.id} className="flex flex-col gap-[10px]">
               {i > 0 && <div className="h-px w-full bg-[#EDEDF0]" />}
@@ -159,7 +159,7 @@ function ProjectsPanelInner({
                     {WP_SECTIONS.map((sec, j) => {
                       const href =
                         sec.key === "overview"
-                          ? `${V2}/projects/${activeId}?work_package=${wp.id}`
+                          ? `${V2}/projects/${activeId}/work-packages/${wp.id}`
                           : sec.key === "workspace" && wp.id
                               ? `${V2}/projects/${activeId}/workspace/${wp.id}`
                               : sec.key === "evidence"

@@ -292,9 +292,10 @@ def work_package_template(brief: str | None, title: str) -> str:
     try:
         data = json.loads(brief or "{}")
     except ValueError:
-        data = {}
+        data = None
     if not isinstance(data, dict):
-        data = {}
+        # A brief typed by hand ("+ New work package") is plain text: it becomes the research objective.
+        data = {"objective": brief.strip()} if brief and brief.strip() else {}
     workstream = data.get("workstream") if isinstance(data.get("workstream"), dict) else {}
 
     def text(value: Any) -> str:

@@ -663,74 +663,45 @@ def _slug(name: str, project_id: UUID) -> str:
     return f"{base}-{project_id.hex[:8]}"
 
 
-class ProjectDraftIn(BaseModel):
-    draft_id: UUID | None = None
-    name: str = Field(default="", max_length=200)
-    mode: Literal["open_discovery", "closed_repository"] = "open_discovery"
-    charter: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("charter")
-    @classmethod
-    def _bounded_charter(cls, value: dict[str, Any]) -> dict[str, Any]:
-        if len(json.dumps(value, default=str)) > 40_000:
-            raise ValueError("charter is too large")
-        return value
+_BACKGROUND: set = set()  # keeps the background tasks referenced until they finish
 
 
-async def _writable_draft(pool, draft_id: UUID, user: UUID):
-    """A draft the caller may change: a Draft project where the caller is at least a researcher."""
-    row = await pool.fetchrow(
-        """SELECT p.id, p.status, m.role::text AS role FROM projects p
-           JOIN project_members m ON m.project_id = p.id AND m.user_id = $2 WHERE p.id = $1""", draft_id, user)
-    if row is None:
-        raise HTTPException(404, "draft not found")
-    check_role(row["role"], "researcher")
-    if row["status"] != "Draft":
-        raise HTTPException(409, "this project is no longer a draft")
-    return row
+def _schedule_ai_documents(pool, name: str, objective: str, llms, packages: list[dict[str, Any]],
+                           brief_packages: list[dict[str, Any]]) -> None:
+    """Draft the work package documents with the AI after the project has been saved. Only a document the user has
+    not changed yet (version 0, still the template) is replaced; nothing the user typed is overwritten."""
+    async def run() -> None:
+        try:
+            drafts = await _draft_documents(llms, name, objective, brief_packages)
+            for item in packages:
+                sections = drafts.get(item["title"].strip())
+                doc = drafted_document(item["title"].strip(), sections) if sections else None
+                if doc:
+                    await pool.execute(
+                        """UPDATE work_package_documents SET body = $2, ai_drafted = true
+                           WHERE task_id = $1 AND version = 0 AND ai_drafted = false""",
+                        item["id"], doc)
+        except Exception:  # the project is already saved; the templates stay
+            log.exception("background work package drafting failed for %s", name[:80])
+
+    task = asyncio.create_task(run())
+    _BACKGROUND.add(task)
+    task.add_done_callback(_BACKGROUND.discard)
 
 
-@router.post("/projects/draft")
-async def save_project_draft(body: ProjectDraftIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
-    """Save the wizard as a draft. Drafts keep whatever was entered; the full checks run when the project is created."""
-    problems = charter_over_limits(body.charter) + charter_choice_problems(body.charter, required=False)
-    if problems:
-        raise HTTPException(422, "Please correct: " + "; ".join(problems))
-    await check_people_chosen(pool, body.charter)
-    columns = charter_columns(body.charter)
-    name = body.name.strip() or "Untitled draft"
-    meta = json.dumps({"charter": _clean_intake_patch(body.charter)})
-    if body.draft_id:
-        await _writable_draft(pool, body.draft_id, user)
-        values = {**columns, "name": name, "mode": body.mode, "meta": meta}
-        sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(values, start=2))
-        slug = await pool.fetchval(
-            f"UPDATE projects SET {sets}, updated_at = now() WHERE id = $1 RETURNING slug",
-            body.draft_id, *values.values())
-        return {"id": body.draft_id, "slug": slug, "status": "Draft"}
-    project_id = uuid4()
-    values = {**columns, "id": project_id, "owner_id": user, "name": name, "mode": body.mode,
-              "slug": _slug(name, project_id), "status": "Draft", "meta": meta}
-    names = list(values)
-    placeholders = ", ".join(f"${i}" for i in range(1, len(names) + 1))
-    await pool.execute(f"INSERT INTO projects ({', '.join(names)}) VALUES ({placeholders})", *values.values())
-    return {"id": project_id, "slug": values["slug"], "status": "Draft"}
-
-
-@router.delete("/projects/{project_id}", status_code=204)
-async def delete_project_draft(project=Depends(project_with("researcher")), pool=Depends(get_pool)):
-    """Only drafts can be deleted. Projects that have been created are kept."""
-    if project["status"] != "Draft":
-        raise HTTPException(409, "Only a draft can be deleted. Created projects are kept.")
-    await pool.execute("DELETE FROM projects WHERE id = $1 AND status = 'Draft'", project["id"])
-    return Response(status_code=204)
+def _dependency_text(brief: str | None) -> str:
+    """The free-text dependencies a workstream was given in the wizard, lower-cased for matching."""
+    try:
+        data = json.loads(brief or "{}")
+    except ValueError:
+        return ""
+    workstream = data.get("workstream") if isinstance(data, dict) and isinstance(data.get("workstream"), dict) else {}
+    return str(workstream.get("dependencies") or "").lower()
 
 
 @router.post("/projects/complete", status_code=201)
-async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(require_user), pool=Depends(get_pool),
-                                  draft_id: UUID | None = None):
-    """Create the reviewed charter, its work packages and decision gates in one transaction (spec section 5).
-    With draft_id, the draft becomes the project (same id and slug)."""
+async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Create the reviewed charter, its work packages, their dependencies and decision gates in one transaction (spec section 5)."""
     problems = charter_over_limits(body.charter) + charter_choice_problems(body.charter)
     if problems:
         raise HTTPException(422, "Please correct: " + "; ".join(problems))
@@ -740,8 +711,8 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
         llms = get_llms()
     except HTTPException:
         llms = None  # no models configured: the templates are used
-    drafts = await _draft_documents(llms, body.name.strip(), str(body.charter.get("objective") or ""),
-                                    [{"title": w.title, "brief": w.brief} for w in body.work_packages])
+    # The AI drafts are written after the project exists (see below); the templates fill the documents until then.
+    drafts: dict[str, Any] = {}
     meta = _clean_meta(body.meta)
     meta["charter"] = _clean_intake_patch(body.charter)
     if body.insights:
@@ -749,23 +720,13 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
                                            str(body.insights.get("generatedAt", "")) or None)
     async with pool.acquire() as conn:
         async with conn.transaction():
-            if draft_id:
-                await _writable_draft(conn, draft_id, user)
-                project_id = draft_id
-                values = {**columns, "name": body.name.strip(), "mode": body.mode, "status": "Active",
-                          "meta": json.dumps(meta)}
-                sets = ", ".join(f"{k} = ${i}" for i, k in enumerate(values, start=2))
-                slug = await conn.fetchval(
-                    f"UPDATE projects SET {sets}, updated_at = now() WHERE id = $1 RETURNING slug",
-                    project_id, *values.values())
-            else:
-                project_id = uuid4()
-                slug = _slug(body.name, project_id)
-                values = {**columns, "id": project_id, "owner_id": user, "name": body.name.strip(), "mode": body.mode,
-                          "slug": slug, "status": "Active", "meta": json.dumps(meta)}
-                names = list(values)
-                placeholders = ", ".join(f"${i}" for i in range(1, len(names) + 1))
-                await conn.execute(f"INSERT INTO projects ({', '.join(names)}) VALUES ({placeholders})", *values.values())
+            project_id = uuid4()
+            slug = _slug(body.name, project_id)
+            values = {**columns, "id": project_id, "owner_id": user, "name": body.name.strip(), "mode": body.mode,
+                      "slug": slug, "status": "Active", "meta": json.dumps(meta)}
+            names = list(values)
+            placeholders = ", ".join(f"${i}" for i in range(1, len(names) + 1))
+            await conn.execute(f"INSERT INTO projects ({', '.join(names)}) VALUES ({placeholders})", *values.values())
             pid = project_id
             packages = []
             for index, item in enumerate(body.work_packages, start=1):
@@ -785,7 +746,16 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
                     "INSERT INTO work_package_documents (task_id, body, format, version, ai_drafted) VALUES ($1, $2, 'tiptap', 0, $3)",
                     tid, drafted or work_package_template(item.brief, item.title.strip()), drafted is not None,
                 )
-                packages.append({"id": tid, "title": item.title.strip()})
+                packages.append({"id": tid, "wp_id": wp_id, "title": item.title.strip()})
+            for item, own in zip(body.work_packages, packages):
+                deps = _dependency_text(item.brief)
+                for other in packages:
+                    name = other["title"].strip().lower()
+                    if other["wp_id"] != own["wp_id"] and len(name) >= 3 and name in deps:
+                        await conn.execute(
+                            """INSERT INTO work_package_dependencies (work_package_id, depends_on_id)
+                               VALUES ($1, $2) ON CONFLICT DO NOTHING""",
+                            own["wp_id"], other["wp_id"])
             for gate in body.charter.get("gates") or []:
                 if not isinstance(gate, dict) or not str(gate.get("name") or "").strip():
                     continue
@@ -799,6 +769,9 @@ async def create_project_complete(body: ProjectCompleteIn, user: UUID = Depends(
                     str(gate.get("criteria") or "")[:4000] or None,
                     ", ".join(w for w in (gate.get("workstreams") or []) if isinstance(w, str)) or None,
                 )
+    _schedule_ai_documents(pool, body.name.strip(), str(body.charter.get("objective") or ""), llms,
+                           [{"id": p["id"], "title": p["title"]} for p in packages],
+                           [{"title": w.title, "brief": w.brief} for w in body.work_packages])
     await audit(pool, pid, user, "project.create", "project", pid, name=body.name.strip(), mode=body.mode)
     for item in packages:
         await audit(pool, pid, user, "task.create", "task", item["id"], title=item["title"], source="project_setup")
@@ -882,9 +855,93 @@ async def get_project(project=Depends(project_for_user)):
 @router.get("/projects/{project_id}/tasks")
 async def list_tasks(project=Depends(project_for_user), pool=Depends(get_pool)):
     rows = await pool.fetch(
-        """SELECT id, title, brief, status::text AS status, created_at
-           FROM tasks WHERE project_id=$1 AND kind='research' ORDER BY created_at DESC""", project["id"])
-    return {"tasks": [dict(r) for r in rows]}
+        """SELECT t.id, t.title, t.brief, t.status::text AS status, t.created_at,
+                  w.code, w.lead_id, w.due_date, w.stage, w.progress,
+                  COALESCE((SELECT json_agg(d.title ORDER BY d.title)
+                              FROM work_package_dependencies k JOIN tasks d ON d.work_package_id = k.depends_on_id
+                             WHERE k.work_package_id = w.id), '[]'::json) AS depends_on
+           FROM tasks t LEFT JOIN work_packages w ON w.id = t.work_package_id
+           WHERE t.project_id=$1 AND t.kind='research' ORDER BY t.created_at DESC, w.code""", project["id"])
+    tasks = []
+    for r in rows:
+        d = dict(r)
+        if isinstance(d.get("depends_on"), str):
+            d["depends_on"] = json.loads(d["depends_on"])
+        tasks.append(d)
+    return {"tasks": tasks}
+
+
+class WorkPackageUpdateIn(BaseModel):
+    """Only the fields sent are changed. Send null for lead or due to clear them."""
+    stage: Literal["Discovery", "Validation", "Business Case", "Decided"] | None = None
+    progress: int | None = Field(default=None, ge=0, le=100)
+    lead: str | None = Field(default=None, max_length=120)
+    due: str | None = Field(default=None, max_length=10)
+
+
+@router.patch("/tasks/{task_id}/work-package")
+async def update_work_package(task_id: UUID, body: WorkPackageUpdateIn, user: UUID = Depends(require_user),
+                              pool=Depends(get_pool)):
+    task = await task_for_user(pool, task_id, user, minimum="researcher")
+    wp_id = await pool.fetchval("SELECT work_package_id FROM tasks WHERE id=$1", task["id"])
+    if wp_id is None:
+        raise HTTPException(404, "this research task has no work package")
+    sent = body.model_dump(exclude_unset=True)
+    columns = {"stage": "stage", "progress": "progress", "lead": "lead_id", "due": "due_date"}
+    values = {columns[k]: (_date_or_none(v, "Work package due date") if k == "due" else v)
+              for k, v in sent.items() if k in columns}
+    if values:
+        sets = ", ".join(f"{col} = ${i}" for i, col in enumerate(values, start=2))
+        await pool.execute(f"UPDATE work_packages SET {sets} WHERE id = $1", wp_id, *values.values())
+        await audit(pool, task["project_id"], user, "work_package.update", "task", task["id"],
+                    **{k: str(v) for k, v in sent.items()})
+    row = await pool.fetchrow(
+        "SELECT code, lead_id, due_date, stage, progress FROM work_packages WHERE id=$1", wp_id)
+    return dict(row)
+
+
+class AssessmentSaveIn(BaseModel):
+    insights: dict[str, Any]
+
+
+@router.put("/projects/{project_id}/insights")
+async def save_project_insights(body: AssessmentSaveIn, project=Depends(project_with("researcher")),
+                                user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Store the AI assessment on a project that already exists (it is prepared after the project is created)."""
+    cleaned = _clean_insights(body.insights, str(body.insights.get("model", "")),
+                              str(body.insights.get("generatedAt", "")) or None)
+    await pool.execute(
+        "UPDATE projects SET meta = jsonb_set(meta, '{insights}', $2::jsonb) WHERE id = $1",
+        project["id"], json.dumps(cleaned))
+    await audit(pool, project["id"], user, "project.insights_saved", "project", project["id"])
+    return {"ok": True}
+
+
+@router.get("/projects/{project_id}/gates")
+async def list_gates(project=Depends(project_for_user), pool=Depends(get_pool)):
+    rows = await pool.fetch(
+        """SELECT id, gate_name, target_date, decision_owner, approver, acceptance_criteria, gate_scope, status,
+                  decided_at FROM decision_gates WHERE project_id=$1 ORDER BY target_date NULLS LAST, gate_name""",
+        project["id"])
+    return {"gates": [dict(r) for r in rows]}
+
+
+class GateStatusIn(BaseModel):
+    status: Literal["Pending", "Approved", "Changes Requested"]
+
+
+@router.patch("/projects/{project_id}/gates/{gate_id}")
+async def set_gate_status(gate_id: UUID, body: GateStatusIn, project=Depends(project_with("lead_scientist")),
+                          user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    row = await pool.fetchrow(
+        """UPDATE decision_gates SET status = $3::text,
+                  decided_at = CASE WHEN $3::text = 'Pending' THEN NULL ELSE now() END
+           WHERE id = $1 AND project_id = $2 RETURNING id, gate_name, status, decided_at""",
+        gate_id, project["id"], body.status)
+    if row is None:
+        raise HTTPException(404, "decision gate not found")
+    await audit(pool, project["id"], user, "decision_gate.status", "decision_gate", gate_id, status=body.status)
+    return dict(row)
 
 
 @router.get("/projects/{project_id}/sources")

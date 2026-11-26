@@ -8,10 +8,8 @@ import Icon, { huge, untitled } from "@/components/v2/dashboard/Icon";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
 import { useProjects } from "@/components/v2/V2Frame";
-import { api, ApiError } from "@/lib/api";
 import type { Project } from "@/lib/types";
 import { V2, projectHref } from "@/lib/v2/routes";
-import RemoveButton from "@/components/v2/ui/RemoveButton";
 
 /*
  * Design: the reference Projects directory (Projects Research Initiatives): Projects (name and code), Lead,
@@ -19,12 +17,11 @@ import RemoveButton from "@/components/v2/ui/RemoveButton";
  * Data: GET /projects. Progress is the average progress of the project's work packages; "—" until it has any.
  */
 const NO_DATA = "—";
-const STATUSES = ["All", "Draft", "Active", "In Progress", "Pending Approval", "Completed", "Parked"] as const;
+const STATUSES = ["All", "Active", "In Progress", "Pending Approval", "Completed", "Parked"] as const;
 const ROW_GRID = "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)_120px_minmax(0,1.1fr)_150px] items-center gap-4";
 
 /** Status colours follow the reference: In Progress warm, Pending blue, Active and Completed green. */
 const STATUS_CLS: Record<string, string> = {
-  Draft: "bg-[#F2F4F7] text-[#475467]",
   Active: "bg-[#ECFDF3] text-[#067647]",
   "In Progress": "bg-[#FEF0EA] text-[#B93815]",
   Pending: "bg-[#EEF4FF] text-[#3538CD]",
@@ -56,24 +53,12 @@ export default function ProjectsPage() {
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<(typeof STATUSES)[number]>("All");
   const [showFilter, setShowFilter] = useState(false);
-  const [deleteError, setDeleteError] = useState("");
 
   const lead = (p: Project) => (p.project_lead?.trim() || (typeof p.meta?.lead === "string" ? p.meta.lead.trim() : "")) || NO_DATA;
   const shown = projects.filter((p) => {
     const text = `${p.name} ${p.code ?? ""} ${lead(p)}`.toLowerCase();
     return text.includes(query.trim().toLowerCase()) && (status === "All" || (p.status ?? "Active") === status);
   }).sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? "")); // newest first
-
-  const deleteDraft = async (p: Project) => {
-    if (!window.confirm(`Delete the draft "${p.name}"? This cannot be undone.`)) return;
-    setDeleteError("");
-    try {
-      await api.deleteProject(p.id);
-      await reload();
-    } catch (e) {
-      setDeleteError(e instanceof ApiError && e.status === 409 ? "Only drafts can be deleted." : e instanceof Error ? e.message : "The draft could not be deleted.");
-    }
-  };
 
   return (
     <div className="flex min-w-0 flex-1">
@@ -109,7 +94,6 @@ export default function ProjectsPage() {
               </label>
             </div>}
 
-            {deleteError && <p role="alert" className="text-sm text-[#B42318]">{deleteError}</p>}
 
             {error ? (
               <div className="mt-1 flex flex-wrap items-center gap-3 text-sm text-body">
@@ -135,7 +119,6 @@ export default function ProjectsPage() {
                       <StageProgress value={p.progress} />
                       <div className="flex items-center justify-between gap-2">
                         <StatusPill status={p.status} />
-                        {p.status === "Draft" && <RemoveButton label="Delete draft" onClick={() => void deleteDraft(p)} />}
                       </div>
                     </li>
                   ))}
@@ -161,7 +144,6 @@ export default function ProjectsPage() {
                           <StageProgress value={p.progress} />
                           <div className="flex flex-col items-start gap-1">
                             <StatusPill status={p.status} />
-                            {p.status === "Draft" && <RemoveButton label="Delete draft" onClick={() => void deleteDraft(p)} />}
                           </div>
                         </div>
                       ))}
