@@ -43,6 +43,30 @@ def test_insights_from_garbage_still_have_the_full_shape():
     assert out["generatedAt"]  # filled in by the server
 
 
+def test_clean_insights_drops_invented_risk_owners():
+    raw = {"summary": "Viable", "feasibility": 70, "risks": [
+        {"risk": "Supply", "likelihood": "High", "impact": "High", "mitigation": "Dual source",
+         "owner": "Battery Tech Team"},
+        {"risk": "Cost", "likelihood": "Medium", "impact": "Medium", "mitigation": "Track spend",
+         "owner": "Sara Ahmed"},
+        {"risk": "Delay", "likelihood": "Low", "impact": "Low", "mitigation": "Plan", "owner": "Project lead"},
+    ]}
+    out = _clean_insights(raw, "m", known_owners={"Sara Ahmed", "Research & Development"})
+    assert [r["owner"] for r in out["risks"]] == ["", "Sara Ahmed", "Project lead"]
+    # Without the allowlist nothing is dropped (existing behaviour).
+    assert _clean_insights(raw, "m")["risks"][0]["owner"] == "Battery Tech Team"
+
+
+def test_insights_facts_state_charter_dates_not_the_title_year():
+    from app.routes_tasks import _insights_facts
+    facts = _insights_facts({"name": "Solid-State Batteries for Electric Vehicles 2030",
+                             "start": "2027-01-01", "target": "2027-06-30", "teams": []})
+    assert "Target completion date (charter): 30 June 2027" in facts
+    assert "Planned start date (charter): 01 January 2027" in facts
+    assert "Teams assigned: none assigned yet" in facts
+    assert "2030) is part of the title only" in facts
+
+
 def test_non_finite_feasibility_falls_back_to_neutral():
     assert _clean_insights({"feasibility": float("nan")}, "m")["feasibility"] == 50
     assert _clean_insights({"feasibility": "high"}, "m")["feasibility"] == 50
@@ -88,6 +112,32 @@ def test_insights_endpoint_returns_the_cleaned_assessment(api):
     r = api.post("/projects/insights", headers=hdr(), json={"draft": {"name": "Heat", "objective": "Recover heat"}})
     assert r.status_code == 200
     assert r.json()["feasibility"] == 72 and r.json()["questions"] == ["Cost?"]
+
+
+def test_insights_prompt_grounds_dates_and_teams(api):
+    """P-046: the charter ends 30 June 2027 but the title says 2030 and no team is assigned. The model must be
+    told the real dates and that no team exists, and an invented team must not survive as a risk owner."""
+    api.llms = pair(json.dumps({
+        "summary": "The final June 2030 reporting gate will be run by the Battery Tech Team.",
+        "feasibility": 70,
+        "risks": [{"risk": "Cell supply", "likelihood": "High", "impact": "High",
+                   "mitigation": "Dual source", "owner": "Battery Tech Team"},
+                  {"risk": "Cost overrun", "likelihood": "Medium", "impact": "Medium",
+                   "mitigation": "Track spend", "owner": "Sara Ahmed"}],
+        "questions": [], "nextSteps": [],
+    }))
+    draft = {"name": "Solid-State Batteries for Electric Vehicles 2030", "type": "Technical Feasibility",
+             "objective": "Assess feasibility", "start": "2027-01-01", "target": "2027-06-30",
+             "lead": "Sara Ahmed", "teams": [], "departments": ["Research & Development"]}
+    r = api.post("/projects/insights", headers=hdr(), json={"draft": draft})
+    assert r.status_code == 200
+    _system, prompt = api.llms[0].calls[0]
+    assert "Target completion date (charter): 30 June 2027" in prompt
+    assert "Planned start date (charter): 01 January 2027" in prompt
+    assert "Teams assigned: none assigned yet" in prompt
+    assert "never that year" in prompt
+    # The invented team is dropped as a risk owner; the genuinely assigned lead is kept.
+    assert [risk["owner"] for risk in r.json()["risks"]] == ["", "Sara Ahmed"]
 
 
 def test_insights_failure_is_a_503_not_a_crash(api):

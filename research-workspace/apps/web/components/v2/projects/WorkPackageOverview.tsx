@@ -24,6 +24,9 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
   const [tasksError, setTasksError] = useState("");
   const [research, setResearch] = useState<{ status: string; papers: number | null; uploads: number | null } | null>(null);
   const [researchError, setResearchError] = useState("");
+  // false until the first evidence response: before then the badge, the progress and the Research button
+  // must not claim "Pending" / "0%" / "Start research" for a work package whose research already finished.
+  const [researchLoaded, setResearchLoaded] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [stageDraft, setStageDraft] = useState("Discovery");
   const [progressDraft, setProgressDraft] = useState("0");
@@ -47,6 +50,8 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
       setResearch(run ? { status: run.status, papers: run.sources?.papers ?? null, uploads: run.sources?.uploads ?? null } : { status: "", papers: null, uploads: null });
     } catch {
       setResearch(null);
+    } finally {
+      setResearchLoaded(true);
     }
   };
   useEffect(() => { void loadResearch(); }, [projectId, taskId]);
@@ -81,6 +86,17 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
 
   const task = tasks?.find((t) => t.id === taskId);
   const wp = task ? workPackage(task) : null;
+  /**
+   * What the header shows. The task row never changes when its research finishes (its status is the approval
+   * state, and flipping it to "complete" would lock the sources and block approval), so the research run's
+   * status is the source of truth: a finished run is Complete at 100%, a running one In Progress.
+   * Before the evidence response arrives, the stored values stand — never a "Pending" / "0%" guess.
+   */
+  const displayStatus = research?.status === "complete" ? "Complete"
+    : research?.status === "queued" || research?.status === "running" ? "In Progress"
+    : research?.status === "failed" ? "Failed" : wp?.status ?? "Pending";
+  const displayProgress = research?.status === "complete" ? "100%"
+    : wp?.progress == null ? "—" : `${wp.progress}%`;
   useEffect(() => {
     if (!wp) return;
     setStageDraft(wp.stage ?? "Discovery");
@@ -141,7 +157,7 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
               <p className="text-xs font-medium text-[#667085]">{[wp.code, project?.name].filter(Boolean).join(" · ")}</p>
               <h1 className="mt-1 text-2xl font-semibold tracking-[-0.02em] text-[#101D37] sm:text-3xl">{wp.title}</h1>
               <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
-                <span className={`rounded-md px-2 py-1 font-medium ${STATUS_CLS[wp.status] ?? "bg-[#F2F4F7] text-[#475467]"}`}>{wp.status}</span>
+                <span className={`rounded-md px-2 py-1 font-medium ${STATUS_CLS[displayStatus] ?? "bg-[#F2F4F7] text-[#475467]"}`}>{displayStatus}</span>
                 {wp.stage && <span className="rounded-md border border-[#EDEDF0] px-2 py-1 text-[#344054]">{wp.stage}</span>}
                 <span className={`rounded-md px-2 py-1 font-medium ${priority.cls}`}>{priority.text}</span>
               </div>
@@ -156,7 +172,7 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
           </div>
 
           <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Stat value={wp.progress === null ? "—" : `${wp.progress}%`} label="Progress" />
+            <Stat value={displayProgress} label="Progress" />
             <Stat value={research ? String(research.papers ?? 0) : "—"} label="Papers selected" />
             <Stat value={research ? String(research.uploads ?? 0) : "—"} label="Uploads" />
             <Stat value={String(packageGates.length)} label="Decision Gates" />
@@ -196,8 +212,8 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
           <section className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold text-[#101D37]">Research</h2>
-              <button type="button" onClick={() => void startResearch()} disabled={starting || researching}
-                className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{starting ? "Starting…" : researchLabel}</button>
+              <button type="button" onClick={() => void startResearch()} disabled={!researchLoaded || starting || researching}
+                className="rounded-[10px] bg-blue px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-60">{!researchLoaded ? "Loading…" : starting ? "Starting…" : researchLabel}</button>
             </div>
             <p className="mt-3 text-sm text-[#344054]">
               {research?.status ? `Status: ${research.status}` : "Research has not been run for this work package."}

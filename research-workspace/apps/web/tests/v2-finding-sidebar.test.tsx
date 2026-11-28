@@ -15,8 +15,8 @@ vi.mock("@syncfusion/ej2-tailwind3-theme/styles/document-editor-container/index.
 
 const sf = vi.hoisted(() => {
   const listeners: Record<string, (...args: never[]) => void> = {};
-  const hyperlinkCalls: Array<{ address: string; displayText?: string; screenTip?: string }> = [];
-  const state = { selectionText: "", searchText: "" };
+  const hyperlinkCalls: Array<{ address: string; displayText?: string; remove: boolean; isBookmark?: boolean }> = [];
+  const state = { selectionText: "", searchText: "", fieldCode: null as string | null, removeHyperlinkCalls: 0 };
   const searchResults = {
     length: 0,
     index: 0,
@@ -33,11 +33,17 @@ const sf = vi.hoisted(() => {
     selectComment: () => {},
     moveToDocumentStart: () => {},
     moveToDocumentEnd: () => {},
+    /* null = the found text is plain; a string = it sits inside a hyperlink
+       field with that field code. Tests set state.fieldCode to simulate a
+       stale link saved in the document. */
+    getHyperlinkField: () => (state.fieldCode === null ? null : ({} as never)),
+    getFieldCode: () => state.fieldCode ?? "",
   };
   const editor = {
-    insertHyperlink: (address: string, displayText?: string, screenTip?: string) => {
-      hyperlinkCalls.push({ address, displayText, screenTip });
+    insertHyperlinkInternal: (address: string, displayText?: string, remove?: boolean, isBookmark?: boolean) => {
+      hyperlinkCalls.push({ address, displayText, remove: remove ?? false, isBookmark });
     },
+    removeHyperlink: () => { state.removeHyperlinkCalls += 1; },
     insertComment: () => {},
     replyComment: () => {},
     resolveComment: () => {},
@@ -49,6 +55,7 @@ const sf = vi.hoisted(() => {
     documentName: "",
     documentHelper: { comments: [] as never[] },
     showComments: false,
+    useCtrlClickToFollowHyperlink: true,
     selection,
     search,
     editor,
@@ -111,20 +118,34 @@ beforeEach(() => {
   sf.hyperlinkCalls.length = 0;
   sf.state.selectionText = "";
   sf.state.searchText = "";
+  sf.state.fieldCode = null;
+  sf.state.removeHyperlinkCalls = 0;
+  sf.documentEditor.useCtrlClickToFollowHyperlink = true;
 });
 
 describe("Findings inside the document open the right sidebar", () => {
-  it("links each finding's claim text to its evidence item at load time", async () => {
+  it("links each finding's claim text to its evidence item at load time, as a bookmark link", async () => {
     render(<DocEditor taskId="t1" projectId="p1" />);
     await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
-    expect(sf.hyperlinkCalls[0]).toEqual({ address: "#evidence-e1", displayText: "Aluminium reduces chassis mass.", screenTip: "View evidence" });
-    expect(sf.hyperlinkCalls[1]).toEqual({ address: "#evidence-e2", displayText: "Steel is cheaper per kilogram.", screenTip: "View evidence" });
+    /* Bookmark links (`HYPERLINK \l "evidence-<id>"`), not `#evidence-<id>`
+       web-style addresses: the container pops an "address of this site is not
+       valid" dialog for anything that is not a Bookmark link. */
+    expect(sf.hyperlinkCalls[0]).toEqual({ address: 'evidence-e1" \\o "View evidence', displayText: "Aluminium reduces chassis mass.", remove: false, isBookmark: true });
+    expect(sf.hyperlinkCalls[1]).toEqual({ address: 'evidence-e2" \\o "View evidence', displayText: "Steel is cheaper per kilogram.", remove: false, isBookmark: true });
+  });
+
+  it("turns off Ctrl+click for hyperlinks, so a plain click follows a finding link", async () => {
+    render(<DocEditor taskId="t1" projectId="p1" />);
+    await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
+    expect(sf.documentEditor.useCtrlClickToFollowHyperlink).toBe(false);
   });
 
   it("clicking a finding link shows its detail in the sidebar, with a way back to Comments", async () => {
     render(<DocEditor taskId="t1" projectId="p1" />);
     await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
-    const args = { navigationLink: "#evidence-e2", isHandled: false };
+    /* What the editor reports for a bookmark link: the id in localReference,
+       linkType Bookmark, no navigation link. */
+    const args = { navigationLink: "", localReference: "evidence-e2", linkType: "Bookmark", isHandled: false };
     act(() => { sf.listeners["requestNavigate"]?.(args as never); });
     expect(args.isHandled).toBe(true);
     expect(await screen.findByText("Steel is cheaper per kilogram.")).toBeInTheDocument();
@@ -158,6 +179,34 @@ describe("Findings inside the document open the right sidebar", () => {
     act(() => { sf.listeners["requestNavigate"]?.(args as never); });
     expect(args.isHandled).toBe(false);
     expect(await screen.findByText("No open comments. Select text and click “New”.")).toBeInTheDocument();
+  });
+
+  it("still opens the sidebar for a legacy #evidence- navigation link", async () => {
+    render(<DocEditor taskId="t1" projectId="p1" />);
+    await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
+    const args = { navigationLink: "#evidence-e1", isHandled: false };
+    act(() => { sf.listeners["requestNavigate"]?.(args as never); });
+    expect(args.isHandled).toBe(true);
+    expect(await screen.findByText("Aluminium reduces chassis mass.")).toBeInTheDocument();
+    expect(screen.getByText("Evidence 001 · Alloy study")).toBeInTheDocument();
+  });
+
+  it("removes a stale #evidence- link saved in the document before re-linking it", async () => {
+    sf.state.fieldCode = 'HYPERLINK "#evidence-e1" \\o "View evidence"';
+    render(<DocEditor taskId="t1" projectId="p1" />);
+    await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
+    /* Both claims sat inside a stale finding link, so both fields are removed;
+       the bookmark links are still applied afterwards. */
+    expect(sf.state.removeHyperlinkCalls).toBe(2);
+    expect(sf.hyperlinkCalls[0].isBookmark).toBe(true);
+    expect(sf.hyperlinkCalls[1].isBookmark).toBe(true);
+  });
+
+  it("leaves a non-finding hyperlink on the claim text alone", async () => {
+    sf.state.fieldCode = 'HYPERLINK "https://example.com/paper"';
+    render(<DocEditor taskId="t1" projectId="p1" />);
+    await waitFor(() => expect(sf.hyperlinkCalls).toHaveLength(2));
+    expect(sf.state.removeHyperlinkCalls).toBe(0);
   });
 });
 

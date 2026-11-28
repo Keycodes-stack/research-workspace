@@ -68,6 +68,11 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
   const quotes = useRef<Record<string, string>>({});
   const versionRef = useRef(0);
   const lastSaved = useRef("");
+  /* A save in flight, and whether an edit arrived while it was running. Two
+     saves must never fly with the same base version: the second would 409
+     against the first one's success. */
+  const savingRef = useRef(false);
+  const saveQueuedRef = useRef(false);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState("");
   const [aiDrafted, setAiDrafted] = useState(false);
@@ -152,23 +157,79 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
     return () => { live = false; };
   }, [taskId]);
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /* The gateway answers 502 ("upstream unavailable") while the AI service
+     restarts or wakes up, and fetch throws (status 0) when the network drops:
+     both are transient, worth one retry, and never a reason to strand the
+     user's edits in "Couldn't save" until their next keystroke. */
+  const isTransientSaveError = (err: unknown) =>
+    err instanceof ApiError && (err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504);
+
+  /* A 409 means the stored version moved. If the stored body is exactly what
+     this editor last saved, nothing else changed the document — our own
+     earlier save landed but its response was lost — so adopting the stored
+     version and retrying is safe. Any other stored body is a genuine change
+     elsewhere: keep the conflict, never overwrite it. */
+  const recoverStaleVersion = async (): Promise<boolean> => {
+    try {
+      const doc = await api.workPackageDocument(taskId);
+      if (doc.format === "sfdt" && doc.body === lastSaved.current) {
+        versionRef.current = doc.version;
+        return true;
+      }
+    } catch {
+      /* the reload check itself failed — stay in conflict */
+    }
+    return false;
+  };
+
   const save = async () => {
-    const e = de();
-    if (!e) return;
-    const body = e.serialize();
-    if (body === lastSaved.current) {
-      setStatus("saved");
+    /* Serialise saves: an edit that arrives while a save is in flight is
+       queued and saved afterwards, re-serialised with the fresh version,
+       instead of racing the in-flight save on the same base version. */
+    if (savingRef.current) {
+      saveQueuedRef.current = true;
       return;
     }
-    setStatus("saving");
+    savingRef.current = true;
     try {
-      const res = await api.saveWorkPackageDocument(taskId, body, versionRef.current, "sfdt");
-      versionRef.current = res.version;
-      lastSaved.current = body;
-      setAiDrafted(false); // the AI label goes once someone saves their own version
-      setStatus("saved");
-    } catch (err) {
-      setStatus(err instanceof ApiError && err.status === 409 ? "conflict" : "unsaved");
+      let retries = 0;
+      let recovered = false;
+      for (;;) {
+        const e = de();
+        if (!e) return;
+        const body = e.serialize();
+        if (body === lastSaved.current) {
+          setStatus("saved");
+        } else {
+          setStatus("saving");
+          try {
+            const res = await api.saveWorkPackageDocument(taskId, body, versionRef.current, "sfdt");
+            versionRef.current = res.version;
+            lastSaved.current = body;
+            setAiDrafted(false); // the AI label goes once someone saves their own version
+            setStatus("saved");
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 409 && !recovered && (await recoverStaleVersion())) {
+              recovered = true;
+              continue;
+            }
+            if (isTransientSaveError(err) && retries < 1) {
+              retries += 1;
+              await sleep(1000);
+              continue;
+            }
+            setStatus(err instanceof ApiError && err.status === 409 ? "conflict" : "unsaved");
+          }
+        }
+        if (!saveQueuedRef.current) return;
+        saveQueuedRef.current = false;
+        retries = 0;
+        recovered = false;
+      }
+    } finally {
+      savingRef.current = false;
     }
   };
 
@@ -193,14 +254,21 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
   );
 
   /* Clicking a finding's link inside the document opens its detail in the right
-     sidebar — no navigation away from the workspace. Links are internal
-     #evidence-<item id> addresses, intercepted here (isHandled stops the editor
-     from following them anywhere). */
-  const handleRequestNavigate = useCallback((args: { navigationLink: string; isHandled: boolean }) => {
-    const m = /^#evidence-(.+)$/.exec(args.navigationLink ?? "");
-    if (!m) return;
+     sidebar — no navigation away from the workspace. Finding links are
+     intra-document bookmark links (`HYPERLINK \l "evidence-<item id>"`), so the
+     editor reports them with linkType "Bookmark" and the id in localReference
+     (the `#evidence-<id>` form is still accepted for documents linked before
+     this fix). isHandled stops the editor from following them anywhere — in
+     particular it stops the container's own requestNavigate handler, which
+     otherwise treats a `#evidence-...` address as an invalid file address and
+     pops an "address of this site is not valid" dialog. */
+  const handleRequestNavigate = useCallback((args: { navigationLink: string; localReference?: string; isHandled: boolean }) => {
+    const id =
+      /^#evidence-(.+)$/.exec(args.navigationLink ?? "")?.[1] ??
+      /^evidence-(.+)$/.exec(args.localReference ?? "")?.[1];
+    if (!id) return;
     args.isHandled = true;
-    const item = itemsRef.current.find((i) => i.id === m[1]);
+    const item = itemsRef.current.find((i) => i.id === id);
     if (item) {
       setPanel(true);
       setFinding(item);
@@ -209,9 +277,16 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
 
   /* The document's Findings are plain text, so the links are applied in the editor
      after open(): each finding's claim text is located with the editor search and
-     turned into a hyperlink with the same display text. A claim the search cannot
-     locate simply stays plain text; user edits to a finding line break its link,
-     and the mapping is never stored — it is re-applied on every open. */
+     turned into a bookmark hyperlink (`HYPERLINK \l "evidence-<id>"`) with the same
+     display text. A bookmark link — not a `#evidence-<id>` web-style address —
+     is what keeps the container from popping its "address of this site is not
+     valid" dialog: the container only handles non-Bookmark links. A claim the
+     search cannot locate simply stays plain text; user edits to a finding line
+     break its link, and the mapping is never stored — it is re-applied on every
+     open. A claim already carrying a stale finding link from before this fix
+     (a `#evidence-<id>` field saved in the document) has that field removed
+     first, so the old address can never fire the dialog again; any other
+     hyperlink on the text is left alone. */
   const applyFindingLinks = async () => {
     let items: EvidenceItem[] = [];
     try {
@@ -232,7 +307,24 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
         if (!results || results.length === 0) continue;
         results.index = 0;
         results.navigate();
-        e.editor.insertHyperlink(`#evidence-${item.id}`, claim, "View evidence");
+        const stale = e.selection.getHyperlinkField();
+        if (stale) {
+          try {
+            if (e.selection.getFieldCode(stale).includes("evidence-")) {
+              e.editor.removeHyperlink();
+              /* removal moves the caret — find the claim text again */
+              e.search.findAll(claim);
+              if (!e.search.searchResults || e.search.searchResults.length === 0) continue;
+              e.search.searchResults.index = 0;
+              e.search.searchResults.navigate();
+            }
+          } catch {
+            /* a stale link we cannot remove stays; the new link is still applied */
+          }
+        }
+        /* isBookmark=true writes `HYPERLINK \l "evidence-<id>"`; the screen tip is
+           appended the same way insertHyperlink builds it (`" \o "View evidence"`). */
+        e.editor.insertHyperlinkInternal(`evidence-${item.id}" \\o "View evidence`, claim, false, true);
       }
       e.search.clearSearchHighlight();
       e.selection.moveToDocumentStart();
@@ -250,6 +342,13 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
       c.documentEditor.open(INITIAL_SFDT); // unreadable stored copy – start from the template
     }
     c.documentEditor.documentName = loaded.title;
+    /* Hyperlinks follow on Ctrl+click by default (useCtrlClickToFollowHyperlink),
+       so a plain click on a finding only placed the cursor. Finding links must
+       follow on a plain click, and the editor's own tooltip then reads
+       "Click to follow link" instead of "Ctrl+Click to follow link". The
+       container component does not forward this setting, so it is set on the
+       inner editor directly. */
+    c.documentEditor.useCtrlClickToFollowHyperlink = false;
     c.documentEditor.addEventListener("requestNavigate", handleRequestNavigate);
     c.ribbon?.showTab("Developer", false);
     readQuotes();
@@ -413,6 +512,15 @@ export default function DocEditor({ taskId, projectId }: { taskId: string; proje
             {readOnly && "Read-only · "}
             {tracking && "Tracking changes · "}
             {statusText}
+            {status === "unsaved" && (
+              <button
+                type="button"
+                onClick={() => void save()}
+                className="ml-2 font-semibold text-blue underline underline-offset-2"
+              >
+                Retry
+              </button>
+            )}
           </span>
         </div>
       </div>

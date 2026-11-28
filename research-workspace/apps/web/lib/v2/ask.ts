@@ -9,7 +9,7 @@ export const SCOPES: { value: EvidenceScope; label: string; hint: string }[] = [
 ];
 
 /* Per-browser conveniences: the last project and source choice. Storage can be blocked, so every access is guarded. */
-const PREF = { project: "v2:ask:project", scope: "v2:ask:scope" } as const;
+const PREF = { project: "v2:ask:project", scope: "v2:ask:scope", lastRun: "v2:home:last-run" } as const;
 const PENDING = "v2:ask:pending:";
 
 function read(store: () => Storage, key: string): string | null {
@@ -29,6 +29,16 @@ export const prefs = {
     return SCOPES.some((x) => x.value === s) ? (s as EvidenceScope) : "both";
   },
   setScope: (s: EvidenceScope) => write(local, PREF.scope, s),
+  /** The last research run Home showed (?running=<task>&project=<project>): Home keeps showing its final state
+    on a plain visit, without the URL parameters. Cleared only by the browser. */
+  lastRun: (): { project: string; task: string } | null => {
+    try {
+      const v = read(local, PREF.lastRun);
+      const parsed = v ? JSON.parse(v) : null;
+      return parsed && typeof parsed.project === "string" && typeof parsed.task === "string" ? parsed : null;
+    } catch { return null; }
+  },
+  setLastRun: (project: string, task: string) => write(local, PREF.lastRun, JSON.stringify({ project, task })),
 };
 
 /** Home hands the first question to the chat page in this tab (never in the URL, which servers and history keep). */

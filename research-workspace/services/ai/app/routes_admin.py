@@ -24,8 +24,20 @@ PERMISSIONS = [
 ]
 
 
+async def ensure_owner_member(pool, project_id: UUID) -> None:
+    """A project always has its creator as owner (migration 007's trigger + backfill). If that membership row is
+    missing — a project made before the trigger existed, or one seeded straight into the table — the Members list
+    renders empty even though the project has an owner, while the sponsor/lead names live on the project itself.
+    Recreate just that one row, from the project's own owner_id. A no-op when the owner is already a member."""
+    await pool.execute(
+        """INSERT INTO project_members (project_id, user_id, role, added_by)
+           SELECT $1, owner_id, 'owner', owner_id FROM projects WHERE id = $1 AND owner_id IS NOT NULL
+           ON CONFLICT (project_id, user_id) DO NOTHING""", project_id)
+
+
 @router.get("/projects/{project_id}/members")
 async def members(project=Depends(project_for_user), pool=Depends(get_pool)):
+    await ensure_owner_member(pool, project["id"])
     rows = await pool.fetch(
         """SELECT m.user_id, m.role::text AS role, m.role_id, r.name AS role_name, m.created_at
            FROM project_members m LEFT JOIN project_roles r ON r.id = m.role_id

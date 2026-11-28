@@ -32,15 +32,20 @@ export default function ProjectAccess({ projectId }: { projectId: string }) {
   const [newMember, setNewMember] = useState({ user_id: "", role_id: "" });
   const [renaming, setRenaming] = useState<{ id: string; name: string } | null>(null);
 
+  // Roles and members load independently: one failing call used to blank both sections (Promise.all throws
+  // away the good response with the bad one), so a roles failure showed "No members." too, and vice versa.
   const load = async () => {
-    try {
-      const [r, m] = await Promise.all([api.roles(projectId), api.members(projectId)]);
-      setRoles(r.roles); setYourRole(r.your_role); setRestricted(r.role_restrictions); setMembers(m.members);
-      setNewMember((x) => (x.role_id || !r.roles.length ? x : { ...x, role_id: r.roles[0].id }));
-      setError("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not load the access settings.");
+    const [r, m] = await Promise.allSettled([api.roles(projectId), api.members(projectId)]);
+    const problems: string[] = [];
+    if (r.status === "fulfilled") {
+      setRoles(r.value.roles); setYourRole(r.value.your_role); setRestricted(r.value.role_restrictions);
+      setNewMember((x) => (x.role_id || !r.value.roles.length ? x : { ...x, role_id: r.value.roles[0].id }));
+    } else {
+      problems.push(`roles (${r.reason instanceof Error ? r.reason.message : "could not be loaded"})`);
     }
+    if (m.status === "fulfilled") setMembers(m.value.members);
+    else problems.push(`members (${m.reason instanceof Error ? m.reason.message : "could not be loaded"})`);
+    setError(problems.length ? `Could not load the project's ${problems.join(" and ")}.` : "");
   };
   useEffect(() => { void load(); }, [projectId]);
 

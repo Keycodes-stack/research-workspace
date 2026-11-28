@@ -31,6 +31,12 @@ const fmtStarted = (iso: string) => {
  * its live steps (GET /tasks/{id}/evidence/progress) every 4s and shows the
  * latest one under the row — e.g. "Two models are reading 10 papers...".
  * Once a run finishes, polling stops and the complete/failed display stays.
+ * The heading follows the runs, never the arrival: "Research running" while any
+ * run is active, "Research complete" once the highlighted run (or every shown
+ * run) has finished, "Research failed" for a failed highlight. The "just
+ * started" tag is only for a run that is still active; a finished highlight
+ * shows when it finished instead, so the card never claims a completed run
+ * is still going.
  */
 export default function RunStatusCard({
   projectId,
@@ -80,9 +86,21 @@ export default function RunStatusCard({
     };
   }, [activeIds]);
 
+  // The heading is the runs' state, not the way Home was reached: a run that
+  // finished still shows its final state, it never keeps saying "running".
+  const highlightedRun = runs.find((r) => r.task_id === highlightTaskId);
+  const anyActive = runs.some((r) => r.status === "queued" || r.status === "running");
+  const heading = anyActive
+    ? "Research running"
+    : highlightedRun?.status === "complete" || (runs.length > 0 && runs.every((r) => r.status === "complete"))
+      ? "Research complete"
+      : highlightedRun?.status === "failed"
+        ? "Research failed"
+        : "Research status";
+
   return (
-    <section aria-label="Research running" className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
-      <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">Research running</h2>
+    <section aria-label={heading} className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
+      <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">{heading}</h2>
       {error && <p role="alert" className="mt-2 text-sm text-[#B42318]">{error}</p>}
       {loading && <p className="mt-2 text-sm text-body">Loading research status…</p>}
       {!loading && runs.length === 0 && (
@@ -107,10 +125,16 @@ export default function RunStatusCard({
                     {run.code ? `${run.code} · ` : ""}{run.work_package_title ?? "Work package"}
                   </p>
                   <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${chip.cls}`}>{chip.label}</span>
-                  {highlighted && <span className="text-xs text-body">· just started</span>}
+                  {highlighted && active && <span className="text-xs text-body">· just started</span>}
+                  {highlighted && !active && run.finished_at && fmtStarted(run.finished_at) && (
+                    <span className="text-xs text-body">· finished {fmtStarted(run.finished_at)}</span>
+                  )}
                 </div>
                 {fmtStarted(run.started_at) && (
                   <p className="mt-1 text-xs text-body">Started {fmtStarted(run.started_at)}</p>
+                )}
+                {!active && run.finished_at && fmtStarted(run.finished_at) && (
+                  <p className="mt-1 text-xs text-body">Finished {fmtStarted(run.finished_at)}</p>
                 )}
                 {active && steps[run.task_id] && (
                   <p role="status" className="mt-1 text-sm text-body">{steps[run.task_id]}</p>

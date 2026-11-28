@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvidenceLibrary as Library } from "@/lib/types";
 
 const library: Library = {
@@ -29,6 +29,10 @@ const library: Library = {
 };
 
 const projectEvidence = vi.fn(async () => library);
+const projectById = vi.fn(async () => ({ id: "p1", slug: "dna", name: "DNA heat study" }));
+const useProjectsMock = vi.hoisted(() =>
+  vi.fn(() => ({ projects: [{ id: "p1", slug: "dna", name: "DNA heat study" }], loading: false, error: null })),
+);
 const runTaskEvidence = vi.fn(async () => ({ task_id: "t1", status: "queued" }));
 const evidenceDetail = vi.fn(async () => ({
   item: library.items[0],
@@ -47,17 +51,28 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/lib/api", () => ({
   api: {
     projectEvidence: (...args: unknown[]) => projectEvidence(...(args as [])),
+    project: (...args: unknown[]) => projectById(...(args as [])),
     runTaskEvidence: (...args: unknown[]) => runTaskEvidence(...(args as [])),
     evidenceDetail: (...args: unknown[]) => evidenceDetail(...(args as [])),
   },
 }));
 vi.mock("@/components/v2/V2Frame", () => ({
-  useProjects: () => ({ projects: [{ id: "p1", slug: "dna", name: "DNA heat study" }], loading: false, error: null }),
+  useProjects: (...args: unknown[]) => useProjectsMock(...(args as [])),
 }));
 
 import EvidenceLibrary from "@/components/v2/evidence/EvidenceLibrary";
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => {
+  vi.clearAllMocks();
+  window.history.pushState({}, "", "/");
+  useProjectsMock.mockReturnValue({
+    projects: [{ id: "p1", slug: "dna", name: "DNA heat study" }],
+    loading: false,
+    error: null,
+  });
+});
+
+afterEach(() => { window.history.pushState({}, "", "/"); });
 
 describe("Evidence Library", () => {
   it("shows the totals, the work package run and each evidence record", async () => {
@@ -110,5 +125,54 @@ describe("Evidence Library", () => {
     expect(runTaskEvidence).toHaveBeenCalledWith("t1");
     expect(push).not.toHaveBeenCalled();
     expect(await screen.findByRole("alert")).toHaveTextContent("The models are busy.");
+  });
+
+  it("shows a loading state, not zeros or 'No work packages yet', while the evidence loads", () => {
+    projectEvidence.mockImplementationOnce(() => new Promise<Library>(() => {}));
+    render(<EvidenceLibrary id="p1" />);
+    expect(screen.getByText("Loading evidence…")).toBeInTheDocument();
+    expect(screen.getByText("Loading evidence records…")).toBeInTheDocument();
+    expect(screen.queryByText(/No work packages yet/)).not.toBeInTheDocument();
+    expect(screen.queryByText("No evidence matches these filters.")).not.toBeInTheDocument();
+    // The totals are dashes until data arrives, never literal zeros.
+    expect(screen.getByText("Total sources").previousSibling).toHaveTextContent("–");
+    expect(screen.getByText("Claims supported").previousSibling).toHaveTextContent("–");
+    expect(screen.getByText("Need verification").previousSibling).toHaveTextContent("–");
+    expect(projectById).not.toHaveBeenCalled();
+  });
+
+  it("a work_package id that matches no run shows the whole project's evidence, not zeros", async () => {
+    window.history.pushState({}, "", "/projects/p1/evidence?work_package=t-missing");
+    render(<EvidenceLibrary id="p1" />);
+    expect(await screen.findByText("Project: DNA heat study")).toBeInTheDocument();
+    expect(screen.getByText(/isn't in this project/)).toBeInTheDocument();
+    // The real totals and records, not the scoped 0 / "No work packages yet" page.
+    expect(screen.getByText("12")).toBeInTheDocument();
+    expect(screen.queryByText(/No work packages yet/)).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "Evidence 001" })).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "WP-1 · Chassis research" })).toBeInTheDocument();
+  });
+
+  it("a work_package id that matches a run still scopes to that work package", async () => {
+    window.history.pushState({}, "", "/projects/p1/evidence?work_package=t1");
+    render(<EvidenceLibrary id="p1" />);
+    expect(await screen.findByText("Project: DNA heat study")).toBeInTheDocument();
+    expect(screen.queryByText(/isn't in this project/)).not.toBeInTheDocument();
+    expect(screen.getByRole("listitem", { name: "Evidence 001" })).toBeInTheDocument();
+    expect(screen.getByText("10 papers read")).toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "WP-1 · Chassis research" })).toBeInTheDocument();
+  });
+
+  it("resolves the project name from the server when the projects list does not have it", async () => {
+    useProjectsMock.mockReturnValue({ projects: [], loading: false, error: null });
+    render(<EvidenceLibrary id="p1" />);
+    expect(await screen.findByText("Project: DNA heat study")).toBeInTheDocument();
+    expect(projectById).toHaveBeenCalledWith("p1");
+  });
+
+  it("does not fetch the project separately when the list already has it", async () => {
+    render(<EvidenceLibrary id="p1" />);
+    expect(await screen.findByText("Project: DNA heat study")).toBeInTheDocument();
+    expect(projectById).not.toHaveBeenCalled();
   });
 });

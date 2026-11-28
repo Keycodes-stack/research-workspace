@@ -5,7 +5,7 @@ import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectAccess from "@/components/v2/organization/ProjectAccess";
 import { useProjects } from "@/components/v2/V2Frame";
 import { api, ApiError } from "@/lib/api";
-import type { Person } from "@/lib/types";
+import type { Person, Project } from "@/lib/types";
 
 type Fields = { full_name: string; department: string; job_title: string; email: string };
 const EMPTY: Fields = { full_name: "", department: "", job_title: "", email: "" };
@@ -22,11 +22,29 @@ export default function OrganizationPage() {
   const { projects } = useProjects();
   const [accessProject, setAccessProject] = useState("");
   const chosenProject = accessProject || projects[0]?.id || "";
+  /* The code comes first: two projects can share a title (P-038 and P-039 are
+     both "AI"), and a long title truncated to the select's width still shows
+     the code that tells them apart. Projects without a code show just the title. */
+  const labelOf = (p: Project) => (p.code ? `${p.code} — ${p.name}` : p.name);
+  const chosen = projects.find((p) => p.id === chosenProject);
 
+  // The gateway answers 502 ("upstream unavailable") while the AI service restarts or wakes up, so one
+  // transient failure must not leave the directory blank: retry once after a short pause, then show the error.
   const load = async () => {
-    try { setPeople(await api.people(true)); setError(""); }
-    catch (e) { setError(e instanceof Error ? e.message : "The directory could not be loaded."); }
-    finally { setLoading(false); }
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          setPeople(await api.people(true)); setError(""); return;
+        } catch (e) {
+          const transient = e instanceof ApiError && (e.status === 502 || e.status === 0);
+          if (!transient || attempt >= 1) {
+            setError(e instanceof Error ? e.message : "The directory could not be loaded.");
+            return;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+      }
+    } finally { setLoading(false); }
   };
   useEffect(() => { void load(); }, []);
 
@@ -126,10 +144,11 @@ export default function OrganizationPage() {
             <h2 id="project-access" className="text-lg font-semibold text-[#101D37]">Project access</h2>
             <p className="mt-1 text-sm text-[#667085]">Define the roles of a project, and set each member&apos;s role.</p>
           </div>
-          {projects.length > 0 && <label className="flex items-center gap-2 text-sm text-[#344054]">Project
+          {projects.length > 0 && <label className="flex min-w-0 items-center gap-2 text-sm text-[#344054]">Project
             <select aria-label="Project" value={chosenProject} onChange={(e) => setAccessProject(e.target.value)}
-              className="rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-2 text-sm text-[#101D37] outline-none focus:border-blue">
-              {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+              title={chosen ? labelOf(chosen) : undefined}
+              className="max-w-[min(28rem,calc(100vw-3rem))] truncate rounded-[10px] border border-[#EDEDF0] bg-white px-3 py-2 text-sm text-[#101D37] outline-none focus:border-blue">
+              {projects.map((p) => <option key={p.id} value={p.id}>{labelOf(p)}</option>)}
             </select>
           </label>}
         </div>

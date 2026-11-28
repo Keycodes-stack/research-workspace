@@ -49,6 +49,9 @@ function HomePageContent() {
   const [error, setError] = useState<string | null>(null);
   const [chats, setChats] = useState<ChatRow[]>([]);
   const [sources, setSources] = useState<SourceRow[]>([]);
+  // The side lists start empty: while they load, say so — "No chats yet" / "No sources yet" before the first
+  // response is a false empty, not an empty project.
+  const [sideLoading, setSideLoading] = useState(false);
   const [sideError, setSideError] = useState<string | null>(null);
   const nextId = useRef(0);
   const conversation = useRef<HTMLDivElement>(null);
@@ -67,10 +70,13 @@ function HomePageContent() {
     setProjectId(options.find((o) => o.value === saved)?.value ?? options[0]?.value ?? null);
   }, [options, projectId]);
 
-  const loadSide = (pid: string) =>
-    Promise.all([api.chats(pid), api.sources(pid)])
+  const loadSide = (pid: string) => {
+    setSideLoading(true);
+    return Promise.all([api.chats(pid), api.sources(pid)])
       .then(([c, s]) => { setChats(c); setSources(s); setSideError(null); })
-      .catch((e) => setSideError(e instanceof Error ? e.message : "Could not load this project."));
+      .catch((e) => setSideError(e instanceof Error ? e.message : "Could not load this project."))
+      .finally(() => setSideLoading(false));
+  };
 
   useEffect(() => {
     if (!projectId) return;
@@ -125,8 +131,17 @@ function HomePageContent() {
   // Research runs: a Run / Run again click lands here with ?running=<work package>&project=<project>.
   // The card carries that project id — Home's Ask list above only holds open-discovery projects,
   // while the run's project may be closed-repository. Polled every 4s while any run is active.
-  const runProjectId = searchParams.get("project");
-  const runningTaskId = searchParams.get("running");
+  // The last run is remembered in this browser (prefs.lastRun), so a plain Home visit still shows the run's
+  // final state instead of dropping the card the moment the URL parameters are gone.
+  const [savedRun, setSavedRun] = useState<{ project: string; task: string } | null>(null);
+  useEffect(() => { setSavedRun(prefs.lastRun()); }, []);
+  const paramProjectId = searchParams.get("project");
+  const paramRunningId = searchParams.get("running");
+  useEffect(() => {
+    if (paramProjectId && paramRunningId) prefs.setLastRun(paramProjectId, paramRunningId);
+  }, [paramProjectId, paramRunningId]);
+  const runProjectId = paramProjectId ?? savedRun?.project ?? null;
+  const runningTaskId = paramRunningId ?? savedRun?.task ?? null;
   const [runLibrary, setRunLibrary] = useState<EvidenceLibraryData | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const loadRuns = useCallback(async () => {
@@ -139,7 +154,10 @@ function HomePageContent() {
     }
   }, [runProjectId]);
   useEffect(() => {
-    if (runProjectId) void loadRuns();
+    if (!runProjectId) return;
+    setRunLibrary(null);
+    setRunError(null);
+    void loadRuns();
   }, [runProjectId, loadRuns]);
   const activeRuns = useMemo(
     () => (runLibrary?.runs ?? []).filter((r) => r.status === "queued" || r.status === "running"),
@@ -237,7 +255,9 @@ function HomePageContent() {
             )}
           </div>
 
-          {runProjectId && (
+          {/* The card stays while its run is loading or has rows to show (the highlighted run, or an active one).
+            A remembered run whose work package is gone leaves no rows, so no empty card is shown. */}
+          {runProjectId && (runLibrary === null || runRows.length > 0) && (
             <RunStatusCard
               projectId={runProjectId}
               highlightTaskId={runningTaskId}
@@ -251,7 +271,9 @@ function HomePageContent() {
           <div className="grid grid-cols-1 gap-[30px] md:grid-cols-3">
             <section className="flex flex-col gap-4">
               <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">Recent chats</h2>
-              {chats.length === 0 ? (
+              {sideLoading ? (
+                <p className="text-sm text-body">Loading chats…</p>
+              ) : chats.length === 0 ? (
                 <p className="text-sm text-body">No chats in this project yet.</p>
               ) : (
                 <ul className="flex flex-col gap-3">
@@ -267,7 +289,9 @@ function HomePageContent() {
             </section>
             <section className="flex flex-col gap-4">
               <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">Your projects</h2>
-              {projects.length === 0 ? (
+              {loading ? (
+                <p className="text-sm text-body">Loading projects…</p>
+              ) : projects.length === 0 ? (
                 <p className="text-sm text-body">No projects yet.</p>
               ) : (
                 <ul className="flex flex-col gap-3">
@@ -281,7 +305,9 @@ function HomePageContent() {
             </section>
             <section className="flex flex-col gap-4">
               <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">Sources in this project</h2>
-              {sources.length === 0 ? (
+              {sideLoading ? (
+                <p className="text-sm text-body">Loading sources…</p>
+              ) : sources.length === 0 ? (
                 <p className="text-sm text-body">No sources yet. Add PDFs with + above, or search online.</p>
               ) : (
                 <ul className="flex flex-col gap-3">

@@ -232,7 +232,11 @@ export default function NewProjectFlow() {
     e.preventDefault();
     const text = prompt.trim(); if (!text) return;
     const full = files.length ? `${text}\n\nAttached files (names only): ${files.join(", ")}` : text;
-    const initial: ProjectDraft = { ...EMPTY_PROJECT_DRAFT, name: nameFrom(text), objective: text };
+    // The raw idea is kept as the business case (background), not the objective: the objective is left empty so
+    // the intake drafts a concise summary for it, and the overview never shows the pasted brief verbatim. The
+    // full brief still reaches the AI through the conversation history. Background is capped at its field limit
+    // so a long brief cannot block saving the charter.
+    const initial: ProjectDraft = { ...EMPTY_PROJECT_DRAFT, name: nameFrom(text), background: text.slice(0, FIELD_LIMITS.background) };
     const first = { from: "user" as const, text: full };
     setDraft(initial); setMessages([first]); setPhase("chat"); setRound(0); setAsked([]); setSuggested([]); setQuestions([]);
     await runIntake("start", full, [first], initial, 0);

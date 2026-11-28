@@ -56,4 +56,19 @@ describe("AI-assisted project creation", () => {
     expect(screen.queryByRole("button", { name: "Speak your idea" })).toBeNull();
     expect(screen.getByText(/PDFs and images are added to the project/)).toBeInTheDocument();
   });
+
+  it("keeps the pasted brief as background and leaves the objective for the AI to summarise", async () => {
+    const idea = "We need to know whether solid-state batteries will be viable for electric vehicles by 2030, what they will cost, and which chemistries to back.";
+    vi.mocked(api.projectIntake).mockResolvedValueOnce({ patch: {}, reply: "", questions: [], done: false, model: "m" });
+    renderFlow();
+    fireEvent.change(await screen.findByLabelText("Project idea"), { target: { value: idea } });
+    fireEvent.click(screen.getByRole("button", { name: "Start project setup" }));
+    await waitFor(() => expect(api.projectIntake).toHaveBeenCalled());
+    const body = vi.mocked(api.projectIntake).mock.calls[0][0];
+    // The overview shows the objective, so it must never be the pasted brief verbatim.
+    expect(body.draft.objective).toBe("");
+    expect(body.draft.background).toBe(idea);
+    expect(body.draft.name).toBeTruthy();
+    expect(body.text).toContain(idea);
+  });
 });

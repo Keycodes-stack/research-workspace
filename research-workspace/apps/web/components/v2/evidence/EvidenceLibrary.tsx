@@ -33,8 +33,18 @@ const isActive = (r: EvidenceRun) => r.status === "queued" || r.status === "runn
 
 export default function EvidenceLibrary({ id }: { id: string }) {
   const router = useRouter();
-  const { projects } = useProjects();
+  const { projects, loading: projectsLoading } = useProjects();
   const project = projects.find((p) => p.id === id || p.slug === id);
+  // The header name must not depend on the shared projects list alone: if that list settles without this
+  // project (or fails), fetch the project itself — the same id-or-slug the evidence call uses.
+  const [directName, setDirectName] = useState<string | null>(null);
+  useEffect(() => {
+    if (project || projectsLoading) return;
+    let live = true;
+    api.project(id).then((p) => { if (live) setDirectName(p.name); }).catch(() => { /* keep "…" */ });
+    return () => { live = false; };
+  }, [project, projectsLoading, id]);
+  const projectName = project?.name ?? directName;
   const [filter, setFilter] = useState<EvidenceFilter>({});
   const [onlyWp, setOnlyWp] = useState<string | null>(null);
   useEffect(() => {
@@ -104,7 +114,13 @@ export default function EvidenceLibrary({ id }: { id: string }) {
   };
 
   // Opened from one work package's sidebar (?work_package=<task id>): everything below is that package only.
-  const scoped = onlyWp !== null;
+  // The id is honoured only when the loaded data actually has that run. Before the first load settles there is
+  // no run to match, so scoping then would show literal 0s, "No work packages yet" and an empty filter — the
+  // false-empty library. A stale or wrong id (the sidebar can link another work package) did the same after
+  // load, hiding the project's real evidence; then the full library is shown, with a note.
+  const loaded = data !== null;
+  const scoped = onlyWp !== null && loaded && (data?.runs ?? []).some((r) => r.task_id === onlyWp);
+  const scopedMiss = onlyWp !== null && loaded && !scoped;
   const allRuns = data?.runs ?? [];
   const runs = scoped ? allRuns.filter((r) => r.task_id === onlyWp) : allRuns;
   const selectedCode = scoped ? allRuns.find((r) => r.task_id === onlyWp)?.code : undefined;
@@ -122,7 +138,7 @@ export default function EvidenceLibrary({ id }: { id: string }) {
       <section aria-label="Evidence library" className="rounded-[20px] border border-[#EDEDF0] bg-[#FAFAFA] p-5">
         <div className="rounded-2xl bg-[#EFF5FF] px-6 py-5 text-center">
           <p className="text-xs font-medium tracking-wide text-body uppercase">Evidence library</p>
-          <h2 className="mt-1 text-xl font-semibold text-dark">Project: {project?.name ?? "…"}</h2>
+          <h2 className="mt-1 text-xl font-semibold text-dark">Project: {projectName ?? "…"}</h2>
           <p className="mt-1 text-sm text-body">Research evidence for each work package</p>
         </div>
 
@@ -134,8 +150,16 @@ export default function EvidenceLibrary({ id }: { id: string }) {
 
         {error && <p role="alert" className="mt-4 text-sm text-[#B42318]">{error}</p>}
 
+        {scopedMiss && (
+          <p role="status" className="mt-4 text-sm text-body">
+            That work package isn't in this project — showing all of the project's evidence.
+          </p>
+        )}
+
         <h3 className="mt-6 text-sm font-semibold text-[#101D37]">Work packages</h3>
-        {runs.length === 0 ? (
+        {!loaded ? (
+          error ? null : <p className="mt-2 text-sm text-body">Loading evidence…</p>
+        ) : runs.length === 0 ? (
           <p className="mt-2 text-sm text-body">No work packages yet. Add one from the project overview, and its research starts there.</p>
         ) : (
           <ul className="mt-2 flex flex-col gap-2">
@@ -231,7 +255,9 @@ export default function EvidenceLibrary({ id }: { id: string }) {
 
       <section aria-label="Evidence records" className="rounded-[20px] border border-[#EDEDF0] bg-[#FAFAFA] p-5">
         <h3 className="text-sm font-semibold text-[#101D37]">Evidence records</h3>
-        {items.length === 0 ? (
+        {!loaded ? (
+          error ? null : <p className="mt-3 text-sm text-body">Loading evidence records…</p>
+        ) : items.length === 0 ? (
           <p className="mt-3 text-sm text-body">
             {runs.some(isActive) ? "Researching the work packages. Evidence appears here when it is ready." : "No evidence matches these filters."}
           </p>

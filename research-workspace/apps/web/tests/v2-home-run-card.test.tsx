@@ -60,6 +60,7 @@ import HomePage from "@/app/(v2)/(app)/home/page";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mockSearch.params = new URLSearchParams();
   projectEvidence.mockImplementation(async (pid: string) =>
     pid === "p2" ? libraryFor([run({ task_id: "t9", code: "WP-9", work_package_title: "Locked work" })]) : libraryFor([]),
@@ -98,6 +99,39 @@ describe("Home run status card", () => {
     render(<V2Frame><HomePage /></V2Frame>);
     expect(await screen.findByText("Complete")).toBeInTheDocument();
     expect(screen.getByText(/10 papers read · Both models agree on the main claim\./)).toBeInTheDocument();
+  });
+
+  it("says 'Research complete' with a finished time for a completed run, never 'running' or 'just started'", async () => {
+    mockSearch.params = new URLSearchParams("running=t1&project=p1");
+    projectEvidence.mockResolvedValueOnce(libraryFor([
+      run({ task_id: "t1", status: "complete", statement: "Done.", papers_read: 10, finished_at: "2026-11-28T11:00:00Z" }),
+    ]));
+    render(<V2Frame><HomePage /></V2Frame>);
+    expect(await screen.findByRole("heading", { name: "Research complete" })).toBeInTheDocument();
+    expect(screen.getByText(/finished/)).toBeInTheDocument();
+    expect(screen.queryByText(/just started/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Research running" })).not.toBeInTheDocument();
+  });
+
+  it("keeps showing the last run on a plain Home visit, without the URL parameters", async () => {
+    localStorage.setItem("v2:home:last-run", JSON.stringify({ project: "p1", task: "t1" }));
+    projectEvidence.mockResolvedValueOnce(libraryFor([
+      run({ task_id: "t1", status: "complete", statement: "Done.", papers_read: 10, finished_at: "2026-11-28T11:00:00Z" }),
+    ]));
+    render(<V2Frame><HomePage /></V2Frame>);
+    expect(await screen.findByRole("heading", { name: "Research complete" })).toBeInTheDocument();
+    expect(screen.getByText("WP-1 · Pilot")).toBeInTheDocument();
+    expect(projectEvidence).toHaveBeenCalledWith("p1");
+  });
+
+  it("remembers the run a Run click lands with, so the next plain visit still shows it", async () => {
+    mockSearch.params = new URLSearchParams("running=t1&project=p1");
+    projectEvidence.mockResolvedValueOnce(libraryFor([
+      run({ task_id: "t1", status: "running" }),
+    ]));
+    render(<V2Frame><HomePage /></V2Frame>);
+    await screen.findByRole("heading", { name: "Research running" });
+    expect(localStorage.getItem("v2:home:last-run")).toBe(JSON.stringify({ project: "p1", task: "t1" }));
   });
 
   it("shows a failed run with its error and retries it", async () => {

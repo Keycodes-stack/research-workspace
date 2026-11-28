@@ -69,13 +69,15 @@ function ProjectsPanelInner({
   const [query, setQuery] = useState("");
   const [packages, setPackages] = useState<{ id: string; title: string }[]>([]);
   // The work package whose sections are shown: the one named in the URL (Overview/Evidence links carry it), else the
-  // one whose Workspace is open, else the first. Only packages of this project count.
+  // one whose Workspace is open, else the work package this route is about (/work-packages/<id>), else the first.
+  // Only packages of this project count.
   const pathname = usePathname();
   const params = useSearchParams();
-  const routeWp = pathname.match(/\/workspace\/([^/]+)/)?.[1] ?? null;
+  const routeWp = pathname.match(/\/(?:workspace|work-packages)\/([^/]+)/)?.[1] ?? null;
   const expandedWp = [params.get("work_package"), routeWp]
     .find((id) => !!id && packages.some((p) => p.id === id)) ?? packages[0]?.id ?? null;
-  const { projects: all } = useProjects();
+  // The shared projects list starts empty while it loads: showing 0 until then is a false count, so show "—".
+  const { projects: all, loading: projectsLoading } = useProjects();
   useEffect(() => {
     if (!showWorkPackages || !activeId) return;
     let live = true;
@@ -93,7 +95,7 @@ function ProjectsPanelInner({
           Total Projects
         </h2>
         <span className="pr-0.5 text-base leading-[1.5] font-semibold tracking-[-0.02em] text-blue">
-          {all.length}
+          {projectsLoading ? "—" : all.length}
         </span>
       </div>
 
@@ -110,6 +112,9 @@ function ProjectsPanelInner({
 
       {/* Figma Frame 2147232135: top 147, 186 wide, gap 10, 1px #EDEDF0 line between items */}
       <ul className="mt-[25px] flex w-[186px] flex-col gap-[10px]">
+        {projectsLoading && list.length === 0 && (
+          <li className="text-xs leading-[1.5] tracking-[-0.02em] text-body">Loading projects…</li>
+        )}
         {list.map((p, i) => {
           const active = p.id === activeId || p.slug === activeId;
           return (

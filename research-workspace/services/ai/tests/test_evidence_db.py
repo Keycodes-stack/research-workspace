@@ -138,6 +138,23 @@ def test_evidence_library_is_hidden_from_non_members(api):
     assert r.status_code in (403, 404)
 
 
+def test_evidence_library_loads_by_project_slug(api):
+    # The frontend links projects by slug (spec route /projects/[slug]); the library must return the same
+    # runs and totals by slug as by id — every earlier test here only used the id.
+    p = make_project(api, [{"title": "Pilot study", "brief": "{}"}])
+    assert p["slug"]
+    by_id = api.get(f"/projects/{p['id']}/evidence", headers=hdr()).json()
+    by_slug = api.get(f"/projects/{p['slug']}/evidence", headers=hdr())
+    assert by_slug.status_code == 200, by_slug.text
+    assert by_slug.json()["runs"] == by_id["runs"]
+    assert by_slug.json()["summary"] == by_id["summary"]
+
+
+def test_evidence_library_unknown_slug_is_404(api):
+    r = api.get("/projects/no-such-project/evidence", headers=hdr())
+    assert r.status_code == 404
+
+
 def test_unknown_evidence_item_is_404(api):
     p = make_project(api, [{"title": "Empty"}])
     (tid, _), = runs_by_task(api, p["id"]).items()
@@ -193,3 +210,40 @@ def test_refinement_writes_nothing_until_it_is_applied(api):
     assert applied.status_code == 200 and applied.json()["applied"] == 1
     listed = api.get("/projects", headers=hdr()).json()["projects"]
     assert next(x for x in listed if x["id"] == p["id"])["meta"]["lead"] == "Sara Chen"
+
+
+# ---- projects list counts and progress (issues 5 and 6) -------------------------------------------------------
+
+def listed(api, pid):
+    rows = api.get("/projects", headers=hdr()).json()["projects"]
+    return next(x for x in rows if x["id"] == pid)
+
+
+def test_list_counts_research_tasks_not_work_package_rows(api, db_url):
+    # A work_packages row with no research task is invisible everywhere else in the UI (overview, evidence,
+    # workspace all key off the task id), so the list must not count it — the live list read 4 work packages
+    # for a project whose overview showed 2 and whose database held 3 tasks.
+    p = make_project(api, [{"title": "Pilot study"}, {"title": "Costing"}])
+    on_db(db_url, lambda pool: pool.execute(
+        "INSERT INTO work_packages (project_id, code, title) VALUES ($1, 'WP-9', 'Orphan')", UUID(p["id"])))
+    assert listed(api, p["id"])["work_packages"] == 2
+    assert len(api.get(f"/projects/{p['id']}/tasks", headers=hdr()).json()["tasks"]) == 2
+
+
+def test_list_progress_comes_from_completed_runs_not_the_stored_zero(api, db_url):
+    # work_packages.progress defaults to 0 and only changes by hand, so averaging it made every project read
+    # 0% even with finished research. A finished run counts 100; the rest keep their stored progress.
+    p = make_project(api, [{"title": "Pilot study"}, {"title": "Costing"}])
+    tid = next(iter(runs_by_task(api, p["id"])))
+    assert listed(api, p["id"])["progress"] == 0
+    start_research(api, tid)
+    on_db(db_url, lambda pool: pool.execute(
+        "UPDATE evidence_runs SET status='complete', finished_at=now() WHERE task_id=$1", UUID(tid)))
+    assert listed(api, p["id"])["progress"] == 50
+
+
+def test_list_progress_is_null_with_no_work_packages(api):
+    p = make_project(api, [])
+    row = listed(api, p["id"])
+    assert row["work_packages"] == 0
+    assert row["progress"] is None

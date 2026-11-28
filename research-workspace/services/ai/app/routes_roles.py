@@ -15,6 +15,27 @@ from .governance import audit
 router = APIRouter(tags=["roles"])
 Level = Literal["viewer", "researcher", "lead_scientist", "admin", "owner"]
 
+# The system's own five default roles (migration 019). Every project has one role per level.
+DEFAULT_ROLES = (("Viewer", "viewer"), ("Researcher", "researcher"), ("Lead scientist", "lead_scientist"),
+                 ("Admin", "admin"), ("Owner", "owner"))
+
+
+async def ensure_default_roles(pool, project_id: UUID) -> None:
+    """A project whose roles were never created — made before migration 019, or on a database where its backfill
+    and trigger never ran — lists no roles at all, and the add-member form stays hidden behind the empty list.
+    Recreate the five default roles (and link any unlinked members to the role of their level), exactly as 019
+    does. A no-op when the project already has roles, so no invented or custom roles ever appear here."""
+    await pool.execute(
+        """INSERT INTO project_roles (project_id, name, level)
+           SELECT $1, v.name, v.level::project_role
+           FROM (VALUES ('Viewer', 'viewer'), ('Researcher', 'researcher'), ('Lead scientist', 'lead_scientist'),
+                        ('Admin', 'admin'), ('Owner', 'owner')) AS v(name, level)
+           WHERE NOT EXISTS (SELECT 1 FROM project_roles r WHERE r.project_id = $1)""", project_id)
+    await pool.execute(
+        """UPDATE project_members m SET role_id = r.id FROM project_roles r
+           WHERE m.project_id = $1 AND r.project_id = m.project_id AND r.level = m.role AND m.role_id IS NULL""",
+        project_id)
+
 
 class RoleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=60)
@@ -46,6 +67,7 @@ class RoleUpdate(BaseModel):
 
 @router.get("/projects/{project_id}/roles")
 async def list_roles(project=Depends(project_for_user), pool=Depends(get_pool)):
+    await ensure_default_roles(pool, project["id"])
     rows = await pool.fetch(
         """SELECT r.id, r.name, r.level::text AS level, count(m.user_id) AS members
            FROM project_roles r LEFT JOIN project_members m ON m.role_id = r.id
