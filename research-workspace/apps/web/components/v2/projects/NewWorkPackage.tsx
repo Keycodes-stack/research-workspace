@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { V2 } from "@/lib/v2/routes";
 
-/** "+ New work package": a title and a brief. The package gets its code, its Workspace document and its evidence research. */
+/** "+ New work package": a title and a brief. The package gets its code, its Workspace document and its evidence research. After a successful create, the Home tab opens (same browser tab). */
 export default function NewWorkPackage({ projectId, onCreated }: { projectId: string; onCreated: () => void }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [brief, setBrief] = useState("");
@@ -27,6 +30,8 @@ export default function NewWorkPackage({ projectId, onCreated }: { projectId: st
       });
       close();
       onCreated();
+      // The work package is created: open the Home tab, same browser tab.
+      router.push(`${V2}/home`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the work package.");
     } finally {

@@ -37,6 +37,13 @@ const evidenceDetail = vi.fn(async () => ({
   models: library.models,
 }));
 
+const push = vi.fn();
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(),
+  usePathname: () => "/projects/p1/evidence",
+  useRouter: () => ({ push, replace: vi.fn() }),
+  useParams: () => ({ id: "p1" }),
+}));
 vi.mock("@/lib/api", () => ({
   api: {
     projectEvidence: (...args: unknown[]) => projectEvidence(...(args as [])),
@@ -89,9 +96,19 @@ describe("Evidence Library", () => {
     expect(projectEvidence).toHaveBeenLastCalledWith("p1", { status: "pending" });
   });
 
-  it("re-runs a finished work package", async () => {
+  it("re-runs a finished work package and opens the Home tab", async () => {
     render(<EvidenceLibrary id="p1" />);
     await userEvent.click(await screen.findByRole("button", { name: "Run again" }));
     expect(runTaskEvidence).toHaveBeenCalledWith("t1");
+    expect(push).toHaveBeenCalledWith("/home");
+  });
+
+  it("stays on the page when the run cannot start", async () => {
+    runTaskEvidence.mockRejectedValueOnce(new Error("The models are busy."));
+    render(<EvidenceLibrary id="p1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Run again" }));
+    expect(runTaskEvidence).toHaveBeenCalledWith("t1");
+    expect(push).not.toHaveBeenCalled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("The models are busy.");
   });
 });

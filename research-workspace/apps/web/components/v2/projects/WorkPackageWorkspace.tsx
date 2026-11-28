@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
+import FindingsList from "@/components/v2/workspace/FindingsList";
 import { V2 } from "@/lib/v2/routes";
 
 /* Syncfusion touches `window` on import, so the editor only loads in the browser. */
@@ -20,6 +21,10 @@ export default function WorkPackageWorkspace({ projectId, taskId }: { projectId:
     <ProjectsPanel activeId={projectId} showWorkPackages activeSection="workspace" />
     <div className="flex min-w-0 flex-1 flex-col">
       <TopBar current="Workspace" trail={[{ label: "Projects", href: `${V2}/projects` }]} />
+      {/* Clickable Findings: the document's Findings are plain SFDT text with no evidence id,
+          so the list lives here, driven by this work package's evidence items — each row is the
+          finding, highlighted, and links to its Evidence record. */}
+      <FindingsList projectId={projectId} taskId={taskId} />
       {/* keyed by work package: opening another one re-creates the editor instead of keeping the previous document */}
       <DocEditor key={taskId} taskId={taskId} />
     </div>

@@ -1,11 +1,13 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { api } from "@/lib/api";
 import { useProjects } from "@/components/v2/V2Frame";
 import { ModelLogo } from "@/components/v2/knowledge/ModelLogos";
 import { reportToMarkdown } from "@/lib/evidenceReport";
 import type { EvidenceDetail, EvidenceFilter, EvidenceItem, EvidenceLibrary as Library, EvidenceRun } from "@/lib/types";
+import { V2 } from "@/lib/v2/routes";
 
 const ORIGIN_LABEL: Record<string, string> = {
   user_upload: "Uploaded PDF",
@@ -30,6 +32,7 @@ const Chip = ({ cls, children }: { cls: string; children: ReactNode }) => (
 const isActive = (r: EvidenceRun) => r.status === "queued" || r.status === "running";
 
 export default function EvidenceLibrary({ id }: { id: string }) {
+  const router = useRouter();
   const { projects } = useProjects();
   const project = projects.find((p) => p.id === id || p.slug === id);
   const [filter, setFilter] = useState<EvidenceFilter>({});
@@ -88,12 +91,15 @@ export default function EvidenceLibrary({ id }: { id: string }) {
     setBusy(taskId);
     try {
       await api.runTaskEvidence(taskId);
-      load();
     } catch (e) {
+      // The run did not start: stay here and show why, do not go to Home.
       setError(e instanceof Error ? e.message : "Could not start the research.");
+      return;
     } finally {
       setBusy(null);
     }
+    // The run is now going on the server: open the Home tab, same browser tab.
+    router.push(`${V2}/home`);
   };
 
   // Opened from one work package's sidebar (?work_package=<task id>): everything below is that package only.

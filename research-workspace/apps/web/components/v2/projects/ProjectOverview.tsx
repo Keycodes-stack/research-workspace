@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
@@ -17,6 +18,7 @@ import type { DecisionGate, GateStatus, Project, TaskRow } from "@/lib/types";
 import { V2 } from "@/lib/v2/routes";
 
 export default function ProjectOverview({ id }: { id: string }) {
+  const router = useRouter();
   const { projects, loading, error } = useProjects();
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tasksError, setTasksError] = useState("");
@@ -57,11 +59,14 @@ export default function ProjectOverview({ id }: { id: string }) {
     try {
       await api.runTaskEvidence(taskId);
     } catch (e) {
+      // The run did not start: stay here and show why, do not go to Home.
       setResearchError(e instanceof Error ? e.message : "The research could not be started.");
+      return;
     } finally {
       setStarting((s) => ({ ...s, [taskId]: false }));
     }
-    await loadRuns();
+    // The run is now going on the server: open the Home tab, same browser tab.
+    router.push(`${V2}/home`);
   };
   const researchLabel = (status: string | undefined) =>
     status === "queued" || status === "running" ? "Researching…"

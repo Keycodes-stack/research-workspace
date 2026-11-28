@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import ProjectsPanel from "@/components/v2/dashboard/ProjectsPanel";
@@ -16,6 +17,7 @@ const STAGES = ["Discovery", "Validation", "Business Case", "Decided"] as const;
 
 /** One work package's own overview: the fields entered for it, its research, and its gates. The project's shared context is collapsed at the bottom. */
 export default function WorkPackageOverview({ projectId, taskId }: { projectId: string; taskId: string }) {
+  const router = useRouter();
   const { projects, loading, error } = useProjects();
   const project = projects.find((p) => p.id === projectId || p.slug === projectId);
   const [tasks, setTasks] = useState<TaskRow[] | null>(null);
@@ -59,9 +61,17 @@ export default function WorkPackageOverview({ projectId, taskId }: { projectId: 
   const startResearch = async () => {
     setResearchError("");
     setStarting(true);
-    try { await api.runTaskEvidence(taskId); } catch (e) { setResearchError(e instanceof Error ? e.message : "The research could not be started."); }
-    finally { setStarting(false); }
-    await loadResearch();
+    try {
+      await api.runTaskEvidence(taskId);
+    } catch (e) {
+      // The run did not start: stay here and show why, do not go to Home.
+      setResearchError(e instanceof Error ? e.message : "The research could not be started.");
+      return;
+    } finally {
+      setStarting(false);
+    }
+    // The run is now going on the server: open the Home tab, same browser tab.
+    router.push(`${V2}/home`);
   };
   const download = () => {
     setDownloadError("");

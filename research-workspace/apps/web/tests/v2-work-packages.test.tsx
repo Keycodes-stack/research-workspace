@@ -2,9 +2,10 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const push = vi.fn();
 vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/projects/p1",
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, replace: vi.fn() }),
   useParams: () => ({ id: "p1" }),
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
 }));
@@ -145,7 +146,7 @@ describe("decision gate status on the project overview", () => {
 });
 
 describe("new work package form", () => {
-  it("sends the lead and due date with the title and brief", async () => {
+  it("sends the lead and due date with the title and brief, then opens Home", async () => {
     const user = userEvent.setup();
     render(<NewWorkPackage projectId="p1" onCreated={vi.fn()} />);
     await user.click(screen.getByRole("button", { name: "+ New work package" }));
@@ -155,5 +156,6 @@ describe("new work package form", () => {
     fireEvent.change(within(form).getByLabelText(/Due date/), { target: { value: "2027-03-01" } });
     await user.click(within(form).getByRole("button", { name: "Create work package" }));
     expect(api.createWorkPackage).toHaveBeenCalledWith("p1", { title: "Battery tests", brief: undefined, lead: "Sara", due: "2027-03-01" });
+    expect(push).toHaveBeenCalledWith("/home");
   });
 });
