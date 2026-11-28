@@ -19,7 +19,7 @@ function Avatar({ src, name }: { src: string; name: string }) {
     return (
       <span
         aria-label={name}
-        className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-blue/10 text-[11px] font-semibold text-blue"
+        className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-[#F2F4F7] text-[11px] font-semibold text-[#475467]"
       >
         {name
           .split(" ")
@@ -76,7 +76,7 @@ export default function CommentsPanel({
         <button
           type="button"
           onClick={onStartNew}
-          className="flex items-center gap-1 text-xs leading-[1.5] font-medium tracking-[-0.02em] text-blue"
+          className="flex items-center gap-1 text-xs leading-[1.5] font-medium tracking-[-0.02em] text-[#344054]"
         >
           <Icon icon={huge(Add01Icon)} size={13} stroke={1.1} />
           New
@@ -101,7 +101,7 @@ export default function CommentsPanel({
               </p>
             </div>
             {draftQuote ? (
-              <p className="rounded-xl border border-blue/30 bg-[#FAFAFA] px-2.5 py-2 text-[10px] leading-[1.5] tracking-[-0.02em] text-blue">
+              <p className="rounded-xl border border-[#D0D5DD] bg-[#FAFAFA] px-2.5 py-2 text-[10px] leading-[1.5] tracking-[-0.02em] text-[#344054]">
                 {draftQuote}
               </p>
             ) : (
@@ -115,10 +115,10 @@ export default function CommentsPanel({
               onChange={(e) => setDraft(e.target.value)}
               rows={3}
               placeholder="Write a comment…"
-              className="w-full resize-none rounded-lg border border-[#EDEDF0] bg-white px-2 py-1.5 text-xs leading-[1.5] tracking-[-0.02em] text-[#101D37] outline-none placeholder:text-body focus:border-blue"
+              className="w-full resize-none rounded-lg border border-[#EDEDF0] bg-white px-2 py-1.5 text-xs leading-[1.5] tracking-[-0.02em] text-[#101D37] outline-none placeholder:text-body focus:border-[#98A2B3]"
             />
             <div className="flex items-center gap-3 text-[10px] leading-[1.5] font-semibold tracking-[-0.02em]">
-              <button type="submit" disabled={!draftQuote || !draft.trim()} className="text-blue disabled:opacity-40">
+              <button type="submit" disabled={!draftQuote || !draft.trim()} className="text-[#344054] disabled:opacity-40">
                 Comment
               </button>
               <button type="button" onClick={onCancelNew} className="text-body">
@@ -157,7 +157,7 @@ export default function CommentsPanel({
                 type="button"
                 onClick={() => onFocus(c.id)}
                 className={`flex items-start gap-1.5 rounded-xl border bg-[#FAFAFA] px-2.5 py-2 text-left text-[10px] leading-[1.5] tracking-[-0.02em] transition-colors ${
-                  active ? "border-blue/30 text-blue" : "border-[#EDEDF0] text-body hover:border-blue/30"
+                  active ? "border-[#98A2B3] text-[#344054]" : "border-[#EDEDF0] text-body hover:border-[#98A2B3]"
                 }`}
               >
                 <span className="flex-1">{c.quote}</span>
@@ -192,16 +192,16 @@ export default function CommentsPanel({
                     onChange={(e) => setReply(e.target.value)}
                     rows={2}
                     placeholder="Reply…"
-                    className="w-full resize-none rounded-lg border border-[#EDEDF0] px-2 py-1.5 text-xs leading-[1.5] text-[#101D37] outline-none placeholder:text-body focus:border-blue"
+                    className="w-full resize-none rounded-lg border border-[#EDEDF0] px-2 py-1.5 text-xs leading-[1.5] text-[#101D37] outline-none placeholder:text-body focus:border-[#98A2B3]"
                   />
                   <div className="flex gap-3 text-[10px] leading-[1.5] font-semibold">
-                    <button type="submit" className="text-blue">Send</button>
+                    <button type="submit" className="text-[#344054]">Send</button>
                     <button type="button" onClick={() => setReplyFor(null)} className="text-body">Cancel</button>
                   </div>
                 </form>
               ) : (
                 <div className="flex items-center gap-2 text-[10px] leading-[1.5] font-semibold tracking-[-0.02em]">
-                  <button type="button" onClick={() => { setReplyFor(c.id); setReply(""); }} className="text-blue">
+                  <button type="button" onClick={() => { setReplyFor(c.id); setReply(""); }} className="text-[#344054]">
                     Reply
                   </button>
                   <button type="button" onClick={() => onResolve(c.id)} className="text-body hover:text-[#101D37]">

@@ -65,8 +65,9 @@ export default function ProjectOverview({ id }: { id: string }) {
     } finally {
       setStarting((s) => ({ ...s, [taskId]: false }));
     }
-    // The run is now going on the server: open the Home tab, same browser tab.
-    router.push(`${V2}/home`);
+    // The run is now going on the server: open the Home tab, same browser tab,
+    // carrying the run's identity so Home can show the research in progress.
+    router.push(`${V2}/home?running=${taskId}&project=${id}`);
   };
   const researchLabel = (status: string | undefined) =>
     status === "queued" || status === "running" ? "Researching…"

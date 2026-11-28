@@ -1,7 +1,7 @@
 "use client";
 
 import "@syncfusion/ej2-tailwind3-theme/styles/document-editor-container/index.css";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { registerLicense } from "@syncfusion/ej2-base";
 import {
   DocumentEditorContainerComponent,
@@ -14,10 +14,12 @@ import { File02, MessageTextSquare02, PresentationChart01 } from "@untitledui/ic
 import { BinocularsIcon } from "@hugeicons/core-free-icons";
 import Icon, { huge, untitled, type AnyIcon } from "@/components/v2/dashboard/Icon";
 import CommentsPanel from "./CommentsPanel";
+import FindingDetail from "./FindingDetail";
 import { INITIAL_SFDT } from "@/lib/v2/workspaceSfdt";
 import { CURRENT_USER, type Comment } from "@/lib/v2/workspaceDoc";
 import { plainToSfdt, tiptapToSfdt } from "@/lib/v2/tiptapToSfdt";
 import { api, ApiError } from "@/lib/api";
+import type { EvidenceItem } from "@/lib/types";
 
 DocumentEditorContainerComponent.Inject(Toolbar, Ribbon);
 
@@ -59,7 +61,7 @@ function safeJson(text: string): unknown {
 
 /** Word-style document editor (Syncfusion) with the Figma comments panel and dark rail. The document is saved to the
  *  work package through the API, in the editor's own format (format "sfdt"). */
-export default function DocEditor({ taskId }: { taskId: string }) {
+export default function DocEditor({ taskId, projectId }: { taskId: string; projectId: string }) {
   const ref = useRef<DocumentEditorContainerComponent | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ready = useRef(false);
@@ -79,6 +81,10 @@ export default function DocEditor({ taskId }: { taskId: string }) {
   const [props, setProps] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
   const [refsNote, setRefsNote] = useState("");
+  /* the work package's findings, keyed by exact claim text — the only mapping the
+     document gives us, re-applied on every open and never stored */
+  const itemsRef = useRef<EvidenceItem[]>([]);
+  const [finding, setFinding] = useState<EvidenceItem | null>(null);
 
   const de = (): DocumentEditor | null => ref.current?.documentEditor ?? null;
   const boxes = (): CommentElementBox[] => de()?.documentHelper.comments ?? [];
@@ -175,9 +181,65 @@ export default function DocEditor({ taskId }: { taskId: string }) {
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
+      try {
+        de()?.removeEventListener("requestNavigate", handleRequestNavigate);
+      } catch {
+        /* editor already gone */
+      }
     },
+    // handleRequestNavigate only reads refs and stable setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+
+  /* Clicking a finding's link inside the document opens its detail in the right
+     sidebar — no navigation away from the workspace. Links are internal
+     #evidence-<item id> addresses, intercepted here (isHandled stops the editor
+     from following them anywhere). */
+  const handleRequestNavigate = useCallback((args: { navigationLink: string; isHandled: boolean }) => {
+    const m = /^#evidence-(.+)$/.exec(args.navigationLink ?? "");
+    if (!m) return;
+    args.isHandled = true;
+    const item = itemsRef.current.find((i) => i.id === m[1]);
+    if (item) {
+      setPanel(true);
+      setFinding(item);
+    }
+  }, []);
+
+  /* The document's Findings are plain text, so the links are applied in the editor
+     after open(): each finding's claim text is located with the editor search and
+     turned into a hyperlink with the same display text. A claim the search cannot
+     locate simply stays plain text; user edits to a finding line break its link,
+     and the mapping is never stored — it is re-applied on every open. */
+  const applyFindingLinks = async () => {
+    let items: EvidenceItem[] = [];
+    try {
+      const r = await api.taskEvidence(taskId);
+      items = r.items ?? [];
+    } catch {
+      return;
+    }
+    itemsRef.current = items;
+    const e = de();
+    if (!e) return;
+    try {
+      for (const item of items) {
+        const claim = item.claim_text?.trim();
+        if (!claim) continue;
+        e.search.findAll(claim);
+        const results = e.search.searchResults;
+        if (!results || results.length === 0) continue;
+        results.index = 0;
+        results.navigate();
+        e.editor.insertHyperlink(`#evidence-${item.id}`, claim, "View evidence");
+      }
+      e.search.clearSearchHighlight();
+      e.selection.moveToDocumentStart();
+    } catch {
+      /* a claim the search cannot locate simply stays plain text */
+    }
+  };
 
   const onCreated = () => {
     const c = ref.current;
@@ -188,11 +250,13 @@ export default function DocEditor({ taskId }: { taskId: string }) {
       c.documentEditor.open(INITIAL_SFDT); // unreadable stored copy – start from the template
     }
     c.documentEditor.documentName = loaded.title;
+    c.documentEditor.addEventListener("requestNavigate", handleRequestNavigate);
     c.ribbon?.showTab("Developer", false);
     readQuotes();
     sync();
     setActiveId(boxes().find((b) => !b.isResolved)?.commentId ?? null);
     ready.current = true;
+    void applyFindingLinks();
   };
 
   const onChange = () => {
@@ -205,8 +269,20 @@ export default function DocEditor({ taskId }: { taskId: string }) {
   /* while composing a comment, the quote follows the user's selection */
   const onSelection = () => {
     const e = de();
-    if (!e || draftRef.current === null) return;
+    if (!e) return;
     const t = e.selection.text.trim();
+    /* Selecting a whole finding line (e.g. triple-click) opens its detail too, so a
+       finding stays clickable even where the editor wants Ctrl+click for links. While
+       a comment is being drafted the selection belongs to the draft instead. */
+    if (draftRef.current === null && t) {
+      const hit = itemsRef.current.find((i) => i.claim_text.trim() === t);
+      if (hit) {
+        setPanel(true);
+        setFinding(hit);
+        return;
+      }
+    }
+    if (draftRef.current === null) return;
     if (t) {
       draftRef.current = t;
       setDraftQuote(t);
@@ -321,7 +397,7 @@ export default function DocEditor({ taskId }: { taskId: string }) {
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex items-end justify-between gap-3 px-4 pt-6 pb-4 sm:px-6 lg:px-10">
         <h1 className="text-2xl leading-[1.2] font-semibold tracking-[-0.02em] text-[#101D37] sm:text-[30px]">
-          Work <span className="text-blue">Package</span>
+          Work Package
         </h1>
         <div className="flex items-center gap-3 pb-1">
           <button
@@ -340,8 +416,8 @@ export default function DocEditor({ taskId }: { taskId: string }) {
           </span>
         </div>
       </div>
-      {aiDrafted && <div role="note" className="mx-4 mb-2 rounded-[12px] border border-blue/20 bg-blue/[0.03] p-3 text-xs text-[#344054] sm:mx-6 lg:mx-10">
-        <span className="mr-2 rounded-md bg-blue/[0.08] px-1.5 py-0.5 text-[11px] font-semibold text-blue">AI suggested · review</span>
+      {aiDrafted && <div role="note" className="mx-4 mb-2 rounded-[12px] border border-[#EDEDF0] bg-[#FAFAFA] p-3 text-xs text-[#344054] sm:mx-6 lg:mx-10">
+        <span className="mr-2 rounded-md bg-[#F2F4F7] px-1.5 py-0.5 text-[11px] font-semibold text-[#475467]">AI suggested · review</span>
         Drafted from this work package's details when the project was created. Edit it freely; the label goes away when you save your changes.
       </div>}
       {/* the editor needs a fixed height: viewport minus top bar (64) and title row */}
@@ -365,7 +441,9 @@ export default function DocEditor({ taskId }: { taskId: string }) {
           )}
         </div>
         <div className="hidden shrink-0 lg:flex">
-          {panel && (
+          {panel && (finding ? (
+            <FindingDetail item={finding} projectId={projectId} taskId={taskId} onBack={() => setFinding(null)} />
+          ) : (
             <CommentsPanel
               comments={comments}
               activeId={activeId}
@@ -377,7 +455,7 @@ export default function DocEditor({ taskId }: { taskId: string }) {
               onReply={reply}
               onResolve={resolve}
             />
-          )}
+          ))}
           <nav className="flex w-[50px] flex-col items-center gap-2 bg-[#101D37] pt-3">
             {RAIL.map((r) => (
               <button
@@ -388,7 +466,7 @@ export default function DocEditor({ taskId }: { taskId: string }) {
                 aria-pressed={railOn[r.id]}
                 onClick={() => rail(r.id)}
                 className={`flex size-8 items-center justify-center rounded-md ${
-                  railOn[r.id] ? "bg-blue text-white" : "text-white/90 hover:bg-white/10"
+                  railOn[r.id] ? "bg-white/15 text-white" : "text-white/90 hover:bg-white/10"
                 }`}
               >
                 <Icon icon={r.icon} size={16} stroke={1.3} />

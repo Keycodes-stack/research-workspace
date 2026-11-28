@@ -100,7 +100,7 @@ describe("Evidence Library", () => {
     render(<EvidenceLibrary id="p1" />);
     await userEvent.click(await screen.findByRole("button", { name: "Run again" }));
     expect(runTaskEvidence).toHaveBeenCalledWith("t1");
-    expect(push).toHaveBeenCalledWith("/home");
+    expect(push).toHaveBeenCalledWith("/home?running=t1&project=p1");
   });
 
   it("stays on the page when the run cannot start", async () => {

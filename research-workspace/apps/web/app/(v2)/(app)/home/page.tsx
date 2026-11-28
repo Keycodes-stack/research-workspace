@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import TopBar from "@/components/v2/dashboard/TopBar";
 import AskComposer from "@/components/v2/ask/AskComposer";
 import AnswerCard from "@/components/v2/ask/AnswerCard";
 import AnswerError from "@/components/v2/ask/AnswerError";
+import RunStatusCard from "@/components/v2/home/RunStatusCard";
 import { useProjects } from "@/components/v2/V2Frame";
 import { api } from "@/lib/api";
-import type { AskResult, ChatRow, EvidenceScope, SourceRow } from "@/lib/types";
+import type { AskResult, ChatRow, EvidenceLibrary as EvidenceLibraryData, EvidenceScope, SourceRow } from "@/lib/types";
 import { prefs, runAsk } from "@/lib/v2/ask";
 import { V2 } from "@/lib/v2/routes";
 
@@ -21,7 +22,17 @@ import { V2 } from "@/lib/v2/routes";
 type Turn = { id: number; question: string; result?: AskResult; error?: string };
 
 export default function HomePage() {
+  // useSearchParams needs a Suspense boundary (the page is prerendered).
+  return (
+    <Suspense>
+      <HomePageContent />
+    </Suspense>
+  );
+}
+
+function HomePageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { projects, loading, error: loadError } = useProjects();
   // Closed-repository projects ask through approved research tasks, so only open-discovery projects take questions.
   const options = useMemo(
@@ -111,6 +122,53 @@ export default function HomePage() {
     setError(null);
   };
 
+  // Research runs: a Run / Run again click lands here with ?running=<work package>&project=<project>.
+  // The card carries that project id — Home's Ask list above only holds open-discovery projects,
+  // while the run's project may be closed-repository. Polled every 4s while any run is active.
+  const runProjectId = searchParams.get("project");
+  const runningTaskId = searchParams.get("running");
+  const [runLibrary, setRunLibrary] = useState<EvidenceLibraryData | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
+  const loadRuns = useCallback(async () => {
+    if (!runProjectId) return;
+    try {
+      setRunLibrary(await api.projectEvidence(runProjectId));
+      setRunError(null);
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : "Could not load the research status.");
+    }
+  }, [runProjectId]);
+  useEffect(() => {
+    if (runProjectId) void loadRuns();
+  }, [runProjectId, loadRuns]);
+  const activeRuns = useMemo(
+    () => (runLibrary?.runs ?? []).filter((r) => r.status === "queued" || r.status === "running"),
+    [runLibrary],
+  );
+  useEffect(() => {
+    if (!runProjectId || activeRuns.length === 0) return;
+    const timer = setInterval(() => void loadRuns(), 4000);
+    return () => clearInterval(timer);
+  }, [runProjectId, activeRuns.length, loadRuns]);
+  // The just-started run first (even once it finishes, so its statement/error stays visible), then the other active runs.
+  const runRows = useMemo(() => {
+    if (!runLibrary) return [];
+    const highlighted = runningTaskId ? runLibrary.runs.find((r) => r.task_id === runningTaskId) : undefined;
+    const others = (runLibrary.runs ?? []).filter(
+      (r) => (r.status === "queued" || r.status === "running") && r.task_id !== runningTaskId,
+    );
+    return highlighted ? [highlighted, ...others] : others;
+  }, [runLibrary, runningTaskId]);
+  const retryRun = async (taskId: string) => {
+    setRunError(null);
+    try {
+      await api.runTaskEvidence(taskId);
+      void loadRuns();
+    } catch (e) {
+      setRunError(e instanceof Error ? e.message : "The research could not be started.");
+    }
+  };
+
   // The conversation lives inside the question box: the box grows with the answers, and the thread scrolls.
   const thread = turns.length > 0 ? (
     <section aria-label="This conversation" className="flex flex-col gap-3">
@@ -178,6 +236,17 @@ export default function HomePage() {
               </p>
             )}
           </div>
+
+          {runProjectId && (
+            <RunStatusCard
+              projectId={runProjectId}
+              highlightTaskId={runningTaskId}
+              runs={runRows}
+              loading={runLibrary === null}
+              error={runError}
+              onRetry={(tid) => void retryRun(tid)}
+            />
+          )}
 
           <div className="grid grid-cols-1 gap-[30px] md:grid-cols-3">
             <section className="flex flex-col gap-4">

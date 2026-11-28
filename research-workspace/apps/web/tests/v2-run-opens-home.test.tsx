@@ -4,8 +4,9 @@ import type { DecisionGate, TaskRow } from "@/lib/types";
 
 /**
  * Run / Run again / Start research / Retry always opens the Home tab after the
- * run has started on the server. Home itself is untouched: no card, no polling.
- * A failed start stays on the page and shows the error instead.
+ * run has started on the server, carrying the run's identity (?running= and
+ * ?project=) so Home can show the research in progress. A failed start stays
+ * on the page and shows the error instead.
  */
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -73,7 +74,7 @@ describe("Run opens the Home tab", () => {
     render(<V2Frame><ProjectOverview id="p1" /></V2Frame>);
     fireEvent.click(await screen.findByRole("button", { name: "Run again" }));
     await waitFor(() => expect(api.runTaskEvidence).toHaveBeenCalledWith("t1"));
-    expect(push).toHaveBeenCalledWith("/home");
+    expect(push).toHaveBeenCalledWith("/home?running=t1&project=p1");
   });
 
   it("Project Overview: a failed start stays on the page and shows the error", async () => {
@@ -88,6 +89,6 @@ describe("Run opens the Home tab", () => {
     render(<V2Frame><WorkPackageOverview projectId="p1" taskId="t1" /></V2Frame>);
     fireEvent.click(await screen.findByRole("button", { name: "Run again" }));
     await waitFor(() => expect(api.runTaskEvidence).toHaveBeenCalledWith("t1"));
-    expect(push).toHaveBeenCalledWith("/home");
+    expect(push).toHaveBeenCalledWith("/home?running=t1&project=p1");
   });
 });

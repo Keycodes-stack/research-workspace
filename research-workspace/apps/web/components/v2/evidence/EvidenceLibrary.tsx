@@ -98,8 +98,9 @@ export default function EvidenceLibrary({ id }: { id: string }) {
     } finally {
       setBusy(null);
     }
-    // The run is now going on the server: open the Home tab, same browser tab.
-    router.push(`${V2}/home`);
+    // The run is now going on the server: open the Home tab, same browser tab,
+    // carrying the run's identity so Home can show the research in progress.
+    router.push(`${V2}/home?running=${taskId}&project=${id}`);
   };
 
   // Opened from one work package's sidebar (?work_package=<task id>): everything below is that package only.
