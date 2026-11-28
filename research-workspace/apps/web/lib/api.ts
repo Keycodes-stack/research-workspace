@@ -36,30 +36,6 @@ export function consumeTokenFragment(): void {
   } catch { /* no window or storage blocked */ }
 }
 
-/**
- * Email/password sign-in (POST /auth/login on the gateway). This call
- * deliberately does NOT attach any stored Bearer token: a stale token must
- * never be sent with a login attempt, and on first sign-in there is no token
- * yet. The caller stores the returned token with setToken().
- */
-export async function login(email: string, password: string): Promise<{ token: string }> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    });
-  } catch {
-    throw fail("POST", "/auth/login", 0, null);
-  }
-  const text = await res.text();
-  let body: unknown = null;
-  try { body = text ? JSON.parse(text) : null; } catch { body = text; }
-  if (!res.ok) throw fail("POST", "/auth/login", res.status, body);
-  return body as { token: string };
-}
-
 /** The signed-in user's id, read from the token's `sub` for display only (the server never trusts this). */
 export function currentUserId(): string | null {
   try {
