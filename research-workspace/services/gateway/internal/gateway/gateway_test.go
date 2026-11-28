@@ -1,7 +1,6 @@
 package gateway
 
 import (
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"golang.org/x/crypto/bcrypt"
 	"keycodes.dev/gateway/internal/jwtauth"
 )
 
@@ -353,91 +351,4 @@ func TestEventStreamIsNotBuffered(t *testing.T) {
 		t.Fatal("first event was buffered until the upstream finished")
 	}
 	close(release)
-}
-
-// ---- email/password login (POST /auth/login) -------------------------------
-
-func loginSetup(t *testing.T) (env, string) {
-	t.Helper()
-	hash, err := bcrypt.GenerateFromPassword([]byte("correct-horse"), bcrypt.MinCost)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := setup(t, func(cfg *Config) {
-		cfg.AdminEmail = "admin@artifexlabs"
-		cfg.AdminPasswordHash = string(hash)
-	})
-	return e, string(hash)
-}
-
-func loginReq(e env, body string) *httptest.ResponseRecorder {
-	return do(e.h, "POST", "/auth/login", map[string]string{"Content-Type": "application/json"}, strings.NewReader(body))
-}
-
-func TestLoginSuccessReturnsUsableToken(t *testing.T) {
-	e, _ := loginSetup(t)
-	w := loginReq(e, `{"email":"admin@artifexlabs","password":"correct-horse"}`)
-	if w.Code != http.StatusOK {
-		t.Fatalf("status %d: %s", w.Code, w.Body.String())
-	}
-	var res struct {
-		Token string `json:"token"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil || res.Token == "" {
-		t.Fatalf("no token in response: %s", w.Body.String())
-	}
-	claims, err := jwtauth.Verify(res.Token, secret, t0, "")
-	if err != nil {
-		t.Fatalf("issued token does not verify: %v", err)
-	}
-	if claims.Subject != userA {
-		t.Fatalf("token subject %q, want the admin UUID %q", claims.Subject, userA)
-	}
-	if e.up.count() != 0 {
-		t.Fatalf("login touched the upstream (%d calls)", e.up.count())
-	}
-}
-
-func TestLoginWrongPasswordAndWrongEmailAreBoth401(t *testing.T) {
-	e, _ := loginSetup(t)
-	for _, body := range []string{
-		`{"email":"admin@artifexlabs","password":"wrong"}`,
-		`{"email":"someone-else@example.com","password":"correct-horse"}`,
-		`{"email":"","password":""}`,
-	} {
-		w := loginReq(e, body)
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("body %s: status %d, want 401", body, w.Code)
-		}
-		if strings.Contains(w.Body.String(), "token") {
-			t.Fatalf("failure response leaks a token: %s", w.Body.String())
-		}
-	}
-}
-
-func TestLoginNotConfiguredIs503(t *testing.T) {
-	e := setup(t, nil) // no ADMIN_EMAIL / ADMIN_PASSWORD_HASH
-	w := loginReq(e, `{"email":"admin@artifexlabs","password":"correct-horse"}`)
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status %d, want 503", w.Code)
-	}
-}
-
-func TestLoginRateLimitedPerIP(t *testing.T) {
-	e, _ := loginSetup(t)
-	var last *httptest.ResponseRecorder
-	for i := 0; i < 11; i++ {
-		last = loginReq(e, `{"email":"admin@artifexlabs","password":"wrong"}`)
-	}
-	if last.Code != http.StatusTooManyRequests {
-		t.Fatalf("11th attempt: status %d, want 429", last.Code)
-	}
-}
-
-func TestLoginRejectsNonPost(t *testing.T) {
-	e, _ := loginSetup(t)
-	w := do(e.h, "GET", "/auth/login", nil, nil)
-	if w.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("status %d, want 405", w.Code)
-	}
 }

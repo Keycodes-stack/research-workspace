@@ -55,9 +55,6 @@ func main() {
 		Burst:         int(envFloat("RATE_LIMIT_BURST", 60)),
 		MaxBodyBytes:  int64(envFloat("MAX_BODY_MB", 55) * 1024 * 1024),
 		Logger:        log,
-		// Email/password login: unset means POST /auth/login answers 503.
-		AdminEmail:        os.Getenv("ADMIN_EMAIL"),
-		AdminPasswordHash: os.Getenv("ADMIN_PASSWORD_HASH"),
 	})
 	if err != nil {
 		log.Error("invalid configuration", "err", err)
