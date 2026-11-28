@@ -524,3 +524,20 @@ def test_uploads_mode_never_searches_even_without_an_answer_or_when_asked_online
         assert r["kind"] == "insufficient_evidence" and r["gate"]["evidence_from"] == "saved_sources"
     r = _ask(api, th, scope="uploads", evidence="online")   # a client asking online with My uploads
     assert r["gate"]["evidence_from"] == "saved_sources" and calls == []
+
+
+# ---- evidence run live steps -------------------------------------------------
+
+def test_task_evidence_progress_returns_live_steps(api):
+    """Home polls this while a run is active: the latest step strings a run wrote into _PROGRESS, same shape as
+    the /threads progress endpoint. Empty before any step, 404 for a user who cannot see the task."""
+    p, s1, s2, t, th = setup(api)
+    assert api.get(f"/tasks/{t}/evidence/progress", headers=hdr()).json() == {"steps": []}
+    assert api.get(f"/tasks/{t}/evidence/progress", headers=hdr(USER_B)).status_code == 404
+
+    from app.routes_tasks import progress
+
+    progress(t, "Reading the project and the work package...", reset=True)
+    progress(t, "Two models are reading 10 papers...")
+    assert api.get(f"/tasks/{t}/evidence/progress", headers=hdr()).json() == {
+        "steps": ["Reading the project and the work package...", "Two models are reading 10 papers..."]}

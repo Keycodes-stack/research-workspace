@@ -38,6 +38,10 @@ const projectEvidence = vi.fn(async (pid: string): Promise<Library> =>
   pid === "p2" ? libraryFor([run({ task_id: "t9", code: "WP-9", work_package_title: "Locked work" })]) : libraryFor([]),
 );
 const runTaskEvidence = vi.fn(async (tid: string) => ({ task_id: tid, status: "queued" }));
+const taskProgress = vi.fn(async (tid: string): Promise<string[]> => [
+  "Reading the project and the work package...",
+  "Two models are reading 10 papers...",
+]);
 
 vi.mock("@/lib/api", () => ({
   api: {
@@ -46,6 +50,7 @@ vi.mock("@/lib/api", () => ({
     sources: vi.fn(async () => []),
     projectEvidence: (pid: string) => projectEvidence(pid),
     runTaskEvidence: (tid: string) => runTaskEvidence(tid),
+    taskProgress: (tid: string) => taskProgress(tid),
   },
   getToken: () => "t", setToken: () => {}, consumeTokenFragment: () => {}, ApiError: class extends Error {},
 }));
@@ -59,6 +64,10 @@ beforeEach(() => {
   projectEvidence.mockImplementation(async (pid: string) =>
     pid === "p2" ? libraryFor([run({ task_id: "t9", code: "WP-9", work_package_title: "Locked work" })]) : libraryFor([]),
   );
+  taskProgress.mockImplementation(async () => [
+    "Reading the project and the work package...",
+    "Two models are reading 10 papers...",
+  ]);
 });
 
 describe("Home run status card", () => {
@@ -108,6 +117,27 @@ describe("Home run status card", () => {
     render(<V2Frame><HomePage /></V2Frame>);
     expect(await screen.findByText("WP-9 · Locked work")).toBeInTheDocument();
     expect(projectEvidence).toHaveBeenCalledWith("p2");
+  });
+
+  it("shows the latest live step under a running row and polls for it while running", async () => {
+    mockSearch.params = new URLSearchParams("running=t1&project=p1");
+    projectEvidence.mockResolvedValueOnce(libraryFor([
+      run({ task_id: "t1", status: "running" }),
+    ]));
+    render(<V2Frame><HomePage /></V2Frame>);
+    expect(await screen.findByText("Two models are reading 10 papers...")).toBeInTheDocument();
+    expect(taskProgress).toHaveBeenCalledWith("t1");
+  });
+
+  it("does not poll for live steps once the run is complete", async () => {
+    mockSearch.params = new URLSearchParams("running=t1&project=p1");
+    projectEvidence.mockResolvedValueOnce(libraryFor([
+      run({ task_id: "t1", status: "complete", statement: "Done.", papers_read: 10, finished_at: "2026-11-28T11:00:00Z" }),
+    ]));
+    render(<V2Frame><HomePage /></V2Frame>);
+    expect(await screen.findByText("Complete")).toBeInTheDocument();
+    expect(screen.getByText(/10 papers read · Done\./)).toBeInTheDocument();
+    expect(taskProgress).not.toHaveBeenCalled();
   });
 
   it("shows no card when no run parameters are present", async () => {

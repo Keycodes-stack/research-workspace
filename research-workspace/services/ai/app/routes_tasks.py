@@ -1319,6 +1319,16 @@ async def ask_progress(thread_id: UUID, user: UUID = Depends(require_user), pool
     return {"steps": _PROGRESS.get(str(thread_id), (0, []))[1]}
 
 
+@router.get("/tasks/{task_id}/evidence/progress")
+async def task_evidence_progress(task_id: UUID, user: UUID = Depends(require_user), pool=Depends(get_pool)):
+    """Live steps of a running evidence run, read by Home every few seconds so the user sees each step as it
+    happens. Same shape as the /threads progress endpoint. The steps are written by evidence.py into _PROGRESS
+    keyed by task id; there is no percent anywhere — a run reports only its current step and, at finish, its
+    papers_read. A task the caller cannot see 404s, like the other task endpoints."""
+    await task_for_user(pool, task_id, user, "viewer")
+    return {"steps": _PROGRESS.get(str(task_id), (0, []))[1]}
+
+
 @router.post("/threads/{thread_id}/ask")
 async def ask(
     thread_id: UUID,

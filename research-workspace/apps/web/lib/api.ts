@@ -363,6 +363,9 @@ export const api = {
     call<AskResult | NotInSavedSources>(`/threads/${threadId}/ask`,
       json({ question, scope, online: scope !== "uploads", evidence })),
   progress: (threadId: string) => call<{ steps: string[] }>(`/threads/${threadId}/progress`).then((r) => r.steps),
+  /** Live steps of a running evidence run (same shape as progress, keyed by work package task). */
+  taskProgress: (taskId: string) =>
+    call<{ steps: string[] }>(`/tasks/${taskId}/evidence/progress`).then((r) => r.steps),
   chats: (pid: string) => call<{ chats: ChatRow[] }>(`/projects/${pid}/chats`).then((r) => r.chats),
   createChat: (pid: string, title: string) => call<{ id: string; title: string }>(`/projects/${pid}/chats`, json({ title })),
 };

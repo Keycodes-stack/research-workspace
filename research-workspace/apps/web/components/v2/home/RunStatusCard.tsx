@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import type { EvidenceRun } from "@/lib/types";
+import { api } from "@/lib/api";
 import { V2 } from "@/lib/v2/routes";
 
 const CHIP: Record<string, { label: string; cls: string }> = {
@@ -25,7 +27,10 @@ const fmtStarted = (iso: string) => {
  * run's project may be closed-repository. The just-started run (?running=)
  * is highlighted. There is no progress % anywhere: the backend exposes only
  * status (and papers_read at finish), so a running row shows an indeterminate
- * spinner, never a determinate bar.
+ * spinner, never a determinate bar. While a run is active the card also polls
+ * its live steps (GET /tasks/{id}/evidence/progress) every 4s and shows the
+ * latest one under the row — e.g. "Two models are reading 10 papers...".
+ * Once a run finishes, polling stops and the complete/failed display stays.
  */
 export default function RunStatusCard({
   projectId,
@@ -42,6 +47,39 @@ export default function RunStatusCard({
   error: string | null;
   onRetry: (taskId: string) => void;
 }) {
+  // Latest live step per active run, keyed by task id. Polled every 4s while
+  // a run is queued/running; a failed step poll leaves the last shown step in
+  // place (the 4s run poll in Home still reports status). No polling at all
+  // once every run has finished — the complete/failed display stays as-is.
+  const [steps, setSteps] = useState<Record<string, string>>({});
+  const activeIds = runs
+    .filter((r) => r.status === "queued" || r.status === "running")
+    .map((r) => r.task_id)
+    .join(",");
+  useEffect(() => {
+    if (!activeIds) return;
+    const ids = activeIds.split(",");
+    let alive = true;
+    const tick = async () => {
+      for (const id of ids) {
+        try {
+          const s = await api.taskProgress(id);
+          if (alive && s.length > 0) {
+            setSteps((prev) => ({ ...prev, [id]: s[s.length - 1] }));
+          }
+        } catch {
+          // ignore: the next tick retries, and the run poll still shows status
+        }
+      }
+    };
+    void tick();
+    const timer = setInterval(() => void tick(), 4000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [activeIds]);
+
   return (
     <section aria-label="Research running" className="rounded-[20px] border border-[#EDEDF0] bg-white p-5">
       <h2 className="text-base leading-[1.5] font-medium tracking-[-0.02em] text-[#101D37]">Research running</h2>
@@ -73,6 +111,9 @@ export default function RunStatusCard({
                 </div>
                 {fmtStarted(run.started_at) && (
                   <p className="mt-1 text-xs text-body">Started {fmtStarted(run.started_at)}</p>
+                )}
+                {active && steps[run.task_id] && (
+                  <p role="status" className="mt-1 text-sm text-body">{steps[run.task_id]}</p>
                 )}
                 {run.status === "complete" && (
                   <p className="mt-1 text-sm text-body">
